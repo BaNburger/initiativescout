@@ -23,6 +23,10 @@
   --gray-bg: #1a1d22;
   --red: #ef4444;
   --accent: #8b5cf6;
+  --green-border: #1a5c35;
+  --blue-border: #1a3a6e;
+  --amber-border: #5c4a1a;
+  --gray-border: #3a3d44;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: 'SF Mono', 'Fira Code', monospace;
   --radius: 8px;
@@ -87,18 +91,19 @@ a { color: var(--blue); text-decoration: none; }
 .detail-section ul { padding-left: 18px; }
 .detail-section li { margin-bottom: 4px; }
 .detail-verdict { padding: 16px; border-radius: var(--radius); margin-bottom: 16px; }
-.detail-verdict.reach_out_now { background: var(--green-bg); border: 1px solid #1a5c35; }
-.detail-verdict.reach_out_soon { background: var(--blue-bg); border: 1px solid #1a3a6e; }
-.detail-verdict.monitor { background: var(--amber-bg); border: 1px solid #5c4a1a; }
-.detail-verdict.skip { background: var(--gray-bg); border: 1px solid #3a3d44; }
+.detail-verdict.reach_out_now { background: var(--green-bg); border: 1px solid var(--green-border); }
+.detail-verdict.reach_out_soon { background: var(--blue-bg); border: 1px solid var(--blue-border); }
+.detail-verdict.monitor { background: var(--amber-bg); border: 1px solid var(--amber-border); }
+.detail-verdict.skip { background: var(--gray-bg); border: 1px solid var(--gray-border); }
 .detail-verdict .verdict-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .detail-verdict .reasoning { font-size: 14px; line-height: 1.5; }
 
-.contact-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 16px; }
-.contact-card .label { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 4px; }
-.contact-card .value { font-size: 14px; }
-
-.hook-card { background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0; padding: 14px; margin-bottom: 16px; font-style: italic; line-height: 1.5; }
+/* --- Unified card system --- */
+.card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.card--accent-left { border: none; border-left: 3px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0; font-style: italic; line-height: 1.5; }
+.card--compact { padding: 10px; }
+.card--form { border-color: var(--accent); padding: 16px; }
+.card-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-dim); margin-bottom: 4px; }
 
 .detail-actions { display: flex; gap: 8px; margin-top: 16px; }
 
@@ -142,9 +147,7 @@ a { color: var(--blue); text-decoration: none; }
 
 /* --- Signal grid --- */
 .signal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
-.signal-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
-.signal-card .signal-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
-.signal-card .signal-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px; }
+.card .signal-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
 
 /* --- Grade badges --- */
 .grade-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: var(--mono); min-width: 28px; text-align: center; }
@@ -154,9 +157,8 @@ a { color: var(--blue); text-decoration: none; }
 .grade-d { background: var(--gray-bg); color: var(--gray); }
 
 .grade-cards { display: flex; gap: 10px; margin-bottom: 16px; }
-.grade-card { flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; }
-.grade-card .grade-value { font-size: 28px; font-weight: 800; font-family: var(--mono); }
-.grade-card .grade-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+.grade-cards .card { flex: 1; text-align: center; }
+.grade-cards .grade-value { font-size: 28px; font-weight: 800; font-family: var(--mono); }
 
 /* --- Pre-computed scores bar --- */
 .score-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
@@ -168,22 +170,19 @@ a { color: var(--blue); text-decoration: none; }
 .score-bar-val { font-size: 12px; font-weight: 600; color: var(--ink); min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* --- Project cards --- */
-.project-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
 .project-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .project-card-header h4 { font-size: 14px; font-weight: 600; }
 .project-card-actions { display: flex; gap: 4px; }
-.project-card .project-meta { font-size: 12px; color: var(--ink-dim); line-height: 1.6; }
-.project-card .project-grades { display: flex; gap: 8px; margin-top: 8px; }
-.project-card .project-grades .pg-item { font-size: 11px; color: var(--ink-dim); display: flex; align-items: center; gap: 4px; }
+.project-meta { font-size: 12px; color: var(--ink-dim); line-height: 1.6; }
+.project-grades { display: flex; gap: 8px; margin-top: 8px; }
+.project-grades .pg-item { font-size: 11px; color: var(--ink-dim); display: flex; align-items: center; gap: 4px; }
 
 /* --- Project form --- */
-.project-form { background: var(--surface-2); border: 1px solid var(--accent); border-radius: var(--radius); padding: 16px; margin-bottom: 10px; }
-.project-form .pf-row { margin-bottom: 10px; }
-.project-form label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 4px; }
-.project-form input, .project-form textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--ink); padding: 6px 10px; border-radius: var(--radius); font-size: 13px; font-family: var(--font); outline: none; }
-.project-form input:focus, .project-form textarea:focus { border-color: var(--accent); }
-.project-form textarea { resize: vertical; min-height: 60px; }
-.project-form .pf-actions { display: flex; gap: 8px; margin-top: 12px; }
+.card--form .pf-row { margin-bottom: 10px; }
+.card--form input, .card--form textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--ink); padding: 6px 10px; border-radius: var(--radius); font-size: 13px; font-family: var(--font); outline: none; }
+.card--form input:focus, .card--form textarea:focus { border-color: var(--accent); }
+.card--form textarea { resize: vertical; min-height: 60px; }
+.card--form .pf-actions { display: flex; gap: 8px; margin-top: 12px; }
 
 /* --- Inline editing (double-click to edit) --- */
 .editable { border-radius: 3px; transition: outline-color 0.15s; outline: 1px dashed transparent; outline-offset: 2px; }
@@ -198,6 +197,16 @@ textarea.inline-input { resize: vertical; min-height: 60px; }
 .list-table th[draggable="true"] { cursor: grab; }
 .list-table th[draggable="true"]:active { cursor: grabbing; }
 .list-table th.drag-over { border-left: 2px solid var(--accent); background: var(--surface-2); }
+
+/* --- Utility classes --- */
+.text-green { color: var(--green); }
+.text-amber { color: var(--amber); }
+.text-red { color: var(--red); }
+.text-faint { color: var(--ink-faint); }
+.text-sm { font-size: 13px; }
+.text-xs { font-size: 10px; }
+.mt-2 { margin-top: 8px; }
+.ml-2 { margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -558,7 +567,7 @@ function renderDetail(d) {
         <span class="editable"${ea('sector',d.sector)} ondblclick="editFromAttr(this)">${esc(d.sector) || 'Sector'}</span>
         <span class="editable"${ea('mode',d.mode)} ondblclick="editFromAttr(this)">${esc(d.mode) || 'Mode'}</span>
         <span class="editable"${ea('relevance',d.relevance)} ondblclick="editFromAttr(this)">Rating: ${esc(d.relevance) || '—'}</span>
-        ${d.enriched ? `<span>Enriched</span>` : '<span style="color:var(--amber)">Not enriched</span>'}
+        ${d.enriched ? `<span>Enriched</span>` : '<span class="text-amber">Not enriched</span>'}
       </div>
     </div>`;
 
@@ -574,22 +583,22 @@ function renderDetail(d) {
   // Dimension grades
   if (d.grade_team || d.grade_tech || d.grade_opportunity) {
     html += `<div class="grade-cards">${[['grade_team','Team'],['grade_tech','Tech'],['grade_opportunity','Opportunity']].map(
-      ([k,l]) => `<div class="grade-card"><div class="grade-value ${gradeColorClass(d[k])}">${esc(d[k]||'—')}</div><div class="grade-label">${l}</div></div>`
+      ([k,l]) => `<div class="card card--compact"><div class="grade-value ${gradeColorClass(d[k])}">${esc(d[k]||'—')}</div><div class="card-label">${l}</div></div>`
     ).join('')}</div>`;
   }
 
   // Contact
   if (d.contact_who) {
     html += `
-    <div class="contact-card">
-      <div class="label">Contact</div>
-      <div class="value">${esc(d.contact_who)}</div>
+    <div class="card">
+      <div class="card-label">Contact</div>
+      <div>${esc(d.contact_who)}</div>
     </div>`;
   }
 
   // Engagement hook
   if (d.engagement_hook) {
-    html += `<div class="hook-card">${esc(d.engagement_hook)}</div>`;
+    html += `<div class="card card--accent-left">${esc(d.engagement_hook)}</div>`;
   }
 
   html += listSection('Key Evidence', d.key_evidence);
@@ -639,7 +648,7 @@ function renderDetail(d) {
   // Due diligence
   if (d.dd_is_investable || d.dd_key_roles || d.dd_references_count) {
     html += `<div class="detail-section"><h3>Due Diligence</h3><ul>`;
-    if (d.dd_is_investable) html += `<li style="color:var(--green)">Investable</li>`;
+    if (d.dd_is_investable) html += `<li class="text-green">Investable</li>`;
     if (d.dd_references_count) html += `<li>References: ${d.dd_references_count}</li>`;
     if (d.dd_key_roles) html += `<li>Key roles: ${esc(d.dd_key_roles.replace(/_/g, ' '))}</li>`;
     if (d.member_roles) html += `<li>Member roles: ${esc(d.member_roles.replace(/_/g, ' '))}</li>`;
@@ -654,7 +663,7 @@ function renderDetail(d) {
       html += `<a href="${esc(safeUrl(url))}" target="_blank" class="link-pill">${esc(label)}</a>`;
       html += `<span class="edit-pencil"${editAttr(d.id, field, raw)} onclick="editFromAttr(this)">&#9998;</span>`;
     } else {
-      html += `<span class="link-pill editable" style="color:var(--ink-faint);cursor:pointer"${editAttr(d.id, field, '')} ondblclick="editFromAttr(this)">+ ${label}</span>`;
+      html += `<span class="link-pill editable text-faint" style="cursor:pointer"${editAttr(d.id, field, '')} ondblclick="editFromAttr(this)">+ ${label}</span>`;
     }
   });
   html += `</div></div>`;
@@ -682,13 +691,13 @@ function renderDetail(d) {
     d.projects.forEach(p => {
       const pv = p.verdict || 'unscored';
       const pvLabel = VERDICT_SHORT[pv] || '';
-      html += `<div class="project-card" id="project-${p.id}">`;
+      html += `<div class="card" id="project-${p.id}">`;
       html += `<div class="project-card-header">`;
-      html += `<h4>${esc(p.name)} ${pvLabel ? `<span class="verdict-badge verdict-${pv}" style="margin-left:6px;font-size:10px">${pvLabel}</span>` : ''}</h4>`;
+      html += `<h4>${esc(p.name)} ${pvLabel ? `<span class="verdict-badge verdict-${pv} ml-2 text-xs">${pvLabel}</span>` : ''}</h4>`;
       html += `<div class="project-card-actions">`;
       html += `<button class="btn btn-sm" onclick="scoreProject(${p.id})" title="Score">Score</button>`;
       html += `<button class="btn btn-sm" onclick="showProjectForm(${d.id}, ${p.id})" title="Edit">Edit</button>`;
-      html += `<button class="btn btn-sm" onclick="deleteProject(${p.id}, ${d.id})" title="Delete" style="color:var(--red)">Del</button>`;
+      html += `<button class="btn btn-sm text-red" onclick="deleteProject(${p.id}, ${d.id})" title="Delete">Del</button>`;
       html += `</div></div>`;
       // Meta info
       const meta = [];
@@ -716,9 +725,9 @@ function renderDetail(d) {
       html += `</div>`;
     });
   } else {
-    html += `<p style="color:var(--ink-faint);font-size:13px">No projects yet</p>`;
+    html += `<p class="text-faint text-sm">No projects yet</p>`;
   }
-  html += `<button class="btn btn-sm" style="margin-top:8px" onclick="showProjectForm(${d.id})">+ Add Project</button>`;
+  html += `<button class="btn btn-sm mt-2" onclick="showProjectForm(${d.id})">+ Add Project</button>`;
   html += `</div>`;
 
   // Actions
@@ -909,7 +918,7 @@ function gradeColorClass(grade) {
 }
 
 function gradeBadge(grade) {
-  if (!grade) return '<span style="color:var(--ink-faint)">—</span>';
+  if (!grade) return '<span class="text-faint">—</span>';
   return `<span class="grade-badge ${gradeColorClass(grade)}">${esc(grade)}</span>`;
 }
 
@@ -917,7 +926,7 @@ const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: '
 const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
 
 function signalCard(value, label) {
-  return value ? `<div class="signal-card"><div class="signal-value">${value}</div><div class="signal-label">${esc(label)}</div></div>` : '';
+  return value ? `<div class="card card--compact"><div class="signal-value">${value}</div><div class="card-label">${esc(label)}</div></div>` : '';
 }
 
 function listSection(title, items) {
@@ -947,12 +956,12 @@ async function showProjectForm(initiativeId, projectId) {
   }
 
   slot.innerHTML = `
-    <div class="project-form">
-      <div class="pf-row"><label>Name *</label><input id="pf-name" value="${esc(p.name)}"></div>
-      <div class="pf-row"><label>Description</label><textarea id="pf-desc">${esc(p.description)}</textarea></div>
-      <div class="pf-row"><label>Website</label><input id="pf-website" value="${esc(p.website)}"></div>
-      <div class="pf-row"><label>GitHub URL</label><input id="pf-github" value="${esc(p.github_url)}"></div>
-      <div class="pf-row"><label>Team</label><input id="pf-team" value="${esc(p.team)}"></div>
+    <div class="card card--form">
+      <div class="pf-row"><label class="card-label">Name *</label><input id="pf-name" value="${esc(p.name)}"></div>
+      <div class="pf-row"><label class="card-label">Description</label><textarea id="pf-desc">${esc(p.description)}</textarea></div>
+      <div class="pf-row"><label class="card-label">Website</label><input id="pf-website" value="${esc(p.website)}"></div>
+      <div class="pf-row"><label class="card-label">GitHub URL</label><input id="pf-github" value="${esc(p.github_url)}"></div>
+      <div class="pf-row"><label class="card-label">Team</label><input id="pf-team" value="${esc(p.team)}"></div>
       <div class="pf-actions">
         <button class="btn btn-sm btn-primary" onclick="submitProject(${initiativeId}, ${projectId || 'null'})">${projectId ? 'Update' : 'Create'}</button>
         <button class="btn btn-sm" onclick="document.getElementById('project-form-slot').innerHTML=''">Cancel</button>

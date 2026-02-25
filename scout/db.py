@@ -25,5 +25,5 @@ def init_db(db_path: str | Path | None = None) -> None:
 
 def get_session() -> Session:
     if _SessionLocal is None:
-        init_db()
+        raise RuntimeError("init_db() has not been called")
     return _SessionLocal()  # type: ignore[misc]

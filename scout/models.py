@@ -134,7 +134,16 @@ class OutreachScore(Base):
 # ---------------------------------------------------------------------------
 
 
-class InitiativeOut(BaseModel):
+class _GradesMixin(BaseModel):
+    grade_team: str | None = None
+    grade_team_num: float | None = None
+    grade_tech: str | None = None
+    grade_tech_num: float | None = None
+    grade_opportunity: str | None = None
+    grade_opportunity_num: float | None = None
+
+
+class InitiativeOut(_GradesMixin):
     id: int
     name: str
     uni: str
@@ -156,13 +165,6 @@ class InitiativeOut(BaseModel):
     engagement_hook: str | None = None
     key_evidence: list[str] = []
     data_gaps: list[str] = []
-    # Dimension grades
-    grade_team: str | None = None
-    grade_team_num: float | None = None
-    grade_tech: str | None = None
-    grade_tech_num: float | None = None
-    grade_opportunity: str | None = None
-    grade_opportunity_num: float | None = None
     # Lightweight overview fields for list view
     technology_domains: str = ""
     categories: str = ""
@@ -178,7 +180,7 @@ class EnrichmentOut(BaseModel):
     fetched_at: str
 
 
-class ProjectOut(BaseModel):
+class ProjectOut(_GradesMixin):
     id: int
     initiative_id: int
     name: str
@@ -190,12 +192,6 @@ class ProjectOut(BaseModel):
     verdict: str | None = None
     score: float | None = None
     classification: str | None = None
-    grade_team: str | None = None
-    grade_team_num: float | None = None
-    grade_tech: str | None = None
-    grade_tech_num: float | None = None
-    grade_opportunity: str | None = None
-    grade_opportunity_num: float | None = None
 
 
 class ProjectCreate(BaseModel):

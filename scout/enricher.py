@@ -24,7 +24,7 @@ GITHUB_API = "https://api.github.com"
 
 
 async def _enrich_page(
-    initiative: Initiative, url: str, source_type: str, summarize: bool = True,
+    initiative: Initiative, url: str, source_type: str,
 ) -> Enrichment | None:
     """Fetch a page, extract text, return an Enrichment."""
     if not url.startswith(("http://", "https://")):
@@ -40,7 +40,7 @@ async def _enrich_page(
     if not text.strip():
         return None
 
-    summary = _summarize_text(text, url) if summarize else f"Content from {url}"
+    summary = _summarize_text(text, url)
     return Enrichment(
         initiative_id=initiative.id,
         source_type=source_type,
@@ -61,7 +61,7 @@ async def enrich_team_page(initiative: Initiative) -> Enrichment | None:
     url = (initiative.team_page or "").strip()
     if not url or url == (initiative.website or "").strip():
         return None
-    return await _enrich_page(initiative, url, "team_page", summarize=False)
+    return await _enrich_page(initiative, url, "team_page")
 
 
 # ---------------------------------------------------------------------------

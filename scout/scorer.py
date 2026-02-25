@@ -153,9 +153,9 @@ class LLMClient:
             )
             text = response.content[0].text.strip()
             # Extract JSON from markdown code blocks (handles ```json etc.)
-            text = re.sub(r'^```[^\n]*\n', '', text).rstrip()
-            if text.endswith("```"):
-                text = text[:-3].rstrip()
+            m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
+            if m:
+                text = m.group(1)
             return json.loads(text)
         else:
             response = self._client.chat.completions.create(
