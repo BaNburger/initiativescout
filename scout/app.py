@@ -81,6 +81,11 @@ def _initiative_to_out(init: Initiative) -> InitiativeOut:
         engagement_hook=latest_score.engagement_hook if latest_score else None,
         key_evidence=evidence,
         data_gaps=gaps,
+        technology_domains=init.technology_domains,
+        categories=init.categories,
+        member_count=init.member_count,
+        outreach_now_score=init.outreach_now_score,
+        venture_upside_score=init.venture_upside_score,
     )
 
 
@@ -112,6 +117,23 @@ def _initiative_to_detail(init: Initiative) -> InitiativeDetail:
         competitions=init.competitions,
         extra_links=extra_links,
         enrichments=enrichment_outs,
+        market_domains=init.market_domains,
+        member_examples=init.member_examples,
+        member_roles=init.member_roles,
+        github_repo_count=init.github_repo_count,
+        github_contributors=init.github_contributors,
+        github_commits_90d=init.github_commits_90d,
+        github_ci_present=init.github_ci_present,
+        huggingface_model_hits=init.huggingface_model_hits,
+        openalex_hits=init.openalex_hits,
+        semantic_scholar_hits=init.semantic_scholar_hits,
+        dd_key_roles=init.dd_key_roles,
+        dd_references_count=init.dd_references_count,
+        dd_is_investable=init.dd_is_investable,
+        profile_coverage_score=init.profile_coverage_score,
+        known_url_count=init.known_url_count,
+        linkedin_hits=init.linkedin_hits,
+        researchgate_hits=init.researchgate_hits,
     )
 
 

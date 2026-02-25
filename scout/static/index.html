@@ -133,6 +133,27 @@ a { color: var(--blue); text-decoration: none; }
 /* --- Links --- */
 .link-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .link-pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--surface-2); color: var(--blue); border: 1px solid var(--border); }
+
+/* --- Domain tags --- */
+.domain-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin: 2px 4px 2px 0; }
+.domain-pill.tech { background: var(--blue-bg); color: var(--blue); }
+.domain-pill.market { background: var(--green-bg); color: var(--green); }
+.domain-pill.cat { background: var(--surface-2); color: var(--ink-dim); }
+
+/* --- Signal grid --- */
+.signal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.signal-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+.signal-card .signal-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.signal-card .signal-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px; }
+
+/* --- Pre-computed scores bar --- */
+.score-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.score-bar-label { font-size: 12px; color: var(--ink-dim); min-width: 100px; }
+.score-bar { flex: 1; height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.score-bar .bar-fill { height: 100%; border-radius: 4px; }
+.score-bar .bar-fill.green { background: var(--green); }
+.score-bar .bar-fill.blue { background: var(--blue); }
+.score-bar-val { font-size: 12px; font-weight: 600; color: var(--ink); min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -430,6 +451,66 @@ function renderDetail(d) {
   // Description
   if (d.description) {
     html += `<div class="detail-section"><h3>Description</h3><p>${esc(d.description)}</p></div>`;
+  }
+
+  // Domain tags
+  const hasDomains = d.technology_domains || d.market_domains || d.categories;
+  if (hasDomains) {
+    html += `<div class="detail-section"><h3>Domains</h3><div>`;
+    if (d.technology_domains) {
+      d.technology_domains.split(';').map(s => s.trim()).filter(Boolean).forEach(t => {
+        html += `<span class="domain-pill tech">${esc(t.replace(/_/g, ' '))}</span>`;
+      });
+    }
+    if (d.market_domains) {
+      d.market_domains.split(';').map(s => s.trim()).filter(Boolean).forEach(m => {
+        html += `<span class="domain-pill market">${esc(m.replace(/_/g, ' '))}</span>`;
+      });
+    }
+    if (d.categories) {
+      html += `<span class="domain-pill cat">${esc(d.categories)}</span>`;
+    }
+    html += `</div></div>`;
+  }
+
+  // Pre-computed scores
+  if (d.outreach_now_score || d.venture_upside_score) {
+    html += `<div class="detail-section"><h3>Pipeline Scores</h3>`;
+    if (d.outreach_now_score != null) {
+      const pct = Math.min(d.outreach_now_score / 5 * 100, 100);
+      html += `<div class="score-bar-row"><span class="score-bar-label">Outreach</span><div class="score-bar"><div class="bar-fill green" style="width:${pct}%"></div></div><span class="score-bar-val">${d.outreach_now_score.toFixed(1)}</span></div>`;
+    }
+    if (d.venture_upside_score != null) {
+      const pct = Math.min(d.venture_upside_score / 5 * 100, 100);
+      html += `<div class="score-bar-row"><span class="score-bar-label">Venture Upside</span><div class="score-bar"><div class="bar-fill blue" style="width:${pct}%"></div></div><span class="score-bar-val">${d.venture_upside_score.toFixed(1)}</span></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Signal cards (GitHub, Research, Team)
+  const hasSignals = d.github_repo_count || d.github_contributors || d.member_count || d.huggingface_model_hits || d.openalex_hits || d.semantic_scholar_hits || d.linkedin_hits;
+  if (hasSignals) {
+    html += `<div class="detail-section"><h3>Signals</h3><div class="signal-grid">`;
+    if (d.member_count) html += `<div class="signal-card"><div class="signal-value">${d.member_count}</div><div class="signal-label">Members</div></div>`;
+    if (d.github_repo_count) html += `<div class="signal-card"><div class="signal-value">${d.github_repo_count}</div><div class="signal-label">Repos</div></div>`;
+    if (d.github_contributors) html += `<div class="signal-card"><div class="signal-value">${d.github_contributors}</div><div class="signal-label">Contributors</div></div>`;
+    if (d.github_commits_90d) html += `<div class="signal-card"><div class="signal-value">${d.github_commits_90d}</div><div class="signal-label">Commits (90d)</div></div>`;
+    if (d.huggingface_model_hits) html += `<div class="signal-card"><div class="signal-value">${d.huggingface_model_hits}</div><div class="signal-label">HF Models</div></div>`;
+    if (d.openalex_hits) html += `<div class="signal-card"><div class="signal-value">${d.openalex_hits}</div><div class="signal-label">OpenAlex</div></div>`;
+    if (d.semantic_scholar_hits) html += `<div class="signal-card"><div class="signal-value">${d.semantic_scholar_hits}</div><div class="signal-label">Semantic Scholar</div></div>`;
+    if (d.linkedin_hits) html += `<div class="signal-card"><div class="signal-value">${d.linkedin_hits}</div><div class="signal-label">LinkedIn</div></div>`;
+    if (d.researchgate_hits) html += `<div class="signal-card"><div class="signal-value">${d.researchgate_hits}</div><div class="signal-label">ResearchGate</div></div>`;
+    html += `</div></div>`;
+  }
+
+  // Due diligence
+  if (d.dd_is_investable || d.dd_key_roles || d.dd_references_count) {
+    html += `<div class="detail-section"><h3>Due Diligence</h3><ul>`;
+    if (d.dd_is_investable) html += `<li style="color:var(--green)">Investable</li>`;
+    if (d.dd_references_count) html += `<li>References: ${d.dd_references_count}</li>`;
+    if (d.dd_key_roles) html += `<li>Key roles: ${esc(d.dd_key_roles.replace(/_/g, ' '))}</li>`;
+    if (d.member_roles) html += `<li>Member roles: ${esc(d.member_roles.replace(/_/g, ' '))}</li>`;
+    html += `</ul></div>`;
   }
 
   // Links

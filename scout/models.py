@@ -4,7 +4,7 @@ from datetime import datetime, UTC
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -34,6 +34,37 @@ class Initiative(Base):
     sheet_source: Mapped[str] = mapped_column(String(50), default="")
     extra_links_json: Mapped[str] = mapped_column(Text, default="{}")
     imported_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # --- Fields from overview spreadsheet ---
+    # Classification
+    technology_domains: Mapped[str] = mapped_column(Text, default="")
+    market_domains: Mapped[str] = mapped_column(Text, default="")
+    categories: Mapped[str] = mapped_column(Text, default="")
+    # Team signals
+    member_count: Mapped[int] = mapped_column(Integer, default=0)
+    member_examples: Mapped[str] = mapped_column(Text, default="")
+    member_roles: Mapped[str] = mapped_column(Text, default="")
+    # GitHub signals
+    github_repo_count: Mapped[int] = mapped_column(Integer, default=0)
+    github_contributors: Mapped[int] = mapped_column(Integer, default=0)
+    github_commits_90d: Mapped[int] = mapped_column(Integer, default=0)
+    github_ci_present: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Research signals
+    huggingface_model_hits: Mapped[int] = mapped_column(Integer, default=0)
+    openalex_hits: Mapped[int] = mapped_column(Integer, default=0)
+    semantic_scholar_hits: Mapped[int] = mapped_column(Integer, default=0)
+    # Due diligence
+    dd_key_roles: Mapped[str] = mapped_column(Text, default="")
+    dd_references_count: Mapped[int] = mapped_column(Integer, default=0)
+    dd_is_investable: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Pre-computed scores
+    outreach_now_score: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    venture_upside_score: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Coverage
+    profile_coverage_score: Mapped[int] = mapped_column(Integer, default=0)
+    known_url_count: Mapped[int] = mapped_column(Integer, default=0)
+    linkedin_hits: Mapped[int] = mapped_column(Integer, default=0)
+    researchgate_hits: Mapped[int] = mapped_column(Integer, default=0)
 
     enrichments: Mapped[list[Enrichment]] = relationship("Enrichment", back_populates="initiative", cascade="all, delete-orphan")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="initiative", cascade="all, delete-orphan")
@@ -99,6 +130,12 @@ class InitiativeOut(BaseModel):
     engagement_hook: str | None = None
     key_evidence: list[str] = []
     data_gaps: list[str] = []
+    # Lightweight overview fields for list view
+    technology_domains: str = ""
+    categories: str = ""
+    member_count: int = 0
+    outreach_now_score: float | None = None
+    venture_upside_score: float | None = None
 
 
 class InitiativeDetail(InitiativeOut):
@@ -111,6 +148,24 @@ class InitiativeDetail(InitiativeOut):
     competitions: str = ""
     extra_links: dict[str, str] = {}
     enrichments: list[EnrichmentOut] = []
+    # Full overview fields
+    market_domains: str = ""
+    member_examples: str = ""
+    member_roles: str = ""
+    github_repo_count: int = 0
+    github_contributors: int = 0
+    github_commits_90d: int = 0
+    github_ci_present: bool = False
+    huggingface_model_hits: int = 0
+    openalex_hits: int = 0
+    semantic_scholar_hits: int = 0
+    dd_key_roles: str = ""
+    dd_references_count: int = 0
+    dd_is_investable: bool = False
+    profile_coverage_score: int = 0
+    known_url_count: int = 0
+    linkedin_hits: int = 0
+    researchgate_hits: int = 0
 
 
 class EnrichmentOut(BaseModel):

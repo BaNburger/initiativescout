@@ -11,9 +11,9 @@ node_modules/
 *.egg-info/
 .benchmarks/
 
-# Generated pipeline artifacts
-data/initiatives.db
-data/initiatives.db-journal
-data/exports/*.json
-data/exports/*.csv
-reports/latest/phase1_summary.md
+# Scout runtime data
+scout/data/scout.db
+scout/data/scout.db-journal
+
+# Retired CLI artifacts
+archive/
