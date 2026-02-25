@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Talent Scout Log — Prototype</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --text-secondary: #78716c;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --hot: #dc2626;
+    --hot-bg: #fef2f2;
+    --warm: #ea580c;
+    --warm-bg: #fff7ed;
+    --watch: #2563eb;
+    --watch-bg: #eff6ff;
+    --tag-bg: #f5f5f4;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 32px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin-bottom: 32px; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .tab {
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    font-family: inherit;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+
+  /* Panels */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: box-shadow 0.15s;
+  }
+  .card:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+  }
+  .card-title { font-size: 15px; font-weight: 600; }
+  .card-meta { font-size: 13px; color: var(--text-secondary); }
+  .card-body { font-size: 14px; color: var(--text-secondary); }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .badge-hot { background: var(--hot-bg); color: var(--hot); }
+  .badge-warm { background: var(--warm-bg); color: var(--warm); }
+  .badge-watch { background: var(--watch-bg); color: var(--watch); }
+  .badge-type {
+    background: var(--tag-bg);
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+  .badge-status-upcoming { background: #f0fdf4; color: #16a34a; }
+  .badge-status-attended { background: var(--tag-bg); color: var(--text-secondary); }
+
+  /* Tags row */
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+  /* Table-like layout for sightings */
+  .sighting-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 140px 80px;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .sighting-row:last-child { border-bottom: none; }
+  .sighting-header {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    font-weight: 500;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 180px 1fr 140px 80px;
+    gap: 12px;
+  }
+  .sighting-name { font-weight: 500; }
+  .sighting-project { color: var(--text-secondary); }
+  .sighting-event { color: var(--text-secondary); font-size: 13px; }
+
+  /* Quick stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .stat-value { font-size: 28px; font-weight: 600; }
+  .stat-label { font-size: 13px; color: var(--text-secondary); }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+  .filter-bar select, .filter-bar input {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text);
+  }
+  .filter-bar input { flex: 1; max-width: 240px; }
+
+  /* Section headers */
+  .section-header {
+    font-size: 13px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    margin-top: 8px;
+  }
+
+  /* Person detail */
+  .person-timeline {
+    border-left: 2px solid var(--border);
+    margin-left: 8px;
+    padding-left: 20px;
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 16px;
+  }
+  .timeline-item::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: var(--border);
+    border-radius: 50%;
+    position: absolute;
+    left: -25px;
+    top: 6px;
+  }
+  .timeline-item.hot::before { background: var(--hot); }
+  .timeline-item.warm::before { background: var(--warm); }
+  .timeline-date { font-size: 12px; color: var(--text-secondary); }
+  .timeline-content { font-size: 14px; }
+  .timeline-event { font-weight: 500; font-size: 14px; }
+
+  /* Notion schema section */
+  .schema-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin-top: 32px;
+  }
+  .schema-section h3 { font-size: 16px; margin-bottom: 16px; }
+  .schema-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .schema-table th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid var(--border);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+  }
+  .schema-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .schema-table tr:last-child td { border-bottom: none; }
+  .prop-type {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    background: var(--tag-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  .empty-note {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+
+  /* Quick add mock */
+  .quick-add {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .quick-add-btn {
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+  .quick-add-btn:hover { background: var(--tag-bg); }
+  .quick-add-btn.primary {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .quick-add-btn.primary:hover { opacity: 0.9; }
+
+  .muted { opacity: 0.5; font-style: italic; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .sighting-row { grid-template-columns: 1fr; gap: 4px; }
+    .sighting-header { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Talent Scout Log</h1>
+<p class="subtitle">Event tracking & talent pipeline for student initiative scouting</p>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-value">23</div>
+    <div class="stat-label">Events tracked</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">67</div>
+    <div class="stat-label">People spotted</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" style="color: var(--hot)">8</div>
+    <div class="stat-label">Hot prospects</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">3</div>
+    <div class="stat-label">Events this week</div>
+  </div>
+</div>
+
+<div class="quick-add">
+  <button class="quick-add-btn primary">+ Log Sighting</button>
+  <button class="quick-add-btn">+ Add Event</button>
+  <button class="quick-add-btn">+ Add Person</button>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="showPanel('sightings')">Recent Sightings</button>
+  <button class="tab" onclick="showPanel('events')">Events</button>
+  <button class="tab" onclick="showPanel('people')">People</button>
+  <button class="tab" onclick="showPanel('person-detail')">Person Detail</button>
+  <button class="tab" onclick="showPanel('schema')">Notion Schema</button>
+</div>
+
+<!-- SIGHTINGS PANEL -->
+<div id="sightings" class="panel active">
+  <div class="filter-bar">
+    <select>
+      <option>All assessments</option>
+      <option>🔴 Hot</option>
+      <option>🟠 Warm</option>
+      <option>🔵 Watch</option>
+    </select>
+    <select>
+      <option>Last 30 days</option>
+      <option>Last 90 days</option>
+      <option>This semester</option>
+      <option>All time</option>
+    </select>
+    <input type="text" placeholder="Search people or events...">
+  </div>
+
+  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+    <div class="sighting-header">
+      <span>Person</span>
+      <span>What they built / did</span>
+      <span>Event</span>
+      <span>Rating</span>
+    </div>
+
+    <div class="sighting-row">
+      <div>
+        <div class="sighting-name">Anna Meier</div>
+        <div style="font-size: 12px; color: var(--text-secondary);">TUM.ai</div>
+      </div>
+      <div class="sighting-project">AI triage tool for ER departments. Won 1st place. Strong pitch, deep technical understanding. Already has LOI from Klinikum rechts der Isar.</div>
+      <div class="sighting-event">TUM.ai Demo Day</div>
+      <div><span class="badge badge-hot">Hot</span></div>
+    </div>
+
+    <div class="sighting-row">
+      <div>
+        <div class="sighting-name">Lukas Bauer</div>
+        <div style="font-size: 12px; color: var(--text-secondary);">CDTM</div>
+      </div>
+      <div class="sighting-project">Supply chain visibility platform. 2nd time seeing him — each project more ambitious. Good at recruiting team members.</div>
+      <div class="sighting-event">CDTM Batch Demo</div>
+      <div><span class="badge badge-hot">Hot</span></div>
+    </div>
+
+    <div class="sighting-row">
+      <div>
+        <div class="sighting-name">Sarah Kim</div>
+        <div style="font-size: 12px; color: var(--text-secondary);">Manage & More</div>
+      </div>
+      <div class="sighting-project">Marketplace for freelance lab technicians. Interesting niche. Team of 2, early stage but sharp thinking.</div>
+      <div class="sighting-event">M&M Pitch Night</div>
+      <div><span class="badge badge-warm">Warm</span></div>
+    </div>
+
+    <div class="sighting-row">
+      <div>
+        <div class="sighting-name">Felix Schneider</div>
+        <div style="font-size: 12px; color: var(--text-secondary);">TUM.ai</div>
+      </div>
+      <div class="sighting-project">LLM fine-tuning wrapper. Good technical execution, unclear market vision. Worth tracking.</div>
+      <div class="sighting-event">TUM.ai Demo Day</div>
+      <div><span class="badge badge-watch">Watch</span></div>
+    </div>
+
+    <div class="sighting-row">
+      <div>
+        <div class="sighting-name">Maria Gonzalez</div>
+        <div style="font-size: 12px; color: var(--text-secondary);">UnternehmerTUM</div>
+      </div>
+      <div class="sighting-project">Carbon credit verification via satellite imagery. Won audience vote. 3rd sighting — consistently excellent. Mentioned looking for pre-seed.</div>
+      <div class="sighting-event">Xplore Finale</div>
+      <div><span class="badge badge-hot">Hot</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- EVENTS PANEL -->
+<div id="events" class="panel">
+  <div class="filter-bar">
+    <select>
+      <option>All types</option>
+      <option>Demo Day</option>
+      <option>Hackathon</option>
+      <option>Pitch Night</option>
+      <option>Workshop</option>
+      <option>Meetup</option>
+    </select>
+    <select>
+      <option>All orgs</option>
+      <option>TUM.ai</option>
+      <option>CDTM</option>
+      <option>Manage & More</option>
+      <option>UnternehmerTUM</option>
+      <option>TechFounders</option>
+    </select>
+    <select>
+      <option>All statuses</option>
+      <option>Upcoming</option>
+      <option>Attended</option>
+      <option>Skipped</option>
+    </select>
+  </div>
+
+  <div class="section-header">Upcoming</div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">TUM.ai Makeathon 2026</div>
+        <div class="card-meta">TUM.ai · Mar 15, 2026 · Garching</div>
+      </div>
+      <div class="tags">
+        <span class="badge badge-type">Hackathon</span>
+        <span class="badge badge-status-upcoming">Upcoming</span>
+      </div>
+    </div>
+    <div class="card-body">Annual makeathon. ~200 participants, corporate sponsors. Good for spotting technical talent. Last year produced 2 hot prospects.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">CDTM Spring Batch Demo Day</div>
+        <div class="card-meta">CDTM · Mar 22, 2026 · Munich</div>
+      </div>
+      <div class="tags">
+        <span class="badge badge-type">Demo Day</span>
+        <span class="badge badge-status-upcoming">Upcoming</span>
+      </div>
+    </div>
+    <div class="card-body">12 teams presenting. Private event — got invite via Slack. High signal, CDTM consistently produces strong founders.</div>
+  </div>
+
+  <div class="section-header" style="margin-top: 24px;">Recently Attended</div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">TUM.ai Demo Day W25</div>
+        <div class="card-meta">TUM.ai · Feb 8, 2026 · Garching</div>
+      </div>
+      <div class="tags">
+        <span class="badge badge-type">Demo Day</span>
+        <span class="badge badge-status-attended">Attended</span>
+      </div>
+    </div>
+    <div class="card-body">8 teams. 2 strong standouts (Anna Meier, Felix Schneider). Overall cohort quality above average. <strong>3 sightings logged.</strong></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Xplore Finale</div>
+        <div class="card-meta">UnternehmerTUM · Feb 1, 2026 · Munich</div>
+      </div>
+      <div class="tags">
+        <span class="badge badge-type">Demo Day</span>
+        <span class="badge badge-status-attended">Attended</span>
+      </div>
+    </div>
+    <div class="card-body">12 teams. Maria Gonzalez stood out again — 3rd time seeing her, consistently improving. Worth reaching out soon. <strong>4 sightings logged.</strong></div>
+  </div>
+</div>
+
+<!-- PEOPLE PANEL -->
+<div id="people" class="panel">
+  <div class="filter-bar">
+    <select>
+      <option>All ratings</option>
+      <option>🔴 Hot</option>
+      <option>🟠 Warm</option>
+      <option>🔵 Watch</option>
+    </select>
+    <select>
+      <option>All orgs</option>
+      <option>TUM.ai</option>
+      <option>CDTM</option>
+      <option>Manage & More</option>
+      <option>UnternehmerTUM</option>
+    </select>
+    <input type="text" placeholder="Search people...">
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Maria Gonzalez <span class="badge badge-hot" style="margin-left: 6px;">Hot</span></div>
+        <div class="card-meta">UnternehmerTUM · 3 sightings · First seen: Sep 2025</div>
+      </div>
+    </div>
+    <div class="card-body">Carbon credit verification. Consistently strong across events. Mentioned looking for pre-seed. <strong>→ Reach out</strong></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Anna Meier <span class="badge badge-hot" style="margin-left: 6px;">Hot</span></div>
+        <div class="card-meta">TUM.ai · 1 sighting · First seen: Feb 2026</div>
+      </div>
+    </div>
+    <div class="card-body">AI triage for ERs. Won TUM.ai Demo Day. Already has LOI. Strong technical + pitch.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Lukas Bauer <span class="badge badge-hot" style="margin-left: 6px;">Hot</span></div>
+        <div class="card-meta">CDTM · 2 sightings · First seen: Nov 2025</div>
+      </div>
+    </div>
+    <div class="card-body">Supply chain visibility. Each project more ambitious than the last. Good team builder.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Sarah Kim <span class="badge badge-warm" style="margin-left: 6px;">Warm</span></div>
+        <div class="card-meta">Manage & More · 1 sighting · First seen: Jan 2026</div>
+      </div>
+    </div>
+    <div class="card-body">Freelance lab tech marketplace. Sharp thinking, early stage. Team of 2.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Felix Schneider <span class="badge badge-watch" style="margin-left: 6px;">Watch</span></div>
+        <div class="card-meta">TUM.ai · 1 sighting · First seen: Feb 2026</div>
+      </div>
+    </div>
+    <div class="card-body">LLM fine-tuning wrapper. Good execution, unclear market. Track for next event.</div>
+  </div>
+</div>
+
+<!-- PERSON DETAIL PANEL -->
+<div id="person-detail" class="panel">
+  <div class="card" style="margin-bottom: 24px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+      <div>
+        <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">Maria Gonzalez</h2>
+        <div class="card-meta">UnternehmerTUM · Carbon credit verification via satellite imagery</div>
+        <div class="tags" style="margin-top: 8px;">
+          <span class="badge badge-hot">Hot</span>
+          <span class="badge badge-type">Technical</span>
+          <span class="badge badge-type">Climate</span>
+          <span class="badge badge-type">Looking for funding</span>
+        </div>
+      </div>
+      <div style="text-align: right; font-size: 13px; color: var(--text-secondary);">
+        <div>3 sightings</div>
+        <div>First seen: Sep 2025</div>
+        <div style="margin-top: 4px;">
+          <a href="#" style="color: var(--accent); text-decoration: none; font-size: 12px;">LinkedIn ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-header">Sighting Timeline</div>
+
+  <div class="person-timeline">
+    <div class="timeline-item hot">
+      <div class="timeline-date">Feb 1, 2026</div>
+      <div class="timeline-event">Xplore Finale <span class="badge badge-hot" style="margin-left: 4px; font-size: 11px;">Hot</span></div>
+      <div class="timeline-content">Won audience vote with carbon credit verification platform. Satellite imagery analysis + blockchain anchoring. Mentioned actively looking for pre-seed. Team of 3 now (was 2 last time). Presentation quality significantly improved.</div>
+    </div>
+
+    <div class="timeline-item warm">
+      <div class="timeline-date">Nov 18, 2025</div>
+      <div class="timeline-event">UnternehmerTUM Pitch Night <span class="badge badge-warm" style="margin-left: 4px; font-size: 11px;">Warm</span></div>
+      <div class="timeline-content">Presented early prototype of satellite-based verification. Technical approach promising but business model still forming. Good audience engagement. Team of 2.</div>
+    </div>
+
+    <div class="timeline-item">
+      <div class="timeline-date">Sep 22, 2025</div>
+      <div class="timeline-event">Xplore Kickoff <span class="badge badge-watch" style="margin-left: 4px; font-size: 11px;">Watch</span></div>
+      <div class="timeline-content">First spotted. Strong technical background (remote sensing PhD candidate). Interesting problem space. Worth tracking through the program.</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 24px; padding: 16px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; font-size: 14px;">
+    <strong>Scout Note:</strong> Trajectory is clearly upward. 3 sightings over 5 months, each time stronger. Now actively fundraising. Recommend reaching out within 2 weeks before she's oversubscribed.
+  </div>
+</div>
+
+<!-- SCHEMA PANEL -->
+<div id="schema" class="panel">
+  <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 24px;">
+    Three linked Notion databases. The magic is in <strong>Sightings</strong> — it's the join table that lets you track someone across multiple events and see their trajectory over time.
+  </p>
+
+  <div class="schema-section">
+    <h3>📅 Events</h3>
+    <table class="schema-table">
+      <thead>
+        <tr><th>Property</th><th>Type</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Event Name</td><td><span class="prop-type">title</span></td><td>e.g. "TUM.ai Demo Day W25"</td></tr>
+        <tr><td>Date</td><td><span class="prop-type">date</span></td><td></td></tr>
+        <tr><td>Organization</td><td><span class="prop-type">select</span></td><td>TUM.ai, CDTM, M&M, UnternehmerTUM, etc.</td></tr>
+        <tr><td>Type</td><td><span class="prop-type">select</span></td><td>Demo Day, Hackathon, Pitch Night, Workshop, Meetup</td></tr>
+        <tr><td>Status</td><td><span class="prop-type">select</span></td><td>Upcoming, Attended, Skipped</td></tr>
+        <tr><td>Source</td><td><span class="prop-type">select</span></td><td>Luma, Eventbrite, Slack, Word of mouth</td></tr>
+        <tr><td>URL</td><td><span class="prop-type">url</span></td><td>Link to event page</td></tr>
+        <tr><td>Sightings</td><td><span class="prop-type">relation → Sightings</span></td><td>Auto-populated</td></tr>
+        <tr><td>Notes</td><td><span class="prop-type">rich_text</span></td><td>Overall event impression, cohort quality</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="schema-section">
+    <h3>👤 People</h3>
+    <table class="schema-table">
+      <thead>
+        <tr><th>Property</th><th>Type</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Name</td><td><span class="prop-type">title</span></td><td></td></tr>
+        <tr><td>Organization</td><td><span class="prop-type">select</span></td><td>Primary affiliation</td></tr>
+        <tr><td>Rating</td><td><span class="prop-type">select</span></td><td>🔴 Hot, 🟠 Warm, 🔵 Watch</td></tr>
+        <tr><td>Sightings Count</td><td><span class="prop-type">rollup</span></td><td>Count of related Sightings</td></tr>
+        <tr><td>First Seen</td><td><span class="prop-type">rollup</span></td><td>Earliest date from Sightings</td></tr>
+        <tr><td>Latest Sighting</td><td><span class="prop-type">rollup</span></td><td>Most recent date from Sightings</td></tr>
+        <tr><td>LinkedIn</td><td><span class="prop-type">url</span></td><td></td></tr>
+        <tr><td>Email</td><td><span class="prop-type">email</span></td><td></td></tr>
+        <tr><td>Tags</td><td><span class="prop-type">multi_select</span></td><td>Technical, Business, Climate, AI, etc.</td></tr>
+        <tr><td>Sightings</td><td><span class="prop-type">relation → Sightings</span></td><td>Auto-populated</td></tr>
+        <tr><td>Notes</td><td><span class="prop-type">rich_text</span></td><td>Overall assessment, context</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="schema-section">
+    <h3>👁 Sightings <span style="font-weight: 400; font-size: 14px; color: var(--text-secondary);">(the join table — this is where the value lives)</span></h3>
+    <table class="schema-table">
+      <thead>
+        <tr><th>Property</th><th>Type</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Title</td><td><span class="prop-type">formula</span></td><td>Auto: "Person @ Event"</td></tr>
+        <tr><td>Person</td><td><span class="prop-type">relation → People</span></td><td></td></tr>
+        <tr><td>Event</td><td><span class="prop-type">relation → Events</span></td><td></td></tr>
+        <tr><td>Date</td><td><span class="prop-type">rollup</span></td><td>From related Event</td></tr>
+        <tr><td>Assessment</td><td><span class="prop-type">select</span></td><td>🔴 Hot, 🟠 Warm, 🔵 Watch</td></tr>
+        <tr><td>What they built</td><td><span class="prop-type">rich_text</span></td><td>Project description, outcome</td></tr>
+        <tr><td>Notes</td><td><span class="prop-type">rich_text</span></td><td>Your observations, impressions</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top: 24px; padding: 16px; background: var(--accent-light); border-radius: 8px; font-size: 14px;">
+    <strong>Key queries this enables:</strong>
+    <ul style="margin-top: 8px; padding-left: 20px; color: var(--text-secondary);">
+      <li>"Who have I rated Hot in the last 3 months?" → Filter People by Rating + Latest Sighting</li>
+      <li>"Who keeps showing up?" → Sort People by Sightings Count descending</li>
+      <li>"How was that event?" → Open Event, see all Sightings inline</li>
+      <li>"What's Maria's trajectory?" → Open Person, see timeline of Sightings</li>
+      <li>"What should I attend next?" → Filter Events by Status = Upcoming</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+function showPanel(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  // Find the tab that matches
+  const tabs = document.querySelectorAll('.tab');
+  const panelIds = ['sightings', 'events', 'people', 'person-detail', 'schema'];
+  const idx = panelIds.indexOf(id);
+  if (idx >= 0) tabs[idx].classList.add('active');
+}
+</script>
+
+</body>
+</html>

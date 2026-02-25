@@ -1,0 +1,245 @@
+[
+  {
+    "initiative_id": 35,
+    "initiative_name": "START Munich",
+    "team_strength": 4.0831,
+    "supporting_signals": [
+      "450+ historical members",
+      "Alumni founded Freeletics",
+      "IDnow",
+      "Trade Republic",
+      "40+ events annually",
+      "leadership_mentions:9",
+      "achievement_mentions:7"
+    ],
+    "composite_score": 3.2034,
+    "outreach_now_score": 3.3796,
+    "venture_upside_score": 3.0483
+  },
+  {
+    "initiative_id": 2,
+    "initiative_name": "TUM Boring",
+    "team_strength": 3.8805,
+    "supporting_signals": [
+      "65 members",
+      "16 countries",
+      "3x consecutive winner",
+      "22.5m depth record",
+      "22-ton boring machine",
+      "60 members from 16+ countries",
+      "3x consecutive competition winner (2023-2025)",
+      "22.5m record in 7-day competition",
+      "leadership_mentions:4",
+      "achievement_mentions:8"
+    ],
+    "composite_score": 3.5338,
+    "outreach_now_score": 3.2267,
+    "venture_upside_score": 3.2871
+  },
+  {
+    "initiative_id": 170,
+    "initiative_name": "PushQuantum",
+    "team_strength": 3.7467,
+    "supporting_signals": [
+      "leadership_mentions:14",
+      "achievement_mentions:8"
+    ],
+    "composite_score": 3.5744,
+    "outreach_now_score": 4.0882,
+    "venture_upside_score": 3.6945
+  },
+  {
+    "initiative_id": 23,
+    "initiative_name": "Munich Center for Machine Learning (MCML)",
+    "team_strength": 3.5685,
+    "supporting_signals": [
+      "600+ affiliated",
+      "80+ PIs",
+      "520+ junior members",
+      "national recognition",
+      "leadership_mentions:2",
+      "achievement_mentions:1",
+      "leadership_mentions:3"
+    ],
+    "composite_score": 3.3274,
+    "outreach_now_score": 3.3666,
+    "venture_upside_score": 3.2523
+  },
+  {
+    "initiative_id": 1,
+    "initiative_name": "WARR (Wissenschaftliche Arbeitsgruppe für Raketentechnik und Raumfahrt)",
+    "team_strength": 3.5328,
+    "supporting_signals": [
+      "400+ students",
+      "First EU student cryogenic bi-liquid rocket (2024)",
+      "MOVE CubeSats in orbit",
+      "60+ year history",
+      "~400 students",
+      "First cryogenic bi-liquid rocket in European student rocketry (2024)",
+      "leadership_mentions:3",
+      "achievement_mentions:1"
+    ],
+    "composite_score": 3.4561,
+    "outreach_now_score": 3.3197,
+    "venture_upside_score": 3.3144
+  },
+  {
+    "initiative_id": 4,
+    "initiative_name": "TUM Hyperloop (NEXT Prototypes)",
+    "team_strength": 3.4095,
+    "supporting_signals": [
+      "Won all SpaceX Hyperloop competitions",
+      "world record 482 km/h",
+      "50+ members",
+      "won all 4 SpaceX Hyperloop competitions",
+      "leadership_mentions:0",
+      "achievement_mentions:3",
+      "achievement_mentions:1"
+    ],
+    "composite_score": 2.9398,
+    "outreach_now_score": 2.6259,
+    "venture_upside_score": 2.7274
+  },
+  {
+    "initiative_id": 5,
+    "initiative_name": "TUM.ai",
+    "team_strength": 3.393,
+    "supporting_signals": [
+      "90+ active members",
+      "AI Entrepreneurship Lab (equity-free incubator)",
+      "AI Summit",
+      "leadership_mentions:0",
+      "achievement_mentions:0"
+    ],
+    "composite_score": 3.065,
+    "outreach_now_score": 2.301,
+    "venture_upside_score": 2.7753
+  },
+  {
+    "initiative_id": 92,
+    "initiative_name": "Enactus Straubing",
+    "team_strength": 3.3404,
+    "supporting_signals": [
+      "leadership_mentions:11",
+      "achievement_mentions:6"
+    ],
+    "composite_score": 3.0655,
+    "outreach_now_score": 3.5049,
+    "venture_upside_score": 3.1378
+  },
+  {
+    "initiative_id": 3,
+    "initiative_name": "TUM Autonomous Motorsport",
+    "team_strength": 3.2999,
+    "supporting_signals": [
+      "15 PhD + 3 Master's",
+      "4x Indy Autonomous Challenge winner",
+      "A2RL 2024 winner",
+      "CES winner",
+      "15 PhD candidates + 3 Master's students",
+      "Multiple Indy Autonomous Challenge wins (2021-2024)",
+      "Abu Dhabi A2RL winner 2024",
+      "CES Autonomous Challenge winner",
+      "leadership_mentions:3",
+      "achievement_mentions:1"
+    ],
+    "composite_score": 3.3222,
+    "outreach_now_score": 2.9121,
+    "venture_upside_score": 3.1976
+  },
+  {
+    "initiative_id": 39,
+    "initiative_name": "Strascheg Center for Entrepreneurship (SCE)",
+    "team_strength": 3.243,
+    "supporting_signals": [
+      "Staff + portfolio",
+      "#1 German startup support (2025)",
+      "FT Europe #12 startup hub",
+      "GasVisor spinout (€600k raised)",
+      "leadership_mentions:20",
+      "achievement_mentions:2",
+      "achievement_mentions:4"
+    ],
+    "composite_score": 3.5527,
+    "outreach_now_score": 3.8573,
+    "venture_upside_score": 3.6351
+  },
+  {
+    "initiative_id": 40,
+    "initiative_name": "PERSIS (SPACE LAB)",
+    "team_strength": 3.2315,
+    "supporting_signals": [
+      "15 students",
+      "REXUS 33 selection",
+      "first successful 3D printing in open space (2023)",
+      "leadership_mentions:28",
+      "achievement_mentions:0"
+    ],
+    "composite_score": 3.1395,
+    "outreach_now_score": 2.5128,
+    "venture_upside_score": 3.2537
+  },
+  {
+    "initiative_id": 29,
+    "initiative_name": "municHMotorsport",
+    "team_strength": 3.2151,
+    "supporting_signals": [
+      "~120 students",
+      "~60 students",
+      "15+ years competition experience",
+      "BMW/Bosch/Siemens partnerships",
+      "leadership_mentions:5",
+      "achievement_mentions:0"
+    ],
+    "composite_score": 3.013,
+    "outreach_now_score": 2.599,
+    "venture_upside_score": 2.6636
+  },
+  {
+    "initiative_id": 8,
+    "initiative_name": "TUfast Racing Team",
+    "team_strength": 3.1756,
+    "supporting_signals": [
+      "60+ members",
+      "20 nationalities",
+      "Active since 2004",
+      "electric transition complete",
+      "autonomous capabilities",
+      "leadership_mentions:4",
+      "achievement_mentions:3"
+    ],
+    "composite_score": 3.0644,
+    "outreach_now_score": 2.6484,
+    "venture_upside_score": 2.7863
+  },
+  {
+    "initiative_id": 20,
+    "initiative_name": "hackaTUM",
+    "team_strength": 3.1328,
+    "supporting_signals": [
+      "Organizers + 200+ participants",
+      "10 years running",
+      "200+ participants",
+      "major sponsor partnerships",
+      "leadership_mentions:3",
+      "achievement_mentions:1"
+    ],
+    "composite_score": 2.0678,
+    "outreach_now_score": 1.6183,
+    "venture_upside_score": 1.7929
+  },
+  {
+    "initiative_id": 15,
+    "initiative_name": "RoboTUM",
+    "team_strength": 3.0085,
+    "supporting_signals": [
+      "60+ students",
+      "Developing humanoid robots exceeding 15 km/h",
+      "leadership_mentions:0",
+      "achievement_mentions:0"
+    ],
+    "composite_score": 2.8022,
+    "outreach_now_score": 2.1404,
+    "venture_upside_score": 2.7489
+  }
+]

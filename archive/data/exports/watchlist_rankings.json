@@ -1,0 +1,377 @@
+[
+  {
+    "initiative_name": "MTP – Marketing zwischen Theorie und Praxis",
+    "item_key": "139",
+    "initiative_id": 139,
+    "rank": 1,
+    "score": 1.9557,
+    "supporting": [
+      "MTP – Marketing zwischen Theorie und Praxis"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "Munich eSports",
+    "item_key": "145",
+    "initiative_id": 145,
+    "rank": 2,
+    "score": 1.9557,
+    "supporting": [
+      "Munich eSports"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "spinout_candidate",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "WARR (Wissenschaftliche Arbeitsgruppe für Raketentechnik und Raumfahrt)",
+    "item_key": "1",
+    "initiative_id": 1,
+    "rank": 3,
+    "score": 1.954,
+    "supporting": [
+      "WARR (Wissenschaftliche Arbeitsgruppe für Raketentechnik und Raumfahrt)"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "spinout_candidate",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "WARR – Wissenschaftliche Arbeitsgemeinschaft für Raketentechnik und Raumfahrt",
+    "item_key": "222",
+    "initiative_id": 222,
+    "rank": 4,
+    "score": 1.954,
+    "supporting": [
+      "WARR – Wissenschaftliche Arbeitsgemeinschaft für Raketentechnik und Raumfahrt"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "spinout_candidate",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "Nachhoelzer",
+    "item_key": "153",
+    "initiative_id": 153,
+    "rank": 5,
+    "score": 1.9215,
+    "supporting": [
+      "Nachhoelzer"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "RockYourLife! München",
+    "item_key": "174",
+    "initiative_id": 174,
+    "rank": 6,
+    "score": 1.912,
+    "supporting": [
+      "RockYourLife! München"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "MTP",
+    "item_key": "276",
+    "initiative_id": 276,
+    "rank": 7,
+    "score": 1.912,
+    "supporting": [
+      "MTP"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "Fusian Dance Crew",
+    "item_key": "102",
+    "initiative_id": 102,
+    "rank": 8,
+    "score": 1.9103,
+    "supporting": [
+      "Fusian Dance Crew"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "Hochschulgruppe des Landesbunds für Vogelschutz Freising",
+    "item_key": "111",
+    "initiative_id": 111,
+    "rank": 9,
+    "score": 1.9103,
+    "supporting": [
+      "Hochschulgruppe des Landesbunds für Vogelschutz Freising"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_emerging",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "German Chinese Student Club",
+    "item_key": "106",
+    "initiative_id": 106,
+    "rank": 10,
+    "score": 1.8777,
+    "supporting": [
+      "German Chinese Student Club"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "Campus Traders",
+    "item_key": "73",
+    "initiative_id": 73,
+    "rank": 11,
+    "score": 1.8665,
+    "supporting": [
+      "Campus Traders"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "der tu film",
+    "item_key": "80",
+    "initiative_id": 80,
+    "rank": 12,
+    "score": 1.8665,
+    "supporting": [
+      "der tu film"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "Global Shapers Munich",
+    "item_key": "107",
+    "initiative_id": 107,
+    "rank": 13,
+    "score": 1.8665,
+    "supporting": [
+      "Global Shapers Munich"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "iGEM München",
+    "item_key": "115",
+    "initiative_id": 115,
+    "rank": 14,
+    "score": 1.8665,
+    "supporting": [
+      "iGEM München"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  },
+  {
+    "initiative_name": "jDPG RG München",
+    "item_key": "124",
+    "initiative_id": 124,
+    "rank": 15,
+    "score": 1.8665,
+    "supporting": [
+      "jDPG RG München"
+    ],
+    "evidence_count": 0,
+    "blocking_gates": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "segment": "watchlist_general",
+    "strong_in": [],
+    "support_priority": "tech"
+  }
+]

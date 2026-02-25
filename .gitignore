@@ -1,0 +1,19 @@
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual env
+.venv/
+node_modules/
+
+# Build/install metadata
+*.egg-info/
+.benchmarks/
+
+# Generated pipeline artifacts
+data/initiatives.db
+data/initiatives.db-journal
+data/exports/*.json
+data/exports/*.csv
+reports/latest/phase1_summary.md

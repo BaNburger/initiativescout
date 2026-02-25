@@ -1,0 +1,30 @@
+# LLM Scoring Configuration
+# Controls the LLM-based initiative scoring system
+
+# LLM Provider: "anthropic" or "openai"
+# Can also be set via LLM_PROVIDER env var
+provider: anthropic
+
+# Model name (provider-specific)
+# Anthropic: claude-haiku-4-5-20241022, claude-sonnet-4-5-20241022, etc.
+# OpenAI: gpt-4o-mini, gpt-4o, etc.
+# Can also be set via LLM_MODEL env var
+model: claude-haiku-4-5-20241022
+
+# Optional: OpenAI-compatible base URL (for local models via Ollama, etc.)
+# base_url: http://localhost:11434/v1
+
+# Prompt version tag stored with each score for reproducibility
+prompt_version: v1
+
+# Delay between API calls (seconds) to avoid rate limiting
+delay_seconds: 0.5
+
+# Scoring dimension weights (must sum to 1.0)
+dimension_weights:
+  technical_substance: 0.25
+  team_capability: 0.25
+  problem_market_clarity: 0.20
+  traction_momentum: 0.15
+  reachability: 0.10
+  investability_signal: 0.05

@@ -1,0 +1,44 @@
+# Tier Classification Thresholds
+# Controls how initiatives are classified into engagement tiers
+
+# Tier S: Priority Engage — reach out within 2 weeks
+# Tier A: Active Monitor — quarterly check-in
+# Tier B: Watch List — track passively
+# Tier C: Low Priority — archive
+# Tier X: Insufficient Data — collect more data first
+
+tiers:
+  S:
+    min_composite: 3.8
+    min_confidence: 0.5
+    label: Priority Engage
+    action: Reach out within 2 weeks
+
+  A:
+    min_composite: 3.2
+    min_confidence: 0.35
+    label: Active Monitor
+    action: Schedule quarterly check-in
+
+  B:
+    min_composite: 2.5
+    min_confidence: 0.25
+    label: Watch List
+    action: Track passively, re-score when new data arrives
+
+  C:
+    min_composite: 0.0
+    min_confidence: 0.0
+    label: Low Priority
+    action: Archive, re-evaluate only on trigger
+
+# Classifications that cap the tier at B maximum
+# (soft gate — LLM judgment, not keyword matching)
+tier_capped_classifications:
+  - student_club
+  - dormant
+
+# Insufficient data threshold:
+# If confidence < 0.10 on this many dimensions, classify as tier X
+insufficient_data_min_low_confidence_dims: 4
+insufficient_data_confidence_threshold: 0.10

@@ -1,0 +1,46 @@
+market_domains:
+  mobility_transport:
+    - automotive
+    - mobility
+    - transport
+    - vehicle
+    - logistics
+    - hyperloop
+  health_medtech:
+    - health
+    - medical
+    - medtech
+    - hospital
+    - emergency
+    - rehabilitation
+  enterprise_b2b:
+    - enterprise
+    - b2b
+    - operations
+    - workflow
+    - procurement
+    - industrial
+  climate_sustainability:
+    - climate
+    - sustainability
+    - carbon
+    - energy
+    - efficiency
+  education_talent:
+    - education
+    - student
+    - training
+    - learning
+    - talent
+  infrastructure_hardware:
+    - infrastructure
+    - construction
+    - tunneling
+    - manufacturing
+    - hardware
+  fintech_blockchain:
+    - fintech
+    - finance
+    - investment
+    - blockchain
+    - token

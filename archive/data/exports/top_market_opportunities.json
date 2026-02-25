@@ -1,0 +1,121 @@
+[
+  {
+    "market_domain": "mobility_transport",
+    "opportunity_score": 1.8037,
+    "supporting_initiatives": [
+      "Electrochemical Society Student Chapter Munich",
+      "Ringvorlesung Umwelt",
+      "TUM Autonomous Motorsport",
+      "TUM Boring",
+      "PERSIS (SPACE LAB)",
+      "TUfast Racing Team",
+      "TUM Hyperloop (NEXT Prototypes)",
+      "DASH (Exoskeleton Team)",
+      "TUM Carbon Removal Initiative",
+      "Odonatum"
+    ],
+    "evidence_count": 12
+  },
+  {
+    "market_domain": "infrastructure_hardware",
+    "opportunity_score": 1.6166,
+    "supporting_initiatives": [
+      "Electrochemical Society Student Chapter Munich",
+      "PushQuantum",
+      "Ringvorlesung Umwelt",
+      "TUM Boring",
+      "PERSIS (SPACE LAB)",
+      "WARR (Wissenschaftliche Arbeitsgruppe für Raketentechnik und Raumfahrt)",
+      "TUM-XR: Student Initiative",
+      "Akaflieg Munich",
+      "muniQuant",
+      "WARR – Wissenschaftliche Arbeitsgemeinschaft für Raketentechnik und Raumfahrt"
+    ],
+    "evidence_count": 17
+  },
+  {
+    "market_domain": "climate_sustainability",
+    "opportunity_score": 1.4973,
+    "supporting_initiatives": [
+      "Electrochemical Society Student Chapter Munich",
+      "PushQuantum",
+      "Strascheg Center for Entrepreneurship (SCE)",
+      "Ringvorlesung Umwelt",
+      "TUM Autonomous Motorsport",
+      "PERSIS (SPACE LAB)",
+      "Enactus Straubing",
+      "TU eMpower Africa e.V.",
+      "MUC.DAI",
+      "TUM Carbon Removal Initiative"
+    ],
+    "evidence_count": 25
+  },
+  {
+    "market_domain": "fintech_blockchain",
+    "opportunity_score": 1.414,
+    "supporting_initiatives": [
+      "Electrochemical Society Student Chapter Munich",
+      "PushQuantum",
+      "Strascheg Center for Entrepreneurship (SCE)",
+      "Ringvorlesung Umwelt",
+      "TUM Blockchain Club",
+      "muniQuant",
+      "Innovis VC",
+      "Munich Business and Finance Club e.V.:",
+      "Alternative Investments Munich",
+      "AIESEC"
+    ],
+    "evidence_count": 19
+  },
+  {
+    "market_domain": "health_medtech",
+    "opportunity_score": 1.0629,
+    "supporting_initiatives": [
+      "PushQuantum",
+      "Ringvorlesung Umwelt",
+      "Munich Center for Machine Learning (MCML)",
+      "OneAIM",
+      "Falcon Vision",
+      "TU eMpower Africa e.V.",
+      "TUM Carbon Removal Initiative",
+      "LEVITUM",
+      "MedTech OneWorld Students",
+      "Impetus Sailing Team"
+    ],
+    "evidence_count": 38
+  },
+  {
+    "market_domain": "education_talent",
+    "opportunity_score": 1.0589,
+    "supporting_initiatives": [
+      "Electrochemical Society Student Chapter Munich",
+      "PushQuantum",
+      "Strascheg Center for Entrepreneurship (SCE)",
+      "Ringvorlesung Umwelt",
+      "TUM Autonomous Motorsport",
+      "TUM Boring",
+      "Munich Center for Machine Learning (MCML)",
+      "PERSIS (SPACE LAB)",
+      "Enactus Straubing",
+      "WARR (Wissenschaftliche Arbeitsgruppe für Raketentechnik und Raumfahrt)"
+    ],
+    "evidence_count": 222
+  },
+  {
+    "market_domain": "enterprise_b2b",
+    "opportunity_score": 1.0351,
+    "supporting_initiatives": [
+      "Electrochemical Society Student Chapter Munich",
+      "PushQuantum",
+      "OneAIM",
+      "RoboTUM",
+      "TUM Blockchain Club",
+      "TUM-XR: Student Initiative",
+      "DASH (Exoskeleton Team)",
+      "TUM Carbon Removal Initiative",
+      "HORYZN",
+      "Academy Consult"
+    ],
+    "evidence_count": 62
+  }
+]

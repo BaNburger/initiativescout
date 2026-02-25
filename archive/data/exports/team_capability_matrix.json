@@ -1,0 +1,4306 @@
+[
+  {
+    "initiative_id": 1,
+    "initiative_name": "WARR (Wissenschaftliche Arbeitsgruppe für Raketentechnik und Raumfahrt)",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 2,
+    "initiative_name": "TUM Boring",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 3,
+    "initiative_name": "TUM Autonomous Motorsport",
+    "product_fit": 2.0,
+    "tech_fit": 2.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 4,
+    "initiative_name": "TUM Hyperloop (NEXT Prototypes)",
+    "product_fit": 2.5,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 5,
+    "initiative_name": "TUM.ai",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 6,
+    "initiative_name": "HORYZN",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 7,
+    "initiative_name": "DASH (Exoskeleton Team)",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 8,
+    "initiative_name": "TUfast Racing Team",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 9,
+    "initiative_name": "TUfast Eco",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 10,
+    "initiative_name": "Akaflieg Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 11,
+    "initiative_name": "TUM iGEM",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 12,
+    "initiative_name": "TUM Blockchain Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 13,
+    "initiative_name": "TUM Social AI Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 14,
+    "initiative_name": "Phoenix Robotics",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 15,
+    "initiative_name": "RoboTUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 16,
+    "initiative_name": "Falcon Vision",
+    "product_fit": 1.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 17,
+    "initiative_name": "WARR MOVE (Satellites)",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 18,
+    "initiative_name": "TUM Developers",
+    "product_fit": 1.3,
+    "tech_fit": 2.3,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 19,
+    "initiative_name": "TUM.Additive Network",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 20,
+    "initiative_name": "hackaTUM",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 21,
+    "initiative_name": "TUM Science Hackathon",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 22,
+    "initiative_name": "CompVis (Computer Vision & Learning Group)",
+    "product_fit": 2.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 23,
+    "initiative_name": "Munich Center for Machine Learning (MCML)",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 24,
+    "initiative_name": "iGEM Munich (LMU Side)",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 25,
+    "initiative_name": "muniq.ai Research Lab",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 26,
+    "initiative_name": "TRAIL (AI Lab)",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 27,
+    "initiative_name": "Statistical Learning & Data Science Chair",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 28,
+    "initiative_name": "PERSIS (Space Manufacturing)",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 29,
+    "initiative_name": "municHMotorsport",
+    "product_fit": 1.3,
+    "tech_fit": 3.3,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "sales"
+    ],
+    "critical_gap": "product",
+    "support_priority": "product"
+  },
+  {
+    "initiative_id": 30,
+    "initiative_name": "Hydro2Motion",
+    "product_fit": 1.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 31,
+    "initiative_name": "Space Lab",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 32,
+    "initiative_name": "c.Lab (Creative Lab)",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 33,
+    "initiative_name": "Maker Lab (Faculty 11)",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 34,
+    "initiative_name": "Academy Consult",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 35,
+    "initiative_name": "START Munich",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 36,
+    "initiative_name": "TRAIL (Technology and Research on AI Lab)",
+    "product_fit": 1.3,
+    "tech_fit": 1.6,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 37,
+    "initiative_name": "ACM Student Chapter Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 38,
+    "initiative_name": "LMU Innovation & Entrepreneurship Center",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 39,
+    "initiative_name": "Strascheg Center for Entrepreneurship (SCE)",
+    "product_fit": 2.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 40,
+    "initiative_name": "PERSIS (SPACE LAB)",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 41,
+    "initiative_name": "MUC.DAI",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 42,
+    "initiative_name": "IAMLIS",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 43,
+    "initiative_name": "100 Voices – One Planet",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 44,
+    "initiative_name": "180 Degrees Consulting Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 45,
+    "initiative_name": "Accento Orchester München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 46,
+    "initiative_name": "AcTUM – Drama im Vier(t)akter",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 47,
+    "initiative_name": "AEGEE",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 48,
+    "initiative_name": "AG Junge Lebensmittelchemie",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 49,
+    "initiative_name": "AIESEC in München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 50,
+    "initiative_name": "Akademische Energiegenossenschaft @ TUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 51,
+    "initiative_name": "Akademischer Börsenzirkel München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 52,
+    "initiative_name": "Akaflieg München",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 53,
+    "initiative_name": "AkaModell",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 54,
+    "initiative_name": "Albanische Studierendengemeinschaft",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 55,
+    "initiative_name": "Alternative Investments Munich",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 56,
+    "initiative_name": "Amnesty International Hochschulgruppe München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 57,
+    "initiative_name": "Asian-European Society Munich",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 58,
+    "initiative_name": "Association of Iranian Students in Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 59,
+    "initiative_name": "Aviation Innovation Research (AIR)",
+    "product_fit": 1.3,
+    "tech_fit": 2.3,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 60,
+    "initiative_name": "Baduk TU Go",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 61,
+    "initiative_name": "bdvb Hochschulgruppe München",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 62,
+    "initiative_name": "Beta Sigma Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 63,
+    "initiative_name": "BetaTUM Student Beta Tester Community",
+    "product_fit": 2.1,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 64,
+    "initiative_name": "Betonkanu TU München",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 65,
+    "initiative_name": "Biogenesis",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 66,
+    "initiative_name": "Bioinformatics Munich Student Lab",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 67,
+    "initiative_name": "BRASA Local Munique",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 68,
+    "initiative_name": "btS – Life Sciences Studierendeninitiative",
+    "product_fit": 2.1,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 69,
+    "initiative_name": "Campus Cneipe C2",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 70,
+    "initiative_name": "Campus Connect München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 71,
+    "initiative_name": "Campus for Change",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 72,
+    "initiative_name": "Campus Runners",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 73,
+    "initiative_name": "Campus Traders",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 74,
+    "initiative_name": "Campus-Chor Garching",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 75,
+    "initiative_name": "Christliche Studenten an der TUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 76,
+    "initiative_name": "Cico Jazz Orchester",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 77,
+    "initiative_name": "Claude Builders Club Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 78,
+    "initiative_name": "ConsulTUM Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 79,
+    "initiative_name": "Debattierclub München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 80,
+    "initiative_name": "der tu film",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 81,
+    "initiative_name": "Eat & Meet München",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 82,
+    "initiative_name": "Edunovo",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 83,
+    "initiative_name": "Edventure @ TUM",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 84,
+    "initiative_name": "EESTEC Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 85,
+    "initiative_name": "Effektiver Altruismus München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 86,
+    "initiative_name": "EHG – Evangelische Hochschulgemeinde an der TUM",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 87,
+    "initiative_name": "EI Girls",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 88,
+    "initiative_name": "Elara Aerospace",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 89,
+    "initiative_name": "Electrochemical Society Student Chapter Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 90,
+    "initiative_name": "EMSA FMO TU Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 91,
+    "initiative_name": "Enactus München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 92,
+    "initiative_name": "Enactus Straubing",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 93,
+    "initiative_name": "EnHands",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 94,
+    "initiative_name": "Erasmus Student Network (ESN TUMi)",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 95,
+    "initiative_name": "ETHER",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 96,
+    "initiative_name": "Ethics in Academia",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 97,
+    "initiative_name": "EUROAVIA München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 98,
+    "initiative_name": "EyeVoices",
+    "product_fit": 1.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 99,
+    "initiative_name": "Faculties Football League",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 100,
+    "initiative_name": "Family Business Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 101,
+    "initiative_name": "Forward Europe Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 102,
+    "initiative_name": "Fusian Dance Crew",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 103,
+    "initiative_name": "Future Foods",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 104,
+    "initiative_name": "Future Founders Initiative",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 105,
+    "initiative_name": "Games Night",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 106,
+    "initiative_name": "German Chinese Student Club",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 107,
+    "initiative_name": "Global Shapers Munich",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 108,
+    "initiative_name": "GOOSE",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 109,
+    "initiative_name": "h4tum",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 110,
+    "initiative_name": "Hochschulgruppe des Landesbund für Vogelschutz Straubing",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 111,
+    "initiative_name": "Hochschulgruppe des Landesbunds für Vogelschutz Freising",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 112,
+    "initiative_name": "Hongkong-Macau Student Society München",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 113,
+    "initiative_name": "Hummingbird",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 114,
+    "initiative_name": "IAESTE an der TUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 115,
+    "initiative_name": "iGEM München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 116,
+    "initiative_name": "iGEM Straubing",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 117,
+    "initiative_name": "IKOM",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 118,
+    "initiative_name": "Impetus Sailing Team",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 119,
+    "initiative_name": "Information Systems Association",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 120,
+    "initiative_name": "Ingenieure ohne Grenzen",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 121,
+    "initiative_name": "Innovis VC",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 122,
+    "initiative_name": "ISPE SC München – International Society for Pharmaceutical Engineering",
+    "product_fit": 1.7,
+    "tech_fit": 2.3,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 123,
+    "initiative_name": "Japanese Culture Club München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 124,
+    "initiative_name": "jDPG RG München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 125,
+    "initiative_name": "JSUD – Jüdische Studierendenunion",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 126,
+    "initiative_name": "Jungchemikerforum München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 127,
+    "initiative_name": "Junior-Gesellschaft für Biochemie und Molekularbiologie München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 128,
+    "initiative_name": "KHG – Katholische Hochschulgemeinde an der TUM",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 129,
+    "initiative_name": "Kulturklub",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 130,
+    "initiative_name": "LATUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 131,
+    "initiative_name": "Leptodon",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 132,
+    "initiative_name": "Lern-Fair Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 133,
+    "initiative_name": "Lëtzebuerger Studenten zu München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 134,
+    "initiative_name": "LEVITUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 135,
+    "initiative_name": "Mary's Meals Studentclub",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 136,
+    "initiative_name": "MedTech OneWorld Students",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 137,
+    "initiative_name": "MLTech",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 138,
+    "initiative_name": "Model United Nations TU Munich (MUNTUM)",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 139,
+    "initiative_name": "MTP – Marketing zwischen Theorie und Praxis",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 140,
+    "initiative_name": "MUN Centenarians",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 141,
+    "initiative_name": "Münchner Uni Schafkopf Club",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 142,
+    "initiative_name": "Munich Animal Rights Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 143,
+    "initiative_name": "Munich Bioneers",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 144,
+    "initiative_name": "Munich Competitive Math Club",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 145,
+    "initiative_name": "Munich eSports",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 146,
+    "initiative_name": "Munich FinanceCircle",
+    "product_fit": 2.4,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 147,
+    "initiative_name": "Munich Music Labs",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 148,
+    "initiative_name": "Munich NLP",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 149,
+    "initiative_name": "Munich Student Athletes Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 150,
+    "initiative_name": "Munich Students MTB Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 151,
+    "initiative_name": "muniQuant",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 152,
+    "initiative_name": "Muslimische Studenteninitiative der TUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 153,
+    "initiative_name": "Nachhoelzer",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 154,
+    "initiative_name": "neuroTUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.6,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 155,
+    "initiative_name": "Nightline München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 156,
+    "initiative_name": "Nucleate Germany",
+    "product_fit": 2.4,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 157,
+    "initiative_name": "Odonatum",
+    "product_fit": 1.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 158,
+    "initiative_name": "OneAIM",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 159,
+    "initiative_name": "OpenHardware",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 160,
+    "initiative_name": "OpenSource @ TUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 161,
+    "initiative_name": "peca e.V.",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 162,
+    "initiative_name": "Phantum",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 163,
+    "initiative_name": "Philosophia Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 164,
+    "initiative_name": "planl_s studio",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 165,
+    "initiative_name": "Plant a Seed",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 166,
+    "initiative_name": "Plant-Based Universities Munich",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 167,
+    "initiative_name": "PPI Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 168,
+    "initiative_name": "Praias do Isar",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 169,
+    "initiative_name": "Public Makers",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 170,
+    "initiative_name": "PushQuantum",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 171,
+    "initiative_name": "ReparadTUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 172,
+    "initiative_name": "Responsible Technology Hub",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 173,
+    "initiative_name": "Ringvorlesung Umwelt",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 174,
+    "initiative_name": "RockYourLife! München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 175,
+    "initiative_name": "Sailsetters",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 176,
+    "initiative_name": "School of Circularity",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 177,
+    "initiative_name": "she.codes by TEC",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 178,
+    "initiative_name": "Silicon Valley Canon Reading Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 179,
+    "initiative_name": "Sky Campus München",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 180,
+    "initiative_name": "SLOVO – Russischsprachiger Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 181,
+    "initiative_name": "Society of Sommeliers",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 182,
+    "initiative_name": "SOFT – School of Transformation",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 183,
+    "initiative_name": "SRM Talks",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 184,
+    "initiative_name": "Stipendiennetzwerk München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 185,
+    "initiative_name": "StOrch Studierendenorchester",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 186,
+    "initiative_name": "Studentischer Automobilverband München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 187,
+    "initiative_name": "Studnd",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 188,
+    "initiative_name": "Study Tutors München",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 189,
+    "initiative_name": "SusTUMable Design",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 190,
+    "initiative_name": "Synchronized Skies",
+    "product_fit": 2.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 191,
+    "initiative_name": "Talente Spenden",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 192,
+    "initiative_name": "Techlabs",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 193,
+    "initiative_name": "Technolitics",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 194,
+    "initiative_name": "TEDxTUM",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 195,
+    "initiative_name": "TEG | The Entrepreneurial Group",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 196,
+    "initiative_name": "The Bulletin",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 197,
+    "initiative_name": "TIDE",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 198,
+    "initiative_name": "TSM Championship",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 199,
+    "initiative_name": "TU eMpower Africa e.V.",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 200,
+    "initiative_name": "TU Investment Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 201,
+    "initiative_name": "TU Peak Seekers",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 202,
+    "initiative_name": "TUdesign",
+    "product_fit": 1.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 203,
+    "initiative_name": "TUfast",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 204,
+    "initiative_name": "TUM Buchclub",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 205,
+    "initiative_name": "TUM Business Game",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 206,
+    "initiative_name": "TUM Carbon Removal Initiative",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 207,
+    "initiative_name": "TUM Case Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 208,
+    "initiative_name": "TUM Chess Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 209,
+    "initiative_name": "TUM Cycling Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 210,
+    "initiative_name": "TUM Dixieland Combo",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 211,
+    "initiative_name": "TUM Green Tech Initiative",
+    "product_fit": 1.0,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 212,
+    "initiative_name": "TUM HN Hiking Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 213,
+    "initiative_name": "TUM JazzBand",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 214,
+    "initiative_name": "TUM Phoenix Robotics",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 215,
+    "initiative_name": "TUM Privacy Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 216,
+    "initiative_name": "TUM Speakers Series",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 217,
+    "initiative_name": "TUM Verdauungskanal",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 218,
+    "initiative_name": "TUM-XR: Student Initiative",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 219,
+    "initiative_name": "TUMuchData – the Munich Database Club",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 220,
+    "initiative_name": "Turkish Club",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 221,
+    "initiative_name": "VDE-IEEE Hochschulgruppe München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 222,
+    "initiative_name": "WARR – Wissenschaftliche Arbeitsgemeinschaft für Raketentechnik und Raumfahrt",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 223,
+    "initiative_name": "WIB – Women in Business",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 224,
+    "initiative_name": "Women in CS @ TUM",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 225,
+    "initiative_name": "YFN @ UNIS",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 226,
+    "initiative_name": "Youth4Paws",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 227,
+    "initiative_name": "amnesty Hochschulgruppe München",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 228,
+    "initiative_name": "Arbeiterkind",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 229,
+    "initiative_name": "AIAS Munich e.V",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 230,
+    "initiative_name": "Commit to Partnership e.V",
+    "product_fit": 1.3,
+    "tech_fit": 2.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 231,
+    "initiative_name": "Humanistische Hochschulgruppe München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 232,
+    "initiative_name": "MigraMed München",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 233,
+    "initiative_name": "Nightline e.V",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 234,
+    "initiative_name": "Refugee Law Clinic—Munich",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 235,
+    "initiative_name": "Serlo – ein Projekt der Gesellschaft für freie Bildung e. V.",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 236,
+    "initiative_name": "sneep",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 237,
+    "initiative_name": "Start Right e.V.",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 238,
+    "initiative_name": "Studenten bilden Schüler e.V.",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 239,
+    "initiative_name": "Studentenhilfe München e.V",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 240,
+    "initiative_name": "180 Degrees Consulting München",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 241,
+    "initiative_name": "TutoRIA",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 242,
+    "initiative_name": "Münchner Erasmus Studenten Assoziation (MESA e.V.)",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 243,
+    "initiative_name": "AEGEE-München e.V.",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 244,
+    "initiative_name": "AIESEC",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 245,
+    "initiative_name": "Katholische Hochschulgemeinde",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 246,
+    "initiative_name": "Evangelische Studierendengemeinde",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 247,
+    "initiative_name": "Griechisch-Orthodoxe Metropolie",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 248,
+    "initiative_name": "Islamische Hochschulvereinigung",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 249,
+    "initiative_name": "Verband Jüdischer Studenten in Bayern",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 250,
+    "initiative_name": "bonding-studenteninitiative e.V.",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 251,
+    "initiative_name": "ELSA München e.V.",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 252,
+    "initiative_name": "Munich Business and Finance Club e.V.:",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 253,
+    "initiative_name": "Sinik",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 254,
+    "initiative_name": "TEG e.V.",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 255,
+    "initiative_name": "M94.5",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 256,
+    "initiative_name": "Philtrat",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 257,
+    "initiative_name": "Unikatmag",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 258,
+    "initiative_name": "CampusZeitung",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 259,
+    "initiative_name": "rescriptum",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 260,
+    "initiative_name": "cog!to",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 261,
+    "initiative_name": "Nomen Nominandum",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 262,
+    "initiative_name": "Die Funzel",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 263,
+    "initiative_name": "Fachschaften",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 264,
+    "initiative_name": "Studierendenvertretung STUVE",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 265,
+    "initiative_name": "Akaflieg München e.V.",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 266,
+    "initiative_name": "c.lab - a place for creativity",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 267,
+    "initiative_name": "Debattierclub „Münchner Debatte“",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 268,
+    "initiative_name": "Eat your campus",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 269,
+    "initiative_name": "Finance Network Munich e.V",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 270,
+    "initiative_name": "Flightlab",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 271,
+    "initiative_name": "HM Kino",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 272,
+    "initiative_name": "HoKo",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 273,
+    "initiative_name": "I-Club",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 274,
+    "initiative_name": "M 94.5",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 275,
+    "initiative_name": "mhm",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 276,
+    "initiative_name": "MTP",
+    "product_fit": 1.7,
+    "tech_fit": 1.7,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 277,
+    "initiative_name": "Projekte für Flüchtlinge",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 278,
+    "initiative_name": "Referat für Nachhaltigkeit",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 279,
+    "initiative_name": "Robotikwerkstatt",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 280,
+    "initiative_name": "Studentisches Green Office",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 281,
+    "initiative_name": "Hochschuleigener Bandraum",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 282,
+    "initiative_name": "Musikensembles der Hochschule",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 283,
+    "initiative_name": "EKHG",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 284,
+    "initiative_name": "PAOSO",
+    "product_fit": 1.3,
+    "tech_fit": 1.7,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 285,
+    "initiative_name": "Lernzentrum",
+    "product_fit": 1.7,
+    "tech_fit": 1.0,
+    "sales_fit": 1.6,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 286,
+    "initiative_name": "Hochschulsport ZHS",
+    "product_fit": 1.0,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  },
+  {
+    "initiative_id": 287,
+    "initiative_name": "Raum der Stille",
+    "product_fit": 1.3,
+    "tech_fit": 1.0,
+    "sales_fit": 1.0,
+    "strong_in": [],
+    "need_help_in": [
+      "product",
+      "tech",
+      "sales"
+    ],
+    "critical_gap": "tech",
+    "support_priority": "tech"
+  }
+]

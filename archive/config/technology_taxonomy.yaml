@@ -1,0 +1,49 @@
+technology_domains:
+  ai_ml:
+    - ai
+    - artificial intelligence
+    - machine learning
+    - deep learning
+    - neural network
+    - generative ai
+    - llm
+  autonomous_systems:
+    - autonomous
+    - self-driving
+    - trajectory planning
+    - perception
+    - localization
+    - robotics
+  robotics:
+    - robot
+    - robotics
+    - humanoid
+    - drone
+    - uav
+    - exoskeleton
+  aerospace_space:
+    - rocket
+    - satellite
+    - cubesat
+    - propulsion
+    - aerospace
+    - space
+  biotech_synbio:
+    - biotech
+    - synthetic biology
+    - crispr
+    - genomics
+    - molecular
+  cleantech_energy:
+    - hydrogen
+    - fuel cell
+    - battery
+    - sustainability
+    - clean energy
+    - climate
+  software_platforms:
+    - software
+    - open source
+    - web app
+    - mobile app
+    - platform

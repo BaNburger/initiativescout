@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${INITIATIVE_TRACKER_HOME:-$SCRIPT_DIR}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+check_modules() {
+  "$PYTHON_BIN" - <<'PY'
+import importlib.util
+import sys
+required = ["sqlalchemy", "typer", "rich", "yaml", "rapidfuzz", "requests", "lxml", "pydantic"]
+missing = [m for m in required if importlib.util.find_spec(m) is None]
+if missing:
+    print("MISSING:" + ",".join(missing))
+    sys.exit(1)
+PY
+}
+
+bootstrap() {
+  if [ ! -d "$ROOT_DIR/initiative_tracker" ]; then
+    echo "Cannot auto-bootstrap dependencies: source tree not found at $ROOT_DIR"
+    echo "Set INITIATIVE_TRACKER_HOME to the repository path, or run scripts/install_app.sh first."
+    exit 1
+  fi
+  echo "Bootstrapping CLI dependencies (user install, no venv)..."
+  "$PYTHON_BIN" -m pip install --user --break-system-packages --disable-pip-version-check --no-warn-script-location -e "$ROOT_DIR"
+}
+
+if ! check_modules >/tmp/initiative_tracker_depcheck.txt 2>&1; then
+  cat /tmp/initiative_tracker_depcheck.txt || true
+  bootstrap
+fi
+
+exec "$PYTHON_BIN" -m initiative_tracker.cli "$@"
