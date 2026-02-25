@@ -25,6 +25,7 @@ from scout.models import (
     Initiative,
     InitiativeDetail,
     InitiativeOut,
+    InitiativeUpdate,
     OutreachScore,
     Project,
     ProjectCreate,
@@ -58,19 +59,27 @@ def db_session() -> Generator[Session, None, None]:
     session = get_session()
     try:
         yield session
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
 
-_MISSING = object()
-
-
-def _json(value: str | None, default: Any = _MISSING) -> Any:
+def _json(value: str | None, default: Any = None) -> Any:
     """Safely parse a JSON string, returning default on failure."""
     try:
         return json.loads(value or "")
-    except json.JSONDecodeError:
-        return {} if default is _MISSING else default
+    except (json.JSONDecodeError, TypeError):
+        return default if default is not None else {}
+
+
+def _get_or_404(session: Session, model, entity_id: int, label: str = "Entity"):
+    """Fetch a model instance by PK or raise 404."""
+    obj = session.execute(select(model).where(model.id == entity_id)).scalars().first()
+    if not obj:
+        raise HTTPException(404, f"{label} not found")
+    return obj
 
 
 # Score field extraction shared by initiative and project helpers
@@ -80,18 +89,25 @@ _SCORE_FIELDS = (
     "grade_tech", "grade_tech_num", "grade_opportunity", "grade_opportunity_num",
 )
 
+_SCORE_RESPONSE_FIELDS = ("verdict", "score", "classification", "grade_team", "grade_tech", "grade_opportunity")
+
 
 def _latest_score_fields(scores: list[OutreachScore]) -> dict[str, Any]:
     if not scores:
-        result: dict[str, Any] = {f: None for f in _SCORE_FIELDS}
-        result["key_evidence"] = []
-        result["data_gaps"] = []
-        return result
+        return {**{f: None for f in _SCORE_FIELDS}, "key_evidence": [], "data_gaps": []}
     latest = max(scores, key=lambda s: s.scored_at)
     result = {f: getattr(latest, f) for f in _SCORE_FIELDS}
     result["key_evidence"] = _json(latest.key_evidence_json, [])
     result["data_gaps"] = _json(latest.data_gaps_json, [])
     return result
+
+
+def _apply_patch(obj, body, fields: tuple[str, ...]) -> None:
+    """Apply non-None fields from a Pydantic update body to an ORM object."""
+    for field in fields:
+        val = getattr(body, field)
+        if val is not None:
+            setattr(obj, field, val)
 
 
 def _initiative_to_out(init: Initiative) -> InitiativeOut:
@@ -159,21 +175,20 @@ def _initiative_to_detail(init: Initiative) -> InitiativeDetail:
 
 
 async def _run_enrichment(session: Session, init: Initiative) -> int:
-    """Delete old enrichments, run all enrichers, add results to session.
-
-    Caller must commit.
-    """
-    session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
-    added = 0
+    """Run all enrichers; only delete old enrichments if at least one succeeds. Caller must commit."""
+    new_enrichments = []
     for enrich_fn in (enrich_website, enrich_team_page, enrich_github):
         try:
             result = await enrich_fn(init)
             if result:
-                session.add(result)
-                added += 1
+                new_enrichments.append(result)
         except Exception as exc:
             log.warning("Enrichment failed (%s) for %s: %s", enrich_fn.__name__, init.name, exc)
-    return added
+    if new_enrichments:
+        session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
+        for e in new_enrichments:
+            session.add(e)
+    return len(new_enrichments)
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +293,21 @@ async def list_initiatives(
 
 @app.get("/api/initiatives/{initiative_id}", response_model=InitiativeDetail)
 async def get_initiative(initiative_id: int, session: Session = Depends(db_session)):
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
-    if not init:
-        raise HTTPException(404, "Initiative not found")
+    return _initiative_to_detail(_get_or_404(session, Initiative, initiative_id, "Initiative"))
+
+
+_INITIATIVE_UPDATE_FIELDS = (
+    "name", "uni", "sector", "mode", "description", "website", "email",
+    "relevance", "team_page", "team_size", "linkedin", "github_org",
+    "key_repos", "sponsors", "competitions",
+)
+
+
+@app.put("/api/initiatives/{initiative_id}", response_model=InitiativeDetail)
+async def update_initiative(initiative_id: int, body: InitiativeUpdate, session: Session = Depends(db_session)):
+    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    _apply_patch(init, body, _INITIATIVE_UPDATE_FIELDS)
+    session.commit()
     return _initiative_to_detail(init)
 
 
@@ -289,10 +316,8 @@ async def get_initiative(initiative_id: int, session: Session = Depends(db_sessi
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/enrich/batch")
-async def enrich_batch(body: dict[str, Any] | None = None):
-    initiative_ids = (body or {}).get("initiative_ids")
-
+def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
+    """SSE streaming wrapper for batch enrich/score operations."""
     async def stream():
         session = get_session()
         try:
@@ -301,36 +326,36 @@ async def enrich_batch(body: dict[str, Any] | None = None):
                 query = query.where(Initiative.id.in_(initiative_ids))
             initiatives = session.execute(query).scalars().all()
             total = len(initiatives)
-            enriched = 0
-            failed = 0
-            # Pre-collect names for SSE progress (survives rollback)
+            ok = failed = 0
             init_names = {init.id: init.name for init in initiatives}
 
             for idx, init in enumerate(initiatives):
                 yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_names[init.id]})}\n\n"
                 try:
-                    await _run_enrichment(session, init)
+                    await process_fn(session, init)
                     session.commit()
-                    enriched += 1
+                    ok += 1
                 except Exception as exc:
-                    log.warning("Batch enrich failed for %s: %s", init_names[init.id], exc)
+                    log.warning("Batch %s failed for %s: %s", stat_key, init_names[init.id], exc)
                     failed += 1
                     session.rollback()
+                await asyncio.sleep(delay)
 
-                await asyncio.sleep(0.1)
-
-            yield f"data: {json.dumps({'type': 'complete', 'stats': {'enriched': enriched, 'failed': failed}})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'stats': {stat_key: ok, 'failed': failed}})}\n\n"
         finally:
             session.close()
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+@app.post("/api/enrich/batch")
+async def enrich_batch(body: dict[str, Any] | None = None):
+    return _batch_stream((body or {}).get("initiative_ids"), _run_enrichment, "enriched")
+
+
 @app.post("/api/enrich/{initiative_id}")
 async def enrich_one(initiative_id: int, session: Session = Depends(db_session)):
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
-    if not init:
-        raise HTTPException(404, "Initiative not found")
+    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
     added = await _run_enrichment(session, init)
     session.commit()
     return {"enrichments_added": added}
@@ -343,60 +368,25 @@ async def enrich_one(initiative_id: int, session: Session = Depends(db_session))
 
 @app.post("/api/score/batch")
 async def score_batch(body: dict[str, Any] | None = None):
-    initiative_ids = (body or {}).get("initiative_ids")
+    client = LLMClient()
 
-    async def stream():
-        session = get_session()
-        try:
-            query = select(Initiative)
-            if initiative_ids:
-                query = query.where(Initiative.id.in_(initiative_ids))
-            initiatives = session.execute(query).scalars().all()
-            total = len(initiatives)
-            scored = 0
-            failed = 0
-            # Pre-collect names for SSE progress (survives rollback)
-            init_names = {init.id: init.name for init in initiatives}
+    async def _score_one(session, init):
+        enrichments = session.execute(
+            select(Enrichment).where(Enrichment.initiative_id == init.id)
+        ).scalars().all()
+        outreach_score = await score_initiative(init, list(enrichments), client)
+        session.execute(delete(OutreachScore).where(OutreachScore.initiative_id == init.id))
+        session.add(outreach_score)
 
-            client = LLMClient()
-
-            for idx, init in enumerate(initiatives):
-                yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_names[init.id]})}\n\n"
-
-                enrichments = session.execute(
-                    select(Enrichment).where(Enrichment.initiative_id == init.id)
-                ).scalars().all()
-
-                try:
-                    outreach_score = await score_initiative(init, list(enrichments), client)
-                    session.execute(delete(OutreachScore).where(OutreachScore.initiative_id == init.id))
-                    session.add(outreach_score)
-                    session.commit()
-                    scored += 1
-                except Exception as exc:
-                    log.warning("Scoring failed for %s: %s", init_names[init.id], exc)
-                    failed += 1
-                    session.rollback()
-
-                await asyncio.sleep(0.3)
-
-            yield f"data: {json.dumps({'type': 'complete', 'stats': {'scored': scored, 'failed': failed}})}\n\n"
-        finally:
-            session.close()
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _batch_stream((body or {}).get("initiative_ids"), _score_one, "scored", delay=0.3)
 
 
 @app.post("/api/score/{initiative_id}")
 async def score_one(initiative_id: int, session: Session = Depends(db_session)):
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
-    if not init:
-        raise HTTPException(404, "Initiative not found")
-
+    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
     enrichments = session.execute(
         select(Enrichment).where(Enrichment.initiative_id == initiative_id)
     ).scalars().all()
-
     client = LLMClient()
     try:
         outreach_score = await score_initiative(init, list(enrichments), client)
@@ -405,15 +395,7 @@ async def score_one(initiative_id: int, session: Session = Depends(db_session)):
         session.commit()
     except Exception as exc:
         raise HTTPException(500, f"Scoring failed: {exc}") from exc
-
-    return {
-        "verdict": outreach_score.verdict,
-        "score": outreach_score.score,
-        "classification": outreach_score.classification,
-        "grade_team": outreach_score.grade_team,
-        "grade_tech": outreach_score.grade_tech,
-        "grade_opportunity": outreach_score.grade_opportunity,
-    }
+    return {f: getattr(outreach_score, f) for f in _SCORE_RESPONSE_FIELDS}
 
 
 # ---------------------------------------------------------------------------
@@ -423,17 +405,13 @@ async def score_one(initiative_id: int, session: Session = Depends(db_session)):
 
 @app.get("/api/initiatives/{initiative_id}/projects", response_model=list[ProjectOut])
 async def list_projects(initiative_id: int, session: Session = Depends(db_session)):
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
-    if not init:
-        raise HTTPException(404, "Initiative not found")
+    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
     return [_project_to_out(p) for p in init.projects]
 
 
 @app.post("/api/initiatives/{initiative_id}/projects", response_model=ProjectOut, status_code=201)
 async def create_project(initiative_id: int, body: ProjectCreate, session: Session = Depends(db_session)):
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
-    if not init:
-        raise HTTPException(404, "Initiative not found")
+    _get_or_404(session, Initiative, initiative_id, "Initiative")
     proj = Project(
         initiative_id=initiative_id, name=body.name, description=body.description,
         website=body.website, github_url=body.github_url, team=body.team,
@@ -447,13 +425,8 @@ async def create_project(initiative_id: int, body: ProjectCreate, session: Sessi
 
 @app.put("/api/projects/{project_id}", response_model=ProjectOut)
 async def update_project(project_id: int, body: ProjectUpdate, session: Session = Depends(db_session)):
-    proj = session.execute(select(Project).where(Project.id == project_id)).scalars().first()
-    if not proj:
-        raise HTTPException(404, "Project not found")
-    for field in ("name", "description", "website", "github_url", "team"):
-        val = getattr(body, field)
-        if val is not None:
-            setattr(proj, field, val)
+    proj = _get_or_404(session, Project, project_id, "Project")
+    _apply_patch(proj, body, ("name", "description", "website", "github_url", "team"))
     if body.extra_links is not None:
         proj.extra_links_json = json.dumps(body.extra_links)
     session.commit()
@@ -462,9 +435,7 @@ async def update_project(project_id: int, body: ProjectUpdate, session: Session 
 
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: int, session: Session = Depends(db_session)):
-    proj = session.execute(select(Project).where(Project.id == project_id)).scalars().first()
-    if not proj:
-        raise HTTPException(404, "Project not found")
+    proj = _get_or_404(session, Project, project_id, "Project")
     session.delete(proj)
     session.commit()
     return {"ok": True}
@@ -472,27 +443,17 @@ async def delete_project(project_id: int, session: Session = Depends(db_session)
 
 @app.post("/api/projects/{project_id}/score")
 async def score_project_endpoint(project_id: int, session: Session = Depends(db_session)):
-    proj = session.execute(select(Project).where(Project.id == project_id)).scalars().first()
-    if not proj:
-        raise HTTPException(404, "Project not found")
-
+    proj = _get_or_404(session, Project, project_id, "Project")
+    init = _get_or_404(session, Initiative, proj.initiative_id, "Initiative")
     client = LLMClient()
     try:
-        outreach_score = await score_project(proj, proj.initiative, client)
+        outreach_score = await score_project(proj, init, client)
         session.execute(delete(OutreachScore).where(OutreachScore.project_id == project_id))
         session.add(outreach_score)
         session.commit()
     except Exception as exc:
         raise HTTPException(500, f"Scoring failed: {exc}") from exc
-
-    return {
-        "verdict": outreach_score.verdict,
-        "score": outreach_score.score,
-        "classification": outreach_score.classification,
-        "grade_team": outreach_score.grade_team,
-        "grade_tech": outreach_score.grade_tech,
-        "grade_opportunity": outreach_score.grade_opportunity,
-    }
+    return {f: getattr(outreach_score, f) for f in _SCORE_RESPONSE_FIELDS}
 
 
 # ---------------------------------------------------------------------------

@@ -216,6 +216,24 @@ class ProjectUpdate(BaseModel):
     extra_links: dict[str, str] | None = None
 
 
+class InitiativeUpdate(BaseModel):
+    name: str | None = None
+    uni: str | None = None
+    sector: str | None = None
+    mode: str | None = None
+    description: str | None = None
+    website: str | None = None
+    email: str | None = None
+    relevance: str | None = None
+    team_page: str | None = None
+    team_size: str | None = None
+    linkedin: str | None = None
+    github_org: str | None = None
+    key_repos: str | None = None
+    sponsors: str | None = None
+    competitions: str | None = None
+
+
 class InitiativeDetail(InitiativeOut):
     team_page: str = ""
     team_size: str = ""

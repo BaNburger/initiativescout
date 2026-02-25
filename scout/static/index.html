@@ -184,6 +184,20 @@ a { color: var(--blue); text-decoration: none; }
 .project-form input:focus, .project-form textarea:focus { border-color: var(--accent); }
 .project-form textarea { resize: vertical; min-height: 60px; }
 .project-form .pf-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+/* --- Inline editing (double-click to edit) --- */
+.editable { border-radius: 3px; transition: outline-color 0.15s; outline: 1px dashed transparent; outline-offset: 2px; }
+.editable:hover { outline-color: var(--ink-faint); }
+.inline-input, .inline-select { background: var(--bg); border: 1px solid var(--accent); color: var(--ink); padding: 4px 8px; border-radius: var(--radius); font-size: inherit; font-family: inherit; width: 100%; outline: none; }
+.inline-input:focus, .inline-select:focus { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2); }
+textarea.inline-input { resize: vertical; min-height: 60px; }
+.edit-pencil { cursor: pointer; font-size: 11px; color: var(--ink-faint); margin-left: 4px; opacity: 0; transition: opacity 0.15s; }
+.link-row:hover .edit-pencil, .edit-pencil:hover { opacity: 1; }
+
+/* --- Column drag-and-drop --- */
+.list-table th[draggable="true"] { cursor: grab; }
+.list-table th[draggable="true"]:active { cursor: grabbing; }
+.list-table th.drag-over { border-left: 2px solid var(--accent); background: var(--surface-2); }
 </style>
 </head>
 <body>
@@ -240,17 +254,7 @@ a { color: var(--blue); text-decoration: none; }
   <!-- List -->
   <div class="list-panel" id="list-panel">
     <table class="list-table">
-      <thead>
-        <tr>
-          <th onclick="sortBy('name')">Initiative</th>
-          <th onclick="sortBy('uni')">Uni</th>
-          <th onclick="sortBy('verdict')">Verdict</th>
-          <th onclick="sortBy('grade_team')" title="Team Grade">Team</th>
-          <th onclick="sortBy('grade_tech')" title="Tech Grade">Tech</th>
-          <th onclick="sortBy('grade_opportunity')" title="Opportunity Grade">Opp</th>
-          <th>Class</th>
-        </tr>
-      </thead>
+      <thead><tr id="list-head"></tr></thead>
       <tbody id="list-body"></tbody>
     </table>
     <div class="empty-state" id="empty-state" style="display:none;">
@@ -293,6 +297,7 @@ const state = {
   selectedId: null,
   sort: { by: 'score', dir: 'desc' },
   loading: false,
+  columnOrder: JSON.parse(localStorage.getItem('scout-col-order') || 'null') || [0,1,2,3,4,5,6],
 };
 
 // ---------------------------------------------------------------------------
@@ -381,34 +386,156 @@ function sortBy(field) {
 }
 
 // ---------------------------------------------------------------------------
+// Column definitions & inline editing
+// ---------------------------------------------------------------------------
+function escAttr(s) { return esc(s || '').replace(/'/g, '&#39;'); }
+function editAttr(id, field, value, type) {
+  return ` data-edit-id="${id}" data-edit-field="${field}" data-edit-value="${escAttr(value)}"${type ? ` data-edit-type="${type}"` : ''}`;
+}
+function editFromAttr(el, e) {
+  if (e) e.stopPropagation();
+  inlineEdit(el, +el.dataset.editId, el.dataset.editField, el.dataset.editValue, el.dataset.editType);
+}
+
+const COLUMNS = [
+  { key: 'name', label: 'Initiative', sort: 'name',
+    render: i => `<td class="name-cell editable" title="${esc(i.name)}"${editAttr(i.id,'name',i.name)} ondblclick="editFromAttr(this,event)">${esc(i.name)}</td>` },
+  { key: 'uni', label: 'Uni', sort: 'uni',
+    render: i => `<td class="uni-cell editable"${editAttr(i.id,'uni',i.uni,'select-uni')} ondblclick="editFromAttr(this,event)">${esc(i.uni)}</td>` },
+  { key: 'verdict', label: 'Verdict', sort: 'verdict',
+    render: i => { const v = i.verdict || 'unscored'; return `<td><span class="verdict-badge verdict-${v}">${VERDICT_SHORT[v] || '\u2014'}</span></td>`; } },
+  { key: 'team', label: 'Team', sort: 'grade_team',
+    render: i => `<td>${gradeBadge(i.grade_team)}</td>` },
+  { key: 'tech', label: 'Tech', sort: 'grade_tech',
+    render: i => `<td>${gradeBadge(i.grade_tech)}</td>` },
+  { key: 'opp', label: 'Opp', sort: 'grade_opportunity',
+    render: i => `<td>${gradeBadge(i.grade_opportunity)}</td>` },
+  { key: 'class', label: 'Class', sort: null,
+    render: i => `<td><span class="class-badge">${esc((i.classification || '').replace(/_/g, ' '))}</span></td>` },
+];
+
+function inlineEdit(el, id, field, currentValue, type) {
+  if (el.querySelector('.inline-input, .inline-select')) return;
+  const original = el.innerHTML;
+  let input;
+
+  if (type === 'select-uni') {
+    input = document.createElement('select');
+    input.className = 'inline-select';
+    ['TUM', 'LMU', 'HM', 'TUM/LMU', 'TUM/HM', 'LMU/HM'].forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt; o.textContent = opt;
+      if (opt === currentValue) o.selected = true;
+      input.appendChild(o);
+    });
+  } else if (type === 'textarea') {
+    input = document.createElement('textarea');
+    input.className = 'inline-input';
+    input.value = currentValue || '';
+    input.rows = 4;
+  } else {
+    input = document.createElement('input');
+    input.className = 'inline-input';
+    input.type = 'text';
+    input.value = currentValue || '';
+  }
+
+  el.innerHTML = '';
+  el.appendChild(input);
+  input.focus();
+  if (input.select) input.select();
+
+  let done = false;
+  async function save() {
+    if (done) return;
+    done = true;
+    const newVal = input.value.trim();
+    if (newVal === (currentValue || '').trim()) { el.innerHTML = original; return; }
+    try {
+      await api('PUT', `/api/initiatives/${id}`, { [field]: newVal });
+      loadInitiatives();
+      if (state.selectedId === id) loadDetail(id);
+    } catch (err) {
+      el.innerHTML = original;
+      alert('Save failed: ' + err.message);
+    }
+  }
+  function cancel() { done = true; el.innerHTML = original; }
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && type !== 'textarea') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Column drag-and-drop
+// ---------------------------------------------------------------------------
+function initColumnDnD() {
+  let dragIdx = null;
+  document.querySelectorAll('#list-head th').forEach(th => {
+    th.addEventListener('dragstart', e => {
+      dragIdx = parseInt(th.dataset.colIdx);
+      e.dataTransfer.effectAllowed = 'move';
+      th.style.opacity = '0.4';
+    });
+    th.addEventListener('dragend', () => {
+      th.style.opacity = '1';
+      document.querySelectorAll('#list-head th').forEach(h => h.classList.remove('drag-over'));
+    });
+    th.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      th.classList.add('drag-over');
+    });
+    th.addEventListener('dragleave', () => th.classList.remove('drag-over'));
+    th.addEventListener('drop', e => {
+      e.preventDefault();
+      th.classList.remove('drag-over');
+      const toIdx = parseInt(th.dataset.colIdx);
+      if (dragIdx === toIdx) return;
+      const order = [...state.columnOrder];
+      const fromPos = order.indexOf(dragIdx);
+      const toPos = order.indexOf(toIdx);
+      order.splice(fromPos, 1);
+      order.splice(toPos, 0, dragIdx);
+      state.columnOrder = order;
+      localStorage.setItem('scout-col-order', JSON.stringify(order));
+      renderList();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Render list
 // ---------------------------------------------------------------------------
 function renderList() {
   const tbody = document.getElementById('list-body');
+  const thead = document.getElementById('list-head');
   const empty = document.getElementById('empty-state');
 
   if (state.initiatives.length === 0) {
     tbody.innerHTML = '';
+    thead.innerHTML = '';
     empty.style.display = 'flex';
     return;
   }
   empty.style.display = 'none';
 
-  tbody.innerHTML = state.initiatives.map(i => {
-    const v = i.verdict || 'unscored';
-    const vLabel = VERDICT_SHORT[v] || '—';
-    const cls = i.classification || '';
-    const clsLabel = cls.replace(/_/g, ' ');
-    return `<tr data-id="${i.id}" onclick="loadDetail(${i.id})" class="${i.id === state.selectedId ? 'selected' : ''}">
-      <td class="name-cell" title="${esc(i.name)}">${esc(i.name)}</td>
-      <td class="uni-cell">${esc(i.uni)}</td>
-      <td><span class="verdict-badge verdict-${v}">${vLabel}</span></td>
-      <td>${gradeBadge(i.grade_team)}</td>
-      <td>${gradeBadge(i.grade_tech)}</td>
-      <td>${gradeBadge(i.grade_opportunity)}</td>
-      <td><span class="class-badge">${esc(clsLabel)}</span></td>
-    </tr>`;
+  // Render header from column order
+  thead.innerHTML = state.columnOrder.map(idx => {
+    const col = COLUMNS[idx];
+    return `<th draggable="true" data-col-idx="${idx}" ${col.sort ? `onclick="sortBy('${col.sort}')"` : ''}>${col.label}</th>`;
   }).join('');
+
+  // Render body
+  tbody.innerHTML = state.initiatives.map(i => {
+    const cells = state.columnOrder.map(idx => COLUMNS[idx].render(i)).join('');
+    return `<tr data-id="${i.id}" onclick="loadDetail(${i.id})" class="${i.id === state.selectedId ? 'selected' : ''}">${cells}</tr>`;
+  }).join('');
+
+  initColumnDnD();
 }
 
 // ---------------------------------------------------------------------------
@@ -422,14 +549,15 @@ function renderDetail(d) {
   const v = d.verdict || 'unscored';
   const vLabel = VERDICT_LONG[v] || 'Not Scored';
 
+  const ea = (f,v,t) => editAttr(d.id,f,v,t);
   let html = `
     <div class="detail-header">
-      <h2>${esc(d.name)}</h2>
+      <h2 class="editable"${ea('name',d.name)} ondblclick="editFromAttr(this)">${esc(d.name)}</h2>
       <div class="meta">
-        <span>${esc(d.uni)}</span>
-        <span>${esc(d.sector)}</span>
-        <span>${esc(d.mode)}</span>
-        ${d.relevance ? `<span>Rating: ${esc(d.relevance)}</span>` : ''}
+        <span class="editable"${ea('uni',d.uni,'select-uni')} ondblclick="editFromAttr(this)">${esc(d.uni)}</span>
+        <span class="editable"${ea('sector',d.sector)} ondblclick="editFromAttr(this)">${esc(d.sector) || 'Sector'}</span>
+        <span class="editable"${ea('mode',d.mode)} ondblclick="editFromAttr(this)">${esc(d.mode) || 'Mode'}</span>
+        <span class="editable"${ea('relevance',d.relevance)} ondblclick="editFromAttr(this)">Rating: ${esc(d.relevance) || '—'}</span>
         ${d.enriched ? `<span>Enriched</span>` : '<span style="color:var(--amber)">Not enriched</span>'}
       </div>
     </div>`;
@@ -445,11 +573,9 @@ function renderDetail(d) {
 
   // Dimension grades
   if (d.grade_team || d.grade_tech || d.grade_opportunity) {
-    html += `<div class="grade-cards">`;
-    html += `<div class="grade-card"><div class="grade-value ${gradeColorClass(d.grade_team)}">${esc(d.grade_team || '—')}</div><div class="grade-label">Team</div></div>`;
-    html += `<div class="grade-card"><div class="grade-value ${gradeColorClass(d.grade_tech)}">${esc(d.grade_tech || '—')}</div><div class="grade-label">Tech</div></div>`;
-    html += `<div class="grade-card"><div class="grade-value ${gradeColorClass(d.grade_opportunity)}">${esc(d.grade_opportunity || '—')}</div><div class="grade-label">Opportunity</div></div>`;
-    html += `</div>`;
+    html += `<div class="grade-cards">${[['grade_team','Team'],['grade_tech','Tech'],['grade_opportunity','Opportunity']].map(
+      ([k,l]) => `<div class="grade-card"><div class="grade-value ${gradeColorClass(d[k])}">${esc(d[k]||'—')}</div><div class="grade-label">${l}</div></div>`
+    ).join('')}</div>`;
   }
 
   // Contact
@@ -466,24 +592,11 @@ function renderDetail(d) {
     html += `<div class="hook-card">${esc(d.engagement_hook)}</div>`;
   }
 
-  // Key evidence
-  if (d.key_evidence && d.key_evidence.length > 0) {
-    html += `<div class="detail-section"><h3>Key Evidence</h3><ul>`;
-    d.key_evidence.forEach(e => { html += `<li>${esc(e)}</li>`; });
-    html += `</ul></div>`;
-  }
-
-  // Data gaps
-  if (d.data_gaps && d.data_gaps.length > 0) {
-    html += `<div class="detail-section"><h3>Data Gaps</h3><ul>`;
-    d.data_gaps.forEach(g => { html += `<li>${esc(g)}</li>`; });
-    html += `</ul></div>`;
-  }
+  html += listSection('Key Evidence', d.key_evidence);
+  html += listSection('Data Gaps', d.data_gaps);
 
   // Description
-  if (d.description) {
-    html += `<div class="detail-section"><h3>Description</h3><p>${esc(d.description)}</p></div>`;
-  }
+  html += `<div class="detail-section"><h3>Description</h3><p class="editable"${ea('description',d.description,'textarea')} ondblclick="editFromAttr(this)">${esc(d.description) || 'Double-click to add description...'}</p></div>`;
 
   // Domain tags
   const hasDomains = d.technology_domains || d.market_domains || d.categories;
@@ -519,21 +632,9 @@ function renderDetail(d) {
     html += `</div>`;
   }
 
-  // Signal cards (GitHub, Research, Team)
-  const hasSignals = d.github_repo_count || d.github_contributors || d.member_count || d.huggingface_model_hits || d.openalex_hits || d.semantic_scholar_hits || d.linkedin_hits;
-  if (hasSignals) {
-    html += `<div class="detail-section"><h3>Signals</h3><div class="signal-grid">`;
-    html += signalCard(d.member_count, 'Members');
-    html += signalCard(d.github_repo_count, 'Repos');
-    html += signalCard(d.github_contributors, 'Contributors');
-    html += signalCard(d.github_commits_90d, 'Commits (90d)');
-    html += signalCard(d.huggingface_model_hits, 'HF Models');
-    html += signalCard(d.openalex_hits, 'OpenAlex');
-    html += signalCard(d.semantic_scholar_hits, 'Semantic Scholar');
-    html += signalCard(d.linkedin_hits, 'LinkedIn');
-    html += signalCard(d.researchgate_hits, 'ResearchGate');
-    html += `</div></div>`;
-  }
+  // Signal cards
+  const signalsHtml = SIGNALS.map(([k,l]) => signalCard(d[k], l)).join('');
+  if (signalsHtml) html += `<div class="detail-section"><h3>Signals</h3><div class="signal-grid">${signalsHtml}</div></div>`;
 
   // Due diligence
   if (d.dd_is_investable || d.dd_key_roles || d.dd_references_count) {
@@ -545,31 +646,25 @@ function renderDetail(d) {
     html += `</ul></div>`;
   }
 
-  // Links
-  const links = [];
-  if (d.website) links.push(['Website', d.website]);
-  if (d.email) links.push(['Email', 'mailto:' + d.email]);
-  if (d.linkedin) links.push(['LinkedIn', d.linkedin]);
-  if (d.github_org) links.push(['GitHub', 'https://github.com/' + d.github_org]);
-  if (d.team_page) links.push(['Team', d.team_page]);
-  if (links.length > 0) {
-    html += `<div class="detail-section"><h3>Links</h3><div class="link-row">`;
-    links.forEach(([label, url]) => {
+  // Links (with edit pencils)
+  const LINK_FIELDS = [['Website','website',d.website,d.website],['Email','email',d.email,'mailto:'+d.email],['LinkedIn','linkedin',d.linkedin,d.linkedin],['GitHub','github_org',d.github_org,'https://github.com/'+d.github_org],['Team','team_page',d.team_page,d.team_page]];
+  html += `<div class="detail-section"><h3>Links</h3><div class="link-row">`;
+  LINK_FIELDS.forEach(([label, field, raw, url]) => {
+    if (raw) {
       html += `<a href="${esc(safeUrl(url))}" target="_blank" class="link-pill">${esc(label)}</a>`;
-    });
-    html += `</div></div>`;
-  }
+      html += `<span class="edit-pencil"${editAttr(d.id, field, raw)} onclick="editFromAttr(this)">&#9998;</span>`;
+    } else {
+      html += `<span class="link-pill editable" style="color:var(--ink-faint);cursor:pointer"${editAttr(d.id, field, '')} ondblclick="editFromAttr(this)">+ ${label}</span>`;
+    }
+  });
+  html += `</div></div>`;
 
-  // Extra info
-  const extras = [];
-  if (d.team_size) extras.push(`Team size: ${d.team_size}`);
-  if (d.sponsors) extras.push(`Sponsors: ${d.sponsors}`);
-  if (d.competitions) extras.push(`Competitions: ${d.competitions}`);
-  if (extras.length > 0) {
-    html += `<div class="detail-section"><h3>Additional Info</h3><ul>`;
-    extras.forEach(e => { html += `<li>${esc(e)}</li>`; });
-    html += `</ul></div>`;
-  }
+  // Extra info (editable)
+  html += `<div class="detail-section"><h3>Additional Info</h3><ul>`;
+  [['team_size','Team size'],['key_repos','Key repos'],['sponsors','Sponsors'],['competitions','Competitions']].forEach(([f,l]) => {
+    html += `<li class="editable"${ea(f,d[f])} ondblclick="editFromAttr(this)">${l}: ${esc(d[f]) || '—'}</li>`;
+  });
+  html += `</ul></div>`;
 
   // Enrichments
   if (d.enrichments && d.enrichments.length > 0) {
@@ -769,7 +864,7 @@ function scoreBatch() { streamBatch('/api/score/batch', null); }
 // Keyboard navigation
 // ---------------------------------------------------------------------------
 document.addEventListener('keydown', e => {
-  if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     const items = state.initiatives;
@@ -824,6 +919,17 @@ const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Ou
 function signalCard(value, label) {
   return value ? `<div class="signal-card"><div class="signal-value">${value}</div><div class="signal-label">${esc(label)}</div></div>` : '';
 }
+
+function listSection(title, items) {
+  if (!items?.length) return '';
+  return `<div class="detail-section"><h3>${title}</h3><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`;
+}
+
+const SIGNALS = [
+  ['member_count','Members'],['github_repo_count','Repos'],['github_contributors','Contributors'],
+  ['github_commits_90d','Commits (90d)'],['huggingface_model_hits','HF Models'],['openalex_hits','OpenAlex'],
+  ['semantic_scholar_hits','Semantic Scholar'],['linkedin_hits','LinkedIn'],['researchgate_hits','ResearchGate'],
+];
 
 // ---------------------------------------------------------------------------
 // Projects

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -151,11 +152,10 @@ class LLMClient:
                 messages=[{"role": "user", "content": user}],
             )
             text = response.content[0].text.strip()
-            # Extract JSON from markdown code blocks
-            if text.startswith("```"):
-                lines = text.split("\n")
-                end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
-                text = "\n".join(lines[1:end])
+            # Extract JSON from markdown code blocks (handles ```json etc.)
+            text = re.sub(r'^```[^\n]*\n', '', text).rstrip()
+            if text.endswith("```"):
+                text = text[:-3].rstrip()
             return json.loads(text)
         else:
             response = self._client.chat.completions.create(
@@ -275,17 +275,20 @@ def validate_response(raw: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+async def _score(dossier: str, initiative_id: int, project_id: int | None, client: LLMClient) -> OutreachScore:
+    """Call LLM, validate response, return OutreachScore."""
+    raw = await client.call(OUTREACH_SYSTEM_PROMPT, dossier)
+    validated = validate_response(raw)
+    return _build_outreach_score(validated, initiative_id, project_id, client.model)
+
+
 async def score_initiative(
     initiative: Initiative,
     enrichments: list[Enrichment],
     client: LLMClient,
 ) -> OutreachScore:
     """Build dossier, call LLM, validate, return OutreachScore (not yet committed)."""
-    dossier = build_dossier(initiative, enrichments)
-    raw = await client.call(OUTREACH_SYSTEM_PROMPT, dossier)
-    validated = validate_response(raw)
-
-    return _build_outreach_score(validated, initiative.id, None, client.model)
+    return await _score(build_dossier(initiative, enrichments), initiative.id, None, client)
 
 
 # ---------------------------------------------------------------------------
@@ -295,28 +298,23 @@ async def score_initiative(
 
 def build_project_dossier(project: Project, initiative: Initiative) -> str:
     """Assemble project + parent initiative context into a dossier."""
-    sections: list[str] = []
-    sections.append(f"PROJECT: {project.name}")
-    sections.append(f"PARENT INITIATIVE: {initiative.name}")
-    sections.append(f"UNIVERSITY: {initiative.uni}")
-    if initiative.sector:
-        sections.append(f"SECTOR: {initiative.sector}")
-    if project.description:
-        sections.append(f"DESCRIPTION: {project.description}")
-    if project.website:
-        sections.append(f"WEBSITE: {project.website}")
-    if project.github_url:
-        sections.append(f"GITHUB: {project.github_url}")
-    if project.team:
-        sections.append(f"TEAM: {project.team}")
+    sections: list[str] = [
+        f"PROJECT: {project.name}",
+        f"PARENT INITIATIVE: {initiative.name}",
+        f"UNIVERSITY: {initiative.uni}",
+    ]
+    for val, label in [
+        (initiative.sector, "SECTOR"), (project.description, "DESCRIPTION"),
+        (project.website, "WEBSITE"), (project.github_url, "GITHUB"), (project.team, "TEAM"),
+    ]:
+        if val:
+            sections.append(f"{label}: {val}")
 
-    # Include parent initiative context
     if initiative.description and initiative.description != project.description:
         sections.append(f"\nPARENT INITIATIVE DESCRIPTION: {initiative.description}")
     if initiative.sponsors:
         sections.append(f"SPONSORS & PARTNERS: {initiative.sponsors}")
 
-    # Parse extra links
     try:
         extra = json.loads(project.extra_links_json or "{}")
         for key, val in extra.items():
@@ -334,11 +332,7 @@ async def score_project(
     client: LLMClient,
 ) -> OutreachScore:
     """Build project dossier, call LLM, validate, return OutreachScore."""
-    dossier = build_project_dossier(project, initiative)
-    raw = await client.call(OUTREACH_SYSTEM_PROMPT, dossier)
-    validated = validate_response(raw)
-
-    return _build_outreach_score(validated, initiative.id, project.id, client.model)
+    return await _score(build_project_dossier(project, initiative), initiative.id, project.id, client)
 
 
 # ---------------------------------------------------------------------------

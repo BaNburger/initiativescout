@@ -15,5 +15,7 @@ node_modules/
 scout/data/scout.db
 scout/data/scout.db-journal
 
-# Retired CLI artifacts
+# Retired CLI artifacts and excels
 archive/
+#ouput/csv/
+#output/spreadsheets/
