@@ -7,12 +7,20 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from scout.models import Enrichment, Initiative, OutreachScore
+from scout.models import Enrichment, Initiative, OutreachScore, Project
 
 log = logging.getLogger(__name__)
 
 VALID_VERDICTS = {"reach_out_now", "reach_out_soon", "monitor", "skip"}
 VALID_CLASSIFICATIONS = {"deep_tech", "student_venture", "applied_research", "student_club", "dormant"}
+
+GRADE_MAP = {
+    "A+": 1.0, "A": 1.3, "A-": 1.7,
+    "B+": 2.0, "B": 2.3, "B-": 2.7,
+    "C+": 3.0, "C": 3.3, "C-": 3.7,
+    "D": 4.0,
+}
+VALID_GRADES = set(GRADE_MAP.keys())
 
 OUTREACH_SYSTEM_PROMPT = """\
 You are a venture scout's assistant. Your job is to read a dossier about a \
@@ -63,6 +71,16 @@ Each should be one sentence referencing specific data.
 DATA GAPS:
 List 1-3 pieces of missing information that, if found, might change the verdict.
 
+DIMENSION GRADES (assign a school grade A+ through D for each):
+- team_grade: Quality of the founding / core team. Consider: roles filled \
+(CEO, CTO, etc.), relevant experience, team size, complementarity of skills, advisors.
+- tech_grade: Technical depth and differentiation. Consider: novelty of technology, \
+GitHub activity, research output, technical moat, prototype maturity.
+- opportunity_grade: Market opportunity and timing. Consider: market size, competitive \
+landscape, regulatory tailwinds, funding climate, university ecosystem support.
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+
 Respond with ONLY valid JSON:
 {
   "verdict": "<reach_out_now|reach_out_soon|monitor|skip>",
@@ -73,7 +91,10 @@ Respond with ONLY valid JSON:
   "contact_channel": "<email|linkedin|event|website_form>",
   "engagement_hook": "<specific opener for first outreach>",
   "key_evidence": ["<bullet 1>", "<bullet 2>", "<bullet 3>"],
-  "data_gaps": ["<what is missing>"]
+  "data_gaps": ["<what is missing>"],
+  "team_grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "tech_grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "opportunity_grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
 }
 """
 
@@ -103,7 +124,7 @@ class LLMClient:
     def _init_client(self) -> None:
         if self.provider == "anthropic":
             import anthropic
-            self.model = self.model or "claude-haiku-4-5-20241022"
+            self.model = self.model or "claude-haiku-4-5-20251001"
             self._client = anthropic.Anthropic(
                 api_key=self._api_key or os.environ.get("ANTHROPIC_API_KEY")
             )
@@ -133,9 +154,8 @@ class LLMClient:
             # Extract JSON from markdown code blocks
             if text.startswith("```"):
                 lines = text.split("\n")
-                start = 1 if lines[0].startswith("```") else 0
                 end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
-                text = "\n".join(lines[start:end])
+                text = "\n".join(lines[1:end])
             return json.loads(text)
         else:
             response = self._client.chat.completions.create(
@@ -220,6 +240,20 @@ def validate_response(raw: dict[str, Any]) -> dict[str, Any]:
         data_gaps = []
     data_gaps = [str(g) for g in data_gaps[:5]]
 
+    # Dimension grades
+    def _validate_grade(val: Any) -> str:
+        g = str(val or "C").strip().upper()
+        # Normalize common variants
+        if g in VALID_GRADES:
+            return g
+        # Try without spaces
+        g = g.replace(" ", "")
+        return g if g in VALID_GRADES else "C"
+
+    team_grade = _validate_grade(raw.get("team_grade"))
+    tech_grade = _validate_grade(raw.get("tech_grade"))
+    opportunity_grade = _validate_grade(raw.get("opportunity_grade"))
+
     return {
         "verdict": verdict,
         "score": score,
@@ -230,6 +264,9 @@ def validate_response(raw: dict[str, Any]) -> dict[str, Any]:
         "engagement_hook": str(raw.get("engagement_hook", "")),
         "key_evidence": key_evidence,
         "data_gaps": data_gaps,
+        "team_grade": team_grade,
+        "tech_grade": tech_grade,
+        "opportunity_grade": opportunity_grade,
     }
 
 
@@ -248,8 +285,76 @@ async def score_initiative(
     raw = await client.call(OUTREACH_SYSTEM_PROMPT, dossier)
     validated = validate_response(raw)
 
+    return _build_outreach_score(validated, initiative.id, None, client.model)
+
+
+# ---------------------------------------------------------------------------
+# Score one project
+# ---------------------------------------------------------------------------
+
+
+def build_project_dossier(project: Project, initiative: Initiative) -> str:
+    """Assemble project + parent initiative context into a dossier."""
+    sections: list[str] = []
+    sections.append(f"PROJECT: {project.name}")
+    sections.append(f"PARENT INITIATIVE: {initiative.name}")
+    sections.append(f"UNIVERSITY: {initiative.uni}")
+    if initiative.sector:
+        sections.append(f"SECTOR: {initiative.sector}")
+    if project.description:
+        sections.append(f"DESCRIPTION: {project.description}")
+    if project.website:
+        sections.append(f"WEBSITE: {project.website}")
+    if project.github_url:
+        sections.append(f"GITHUB: {project.github_url}")
+    if project.team:
+        sections.append(f"TEAM: {project.team}")
+
+    # Include parent initiative context
+    if initiative.description and initiative.description != project.description:
+        sections.append(f"\nPARENT INITIATIVE DESCRIPTION: {initiative.description}")
+    if initiative.sponsors:
+        sections.append(f"SPONSORS & PARTNERS: {initiative.sponsors}")
+
+    # Parse extra links
+    try:
+        extra = json.loads(project.extra_links_json or "{}")
+        for key, val in extra.items():
+            if val:
+                sections.append(f"{key.upper()}: {val}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return "\n".join(sections)
+
+
+async def score_project(
+    project: Project,
+    initiative: Initiative,
+    client: LLMClient,
+) -> OutreachScore:
+    """Build project dossier, call LLM, validate, return OutreachScore."""
+    dossier = build_project_dossier(project, initiative)
+    raw = await client.call(OUTREACH_SYSTEM_PROMPT, dossier)
+    validated = validate_response(raw)
+
+    return _build_outreach_score(validated, initiative.id, project.id, client.model)
+
+
+# ---------------------------------------------------------------------------
+# Shared OutreachScore builder
+# ---------------------------------------------------------------------------
+
+
+def _build_outreach_score(
+    validated: dict[str, Any],
+    initiative_id: int,
+    project_id: int | None,
+    llm_model: str,
+) -> OutreachScore:
     return OutreachScore(
-        initiative_id=initiative.id,
+        initiative_id=initiative_id,
+        project_id=project_id,
         verdict=validated["verdict"],
         score=validated["score"],
         classification=validated["classification"],
@@ -259,6 +364,12 @@ async def score_initiative(
         engagement_hook=validated["engagement_hook"],
         key_evidence_json=json.dumps(validated["key_evidence"]),
         data_gaps_json=json.dumps(validated["data_gaps"]),
-        llm_model=client.model,
+        grade_team=validated["team_grade"],
+        grade_team_num=GRADE_MAP[validated["team_grade"]],
+        grade_tech=validated["tech_grade"],
+        grade_tech_num=GRADE_MAP[validated["tech_grade"]],
+        grade_opportunity=validated["opportunity_grade"],
+        grade_opportunity_num=GRADE_MAP[validated["opportunity_grade"]],
+        llm_model=llm_model,
         scored_at=datetime.now(UTC),
     )

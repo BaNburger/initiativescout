@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 import openpyxl
@@ -24,100 +23,6 @@ def _s(value: object) -> str:
 def _col(row: tuple, idx: int) -> object:
     """Safely get a column value from a row tuple."""
     return row[idx] if idx < len(row) else None
-
-
-def _parse_spin_off_sheet(ws) -> list[dict]:
-    """Parse the 'Spin-Off Targets' sheet.
-
-    Current layout (1 header row):
-    [0]=Name [1]=University [2]=Sector [3]=Description [4]=Website [5]=Email
-    [6]=LinkedIn [7]=Instagram [8]=X/Twitter [9]=Discord [10]=Facebook
-    [11]=YouTube [12]=GitHub [13]=TikTok [14]=Slack [15]=Activity Mode
-    """
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
-    out: list[dict] = []
-    for row in rows:
-        if not row or not _col(row, 0):  # col 0 = Name
-            continue
-        out.append({
-            "name": _s(_col(row, 0)),
-            "uni": _s(_col(row, 1)),
-            "sector": _s(_col(row, 2)),
-            "mode": _s(_col(row, 15)),
-            "description": _s(_col(row, 3)),
-            "website": _s(_col(row, 4)),
-            "email": _s(_col(row, 5)),
-            "linkedin": _s(_col(row, 6)),
-            "github_org": _s(_col(row, 12)),
-            "team_page": "",
-            "team_size": "",
-            "key_repos": "",
-            "sponsors": "",
-            "competitions": "",
-            "relevance": "",
-            "sheet_source": "spin_off_targets",
-            "extra_links_json": json.dumps({
-                k: v for k, v in {
-                    "instagram": _s(_col(row, 7)),
-                    "x_twitter": _s(_col(row, 8)),
-                    "discord": _s(_col(row, 9)),
-                    "facebook": _s(_col(row, 10)),
-                    "youtube": _s(_col(row, 11)),
-                    "tiktok": _s(_col(row, 13)),
-                    "slack": _s(_col(row, 14)),
-                }.items() if v
-            }),
-        })
-    return out
-
-
-def _parse_all_initiatives_sheet(ws) -> list[dict]:
-    """Parse the 'All Initiatives' sheet.
-
-    Current layout (1 header row):
-    [0]=Name [1]=Spinoff Relevance [2]=University [3]=Sector [4]=Description
-    [5]=Website [6]=Email [7]=LinkedIn [8]=Instagram [9]=X/Twitter [10]=Discord
-    [11]=Facebook [12]=YouTube [13]=GitHub [14]=TikTok [15]=HuggingFace
-    [16]=Luma [17]=Linktree [18]=Slack [19]=Activity Mode
-    """
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
-    out: list[dict] = []
-    for row in rows:
-        if not row or not _col(row, 0):  # col 0 = Name
-            continue
-        out.append({
-            "name": _s(_col(row, 0)),
-            "uni": _s(_col(row, 2)),
-            "sector": _s(_col(row, 3)),
-            "mode": _s(_col(row, 19)),
-            "description": _s(_col(row, 4)),
-            "website": _s(_col(row, 5)),
-            "email": _s(_col(row, 6)),
-            "linkedin": _s(_col(row, 7)),
-            "github_org": _s(_col(row, 13)),
-            "team_page": "",
-            "team_size": "",
-            "key_repos": "",
-            "sponsors": "",
-            "competitions": "",
-            "relevance": _s(_col(row, 1)),
-            "sheet_source": "all_initiatives",
-            "extra_links_json": json.dumps({
-                k: v for k, v in {
-                    "instagram": _s(_col(row, 8)),
-                    "x_twitter": _s(_col(row, 9)),
-                    "discord": _s(_col(row, 10)),
-                    "facebook": _s(_col(row, 11)),
-                    "youtube": _s(_col(row, 12)),
-                    "tiktok": _s(_col(row, 14)),
-                    "huggingface": _s(_col(row, 15)),
-                    "luma": _s(_col(row, 16)),
-                    "linktree": _s(_col(row, 17)),
-                    "slack": _s(_col(row, 18)),
-                }.items() if v
-            }),
-        })
-    return out
 
 
 def _i(value: object) -> int:
@@ -150,6 +55,49 @@ def _b(value: object) -> bool:
     return str(value).strip().lower() in ("true", "1", "yes")
 
 
+# ---------------------------------------------------------------------------
+# Sheet parsers
+# ---------------------------------------------------------------------------
+
+# Column mappings for the two simple sheets (field_name -> column_index)
+_SPIN_OFF_COLS = {
+    "name": 0, "uni": 1, "sector": 2, "description": 3, "website": 4,
+    "email": 5, "linkedin": 6, "github_org": 12, "mode": 15,
+}
+_SPIN_OFF_SOCIAL = {
+    "instagram": 7, "x_twitter": 8, "discord": 9, "facebook": 10,
+    "youtube": 11, "tiktok": 13, "slack": 14,
+}
+
+_ALL_INIT_COLS = {
+    "name": 0, "relevance": 1, "uni": 2, "sector": 3, "description": 4,
+    "website": 5, "email": 6, "linkedin": 7, "github_org": 13, "mode": 19,
+}
+_ALL_INIT_SOCIAL = {
+    "instagram": 8, "x_twitter": 9, "discord": 10, "facebook": 11,
+    "youtube": 12, "tiktok": 14, "huggingface": 15, "luma": 16,
+    "linktree": 17, "slack": 18,
+}
+
+
+def _parse_sheet(
+    ws, col_map: dict[str, int], social_cols: dict[str, int], sheet_source: str,
+) -> list[dict]:
+    """Parse a simple sheet using column mappings."""
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    out: list[dict] = []
+    for row in rows:
+        if not row or not _col(row, col_map["name"]):
+            continue
+        social_links = {k: _s(_col(row, idx)) for k, idx in social_cols.items()}
+        social_links = {k: v for k, v in social_links.items() if v}
+        entry: dict = {"sheet_source": sheet_source, "extra_links_json": json.dumps(social_links)}
+        for field, idx in col_map.items():
+            entry[field] = _s(_col(row, idx))
+        out.append(entry)
+    return out
+
+
 def _parse_overview_sheet(ws) -> list[dict]:
     """Parse the 'Initiatives' sheet from the overview spreadsheet (1 header row)."""
     rows = list(ws.iter_rows(min_row=2, values_only=True))
@@ -180,7 +128,7 @@ def _parse_overview_sheet(ws) -> list[dict]:
             "technology_domains": _s(_col(row, 20)),
             "market_domains": _s(_col(row, 21)),
             "categories": _s(_col(row, 22)),
-            # Activity summary → description fallback
+            # Activity summary -> description fallback
             "description": _s(_col(row, 23)),
             # Team signals
             "member_count": _i(_col(row, 24)),
@@ -262,20 +210,7 @@ def _upsert(session: Session, data: dict, existing: dict[str, Initiative]) -> tu
         init.extra_links_json = json.dumps(merged)
         return False, init
     else:
-        # For overview-only inserts, fill required Initiative fields with defaults
-        if is_overview:
-            data.setdefault("sector", "")
-            data.setdefault("mode", "")
-            data.setdefault("website", "")
-            data.setdefault("email", "")
-            data.setdefault("team_page", "")
-            data.setdefault("team_size", "")
-            data.setdefault("linkedin", "")
-            data.setdefault("github_org", "")
-            data.setdefault("key_repos", "")
-            data.setdefault("sponsors", "")
-            data.setdefault("competitions", "")
-            data.setdefault("relevance", "")
+        # SQLAlchemy model defaults handle missing fields (all default to "")
         init = Initiative(**data)
         session.add(init)
         existing[key] = init
@@ -301,9 +236,9 @@ def import_xlsx(file_path: str | Path, session: Session) -> ImportResult:
         ws = wb[sheet_name]
         lower = sheet_name.casefold()
         if "spin" in lower and "off" in lower:
-            spin_off_rows = _parse_spin_off_sheet(ws)
+            spin_off_rows = _parse_sheet(ws, _SPIN_OFF_COLS, _SPIN_OFF_SOCIAL, "spin_off_targets")
         elif "all" in lower and "init" in lower:
-            all_init_rows = _parse_all_initiatives_sheet(ws)
+            all_init_rows = _parse_sheet(ws, _ALL_INIT_COLS, _ALL_INIT_SOCIAL, "all_initiatives")
         elif lower == "initiatives":
             overview_rows = _parse_overview_sheet(ws)
 
@@ -312,24 +247,8 @@ def import_xlsx(file_path: str | Path, session: Session) -> ImportResult:
     new_count = 0
     updated_count = 0
 
-    # Import spin-off targets first (higher quality data)
-    for data in spin_off_rows:
-        is_new, _ = _upsert(session, data, existing_map)
-        if is_new:
-            new_count += 1
-        else:
-            updated_count += 1
-
-    # Then all initiatives (fills gaps, adds relevance rating)
-    for data in all_init_rows:
-        is_new, _ = _upsert(session, data, existing_map)
-        if is_new:
-            new_count += 1
-        else:
-            updated_count += 1
-
-    # Then overview data (adds enriched signals to existing entries)
-    for data in overview_rows:
+    # Import in priority order: spin-off first, then all-initiatives, then overview
+    for data in [*spin_off_rows, *all_init_rows, *overview_rows]:
         is_new, _ = _upsert(session, data, existing_map)
         if is_new:
             new_count += 1

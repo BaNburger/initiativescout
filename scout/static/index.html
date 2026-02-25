@@ -146,6 +146,18 @@ a { color: var(--blue); text-decoration: none; }
 .signal-card .signal-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
 .signal-card .signal-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.3px; margin-top: 2px; }
 
+/* --- Grade badges --- */
+.grade-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: var(--mono); min-width: 28px; text-align: center; }
+.grade-a { background: var(--green-bg); color: var(--green); }
+.grade-b { background: var(--blue-bg); color: var(--blue); }
+.grade-c { background: var(--amber-bg); color: var(--amber); }
+.grade-d { background: var(--gray-bg); color: var(--gray); }
+
+.grade-cards { display: flex; gap: 10px; margin-bottom: 16px; }
+.grade-card { flex: 1; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; }
+.grade-card .grade-value { font-size: 28px; font-weight: 800; font-family: var(--mono); }
+.grade-card .grade-label { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
 /* --- Pre-computed scores bar --- */
 .score-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .score-bar-label { font-size: 12px; color: var(--ink-dim); min-width: 100px; }
@@ -154,6 +166,24 @@ a { color: var(--blue); text-decoration: none; }
 .score-bar .bar-fill.green { background: var(--green); }
 .score-bar .bar-fill.blue { background: var(--blue); }
 .score-bar-val { font-size: 12px; font-weight: 600; color: var(--ink); min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- Project cards --- */
+.project-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
+.project-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.project-card-header h4 { font-size: 14px; font-weight: 600; }
+.project-card-actions { display: flex; gap: 4px; }
+.project-card .project-meta { font-size: 12px; color: var(--ink-dim); line-height: 1.6; }
+.project-card .project-grades { display: flex; gap: 8px; margin-top: 8px; }
+.project-card .project-grades .pg-item { font-size: 11px; color: var(--ink-dim); display: flex; align-items: center; gap: 4px; }
+
+/* --- Project form --- */
+.project-form { background: var(--surface-2); border: 1px solid var(--accent); border-radius: var(--radius); padding: 16px; margin-bottom: 10px; }
+.project-form .pf-row { margin-bottom: 10px; }
+.project-form label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 4px; }
+.project-form input, .project-form textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--ink); padding: 6px 10px; border-radius: var(--radius); font-size: 13px; font-family: var(--font); outline: none; }
+.project-form input:focus, .project-form textarea:focus { border-color: var(--accent); }
+.project-form textarea { resize: vertical; min-height: 60px; }
+.project-form .pf-actions { display: flex; gap: 8px; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -214,9 +244,10 @@ a { color: var(--blue); text-decoration: none; }
         <tr>
           <th onclick="sortBy('name')">Initiative</th>
           <th onclick="sortBy('uni')">Uni</th>
-          <th onclick="sortBy('sector')">Sector</th>
           <th onclick="sortBy('verdict')">Verdict</th>
-          <th onclick="sortBy('score')">Score</th>
+          <th onclick="sortBy('grade_team')" title="Team Grade">Team</th>
+          <th onclick="sortBy('grade_tech')" title="Tech Grade">Tech</th>
+          <th onclick="sortBy('grade_opportunity')" title="Opportunity Grade">Opp</th>
           <th>Class</th>
         </tr>
       </thead>
@@ -289,9 +320,9 @@ async function api(method, path, body) {
 async function loadInitiatives() {
   const f = getFilters();
   let url = `/api/initiatives?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500`;
-  if (f.verdict) url += `&verdict=${f.verdict}`;
-  if (f.classification) url += `&classification=${f.classification}`;
-  if (f.uni) url += `&uni=${f.uni}`;
+  if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
+  if (f.classification) url += `&classification=${encodeURIComponent(f.classification)}`;
+  if (f.uni) url += `&uni=${encodeURIComponent(f.uni)}`;
   if (f.search) url += `&search=${encodeURIComponent(f.search)}`;
   const data = await api('GET', url);
   state.initiatives = data.items;
@@ -365,19 +396,16 @@ function renderList() {
 
   tbody.innerHTML = state.initiatives.map(i => {
     const v = i.verdict || 'unscored';
-    const vLabel = v === 'reach_out_now' ? 'NOW' :
-                   v === 'reach_out_soon' ? 'SOON' :
-                   v === 'monitor' ? 'MON' :
-                   v === 'skip' ? 'SKIP' : '—';
-    const score = i.score != null ? i.score.toFixed(1) : '—';
+    const vLabel = VERDICT_SHORT[v] || '—';
     const cls = i.classification || '';
     const clsLabel = cls.replace(/_/g, ' ');
     return `<tr data-id="${i.id}" onclick="loadDetail(${i.id})" class="${i.id === state.selectedId ? 'selected' : ''}">
       <td class="name-cell" title="${esc(i.name)}">${esc(i.name)}</td>
       <td class="uni-cell">${esc(i.uni)}</td>
-      <td class="sector-cell" title="${esc(i.sector)}">${esc(i.sector)}</td>
       <td><span class="verdict-badge verdict-${v}">${vLabel}</span></td>
-      <td class="score-cell">${score}</td>
+      <td>${gradeBadge(i.grade_team)}</td>
+      <td>${gradeBadge(i.grade_tech)}</td>
+      <td>${gradeBadge(i.grade_opportunity)}</td>
       <td><span class="class-badge">${esc(clsLabel)}</span></td>
     </tr>`;
   }).join('');
@@ -392,12 +420,7 @@ function renderDetail(d) {
   el.style.display = 'block';
 
   const v = d.verdict || 'unscored';
-  const vLabel = {
-    reach_out_now: 'Reach Out Now',
-    reach_out_soon: 'Reach Out Soon',
-    monitor: 'Monitor',
-    skip: 'Skip',
-  }[v] || 'Not Scored';
+  const vLabel = VERDICT_LONG[v] || 'Not Scored';
 
   let html = `
     <div class="detail-header">
@@ -418,6 +441,15 @@ function renderDetail(d) {
       <div class="verdict-label">${vLabel} — ${d.score?.toFixed(1) || '?'}/5 — ${esc(d.classification?.replace(/_/g, ' ') || '')}</div>
       <div class="reasoning">${esc(d.reasoning || '')}</div>
     </div>`;
+  }
+
+  // Dimension grades
+  if (d.grade_team || d.grade_tech || d.grade_opportunity) {
+    html += `<div class="grade-cards">`;
+    html += `<div class="grade-card"><div class="grade-value ${gradeColorClass(d.grade_team)}">${esc(d.grade_team || '—')}</div><div class="grade-label">Team</div></div>`;
+    html += `<div class="grade-card"><div class="grade-value ${gradeColorClass(d.grade_tech)}">${esc(d.grade_tech || '—')}</div><div class="grade-label">Tech</div></div>`;
+    html += `<div class="grade-card"><div class="grade-value ${gradeColorClass(d.grade_opportunity)}">${esc(d.grade_opportunity || '—')}</div><div class="grade-label">Opportunity</div></div>`;
+    html += `</div>`;
   }
 
   // Contact
@@ -491,15 +523,15 @@ function renderDetail(d) {
   const hasSignals = d.github_repo_count || d.github_contributors || d.member_count || d.huggingface_model_hits || d.openalex_hits || d.semantic_scholar_hits || d.linkedin_hits;
   if (hasSignals) {
     html += `<div class="detail-section"><h3>Signals</h3><div class="signal-grid">`;
-    if (d.member_count) html += `<div class="signal-card"><div class="signal-value">${d.member_count}</div><div class="signal-label">Members</div></div>`;
-    if (d.github_repo_count) html += `<div class="signal-card"><div class="signal-value">${d.github_repo_count}</div><div class="signal-label">Repos</div></div>`;
-    if (d.github_contributors) html += `<div class="signal-card"><div class="signal-value">${d.github_contributors}</div><div class="signal-label">Contributors</div></div>`;
-    if (d.github_commits_90d) html += `<div class="signal-card"><div class="signal-value">${d.github_commits_90d}</div><div class="signal-label">Commits (90d)</div></div>`;
-    if (d.huggingface_model_hits) html += `<div class="signal-card"><div class="signal-value">${d.huggingface_model_hits}</div><div class="signal-label">HF Models</div></div>`;
-    if (d.openalex_hits) html += `<div class="signal-card"><div class="signal-value">${d.openalex_hits}</div><div class="signal-label">OpenAlex</div></div>`;
-    if (d.semantic_scholar_hits) html += `<div class="signal-card"><div class="signal-value">${d.semantic_scholar_hits}</div><div class="signal-label">Semantic Scholar</div></div>`;
-    if (d.linkedin_hits) html += `<div class="signal-card"><div class="signal-value">${d.linkedin_hits}</div><div class="signal-label">LinkedIn</div></div>`;
-    if (d.researchgate_hits) html += `<div class="signal-card"><div class="signal-value">${d.researchgate_hits}</div><div class="signal-label">ResearchGate</div></div>`;
+    html += signalCard(d.member_count, 'Members');
+    html += signalCard(d.github_repo_count, 'Repos');
+    html += signalCard(d.github_contributors, 'Contributors');
+    html += signalCard(d.github_commits_90d, 'Commits (90d)');
+    html += signalCard(d.huggingface_model_hits, 'HF Models');
+    html += signalCard(d.openalex_hits, 'OpenAlex');
+    html += signalCard(d.semantic_scholar_hits, 'Semantic Scholar');
+    html += signalCard(d.linkedin_hits, 'LinkedIn');
+    html += signalCard(d.researchgate_hits, 'ResearchGate');
     html += `</div></div>`;
   }
 
@@ -523,7 +555,7 @@ function renderDetail(d) {
   if (links.length > 0) {
     html += `<div class="detail-section"><h3>Links</h3><div class="link-row">`;
     links.forEach(([label, url]) => {
-      html += `<a href="${esc(url)}" target="_blank" class="link-pill">${esc(label)}</a>`;
+      html += `<a href="${esc(safeUrl(url))}" target="_blank" class="link-pill">${esc(label)}</a>`;
     });
     html += `</div></div>`;
   }
@@ -547,6 +579,52 @@ function renderDetail(d) {
     });
     html += `</ul></div>`;
   }
+
+  // Projects
+  html += `<div class="detail-section"><h3>Projects</h3>`;
+  html += `<div id="project-form-slot"></div>`;
+  if (d.projects && d.projects.length > 0) {
+    d.projects.forEach(p => {
+      const pv = p.verdict || 'unscored';
+      const pvLabel = VERDICT_SHORT[pv] || '';
+      html += `<div class="project-card" id="project-${p.id}">`;
+      html += `<div class="project-card-header">`;
+      html += `<h4>${esc(p.name)} ${pvLabel ? `<span class="verdict-badge verdict-${pv}" style="margin-left:6px;font-size:10px">${pvLabel}</span>` : ''}</h4>`;
+      html += `<div class="project-card-actions">`;
+      html += `<button class="btn btn-sm" onclick="scoreProject(${p.id})" title="Score">Score</button>`;
+      html += `<button class="btn btn-sm" onclick="showProjectForm(${d.id}, ${p.id})" title="Edit">Edit</button>`;
+      html += `<button class="btn btn-sm" onclick="deleteProject(${p.id}, ${d.id})" title="Delete" style="color:var(--red)">Del</button>`;
+      html += `</div></div>`;
+      // Meta info
+      const meta = [];
+      if (p.description) meta.push(p.description);
+      if (p.team) meta.push(`Team: ${p.team}`);
+      if (meta.length > 0) html += `<div class="project-meta">${esc(meta.join(' — '))}</div>`;
+      // Links
+      const pLinks = [];
+      if (p.website) pLinks.push(`<a href="${esc(safeUrl(p.website))}" target="_blank" class="link-pill">Website</a>`);
+      if (p.github_url) pLinks.push(`<a href="${esc(safeUrl(p.github_url))}" target="_blank" class="link-pill">GitHub</a>`);
+      if (p.extra_links) {
+        Object.entries(p.extra_links).forEach(([k, v]) => {
+          if (v) pLinks.push(`<a href="${esc(safeUrl(v))}" target="_blank" class="link-pill">${esc(k)}</a>`);
+        });
+      }
+      if (pLinks.length > 0) html += `<div class="link-row">${pLinks.join('')}</div>`;
+      // Grades
+      if (p.grade_team || p.grade_tech || p.grade_opportunity) {
+        html += `<div class="project-grades">`;
+        html += `<span class="pg-item">Team ${gradeBadge(p.grade_team)}</span>`;
+        html += `<span class="pg-item">Tech ${gradeBadge(p.grade_tech)}</span>`;
+        html += `<span class="pg-item">Opp ${gradeBadge(p.grade_opportunity)}</span>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+  } else {
+    html += `<p style="color:var(--ink-faint);font-size:13px">No projects yet</p>`;
+  }
+  html += `<button class="btn btn-sm" style="margin-top:8px" onclick="showProjectForm(${d.id})">+ Add Project</button>`;
+  html += `</div>`;
 
   // Actions
   html += `
@@ -717,6 +795,108 @@ function esc(s) {
   const div = document.createElement('div');
   div.textContent = String(s);
   return div.innerHTML;
+}
+
+function safeUrl(url) {
+  if (!url) return '#';
+  const s = String(url).trim();
+  if (/^(javascript|data|vbscript):/i.test(s)) return '#';
+  return s;
+}
+
+function gradeColorClass(grade) {
+  if (!grade) return '';
+  const c = grade.charAt(0).toUpperCase();
+  if (c === 'A') return 'grade-a';
+  if (c === 'B') return 'grade-b';
+  if (c === 'C') return 'grade-c';
+  return 'grade-d';
+}
+
+function gradeBadge(grade) {
+  if (!grade) return '<span style="color:var(--ink-faint)">—</span>';
+  return `<span class="grade-badge ${gradeColorClass(grade)}">${esc(grade)}</span>`;
+}
+
+const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: 'MON', skip: 'SKIP' };
+const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
+
+function signalCard(value, label) {
+  return value ? `<div class="signal-card"><div class="signal-value">${value}</div><div class="signal-label">${esc(label)}</div></div>` : '';
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+async function showProjectForm(initiativeId, projectId) {
+  const slot = document.getElementById('project-form-slot');
+  if (!slot) return;
+
+  let p = { name: '', description: '', website: '', github_url: '', team: '' };
+  if (projectId) {
+    // Fetch existing project data from the detail already loaded
+    const detail = await api('GET', `/api/initiatives/${initiativeId}`);
+    const found = (detail.projects || []).find(x => x.id === projectId);
+    if (found) p = found;
+  }
+
+  slot.innerHTML = `
+    <div class="project-form">
+      <div class="pf-row"><label>Name *</label><input id="pf-name" value="${esc(p.name)}"></div>
+      <div class="pf-row"><label>Description</label><textarea id="pf-desc">${esc(p.description)}</textarea></div>
+      <div class="pf-row"><label>Website</label><input id="pf-website" value="${esc(p.website)}"></div>
+      <div class="pf-row"><label>GitHub URL</label><input id="pf-github" value="${esc(p.github_url)}"></div>
+      <div class="pf-row"><label>Team</label><input id="pf-team" value="${esc(p.team)}"></div>
+      <div class="pf-actions">
+        <button class="btn btn-sm btn-primary" onclick="submitProject(${initiativeId}, ${projectId || 'null'})">${projectId ? 'Update' : 'Create'}</button>
+        <button class="btn btn-sm" onclick="document.getElementById('project-form-slot').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+  slot.querySelector('#pf-name').focus();
+}
+
+async function submitProject(initiativeId, projectId) {
+  const name = document.getElementById('pf-name').value.trim();
+  if (!name) { alert('Name is required'); return; }
+
+  const body = {
+    name,
+    description: document.getElementById('pf-desc').value.trim(),
+    website: document.getElementById('pf-website').value.trim(),
+    github_url: document.getElementById('pf-github').value.trim(),
+    team: document.getElementById('pf-team').value.trim(),
+  };
+
+  try {
+    if (projectId) {
+      await api('PUT', `/api/projects/${projectId}`, body);
+    } else {
+      await api('POST', `/api/initiatives/${initiativeId}/projects`, body);
+    }
+    loadDetail(initiativeId);
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+async function deleteProject(projectId, initiativeId) {
+  if (!confirm('Delete this project and its scores?')) return;
+  try {
+    await api('DELETE', `/api/projects/${projectId}`);
+    loadDetail(initiativeId);
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+
+async function scoreProject(projectId) {
+  try {
+    const r = await api('POST', `/api/projects/${projectId}/score`);
+    alert(`Project verdict: ${r.verdict} (${r.score})`);
+    if (state.selectedId) loadDetail(state.selectedId);
+  } catch (err) {
+    alert('Score failed: ' + err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------

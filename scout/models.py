@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from typing import Any
+from datetime import datetime
 
 from pydantic import BaseModel
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
@@ -68,6 +67,7 @@ class Initiative(Base):
 
     enrichments: Mapped[list[Enrichment]] = relationship("Enrichment", back_populates="initiative", cascade="all, delete-orphan")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="initiative", cascade="all, delete-orphan")
+    projects: Mapped[list[Project]] = relationship("Project", back_populates="initiative", cascade="all, delete-orphan")
 
 
 class Enrichment(Base):
@@ -83,11 +83,29 @@ class Enrichment(Base):
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="enrichments")
 
 
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    initiative_id: Mapped[int] = mapped_column(Integer, ForeignKey("initiatives.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    website: Mapped[str] = mapped_column(String(500), default="")
+    github_url: Mapped[str] = mapped_column(String(500), default="")
+    team: Mapped[str] = mapped_column(Text, default="")
+    extra_links_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    initiative: Mapped[Initiative] = relationship("Initiative", back_populates="projects")
+    scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="project", cascade="all, delete-orphan")
+
+
 class OutreachScore(Base):
     __tablename__ = "outreach_scores"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     initiative_id: Mapped[int] = mapped_column(Integer, ForeignKey("initiatives.id"), nullable=False)
+    project_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("projects.id"), nullable=True)
     verdict: Mapped[str] = mapped_column(String(30), nullable=False)  # reach_out_now | reach_out_soon | monitor | skip
     score: Mapped[float] = mapped_column(Float, default=3.0)
     classification: Mapped[str] = mapped_column(String(50), default="")
@@ -97,10 +115,18 @@ class OutreachScore(Base):
     engagement_hook: Mapped[str] = mapped_column(Text, default="")
     key_evidence_json: Mapped[str] = mapped_column(Text, default="[]")
     data_gaps_json: Mapped[str] = mapped_column(Text, default="[]")
+    # Dimension grades (school grades A+ through D)
+    grade_team: Mapped[str] = mapped_column(String(3), default="")
+    grade_team_num: Mapped[float] = mapped_column(Float, default=5.0)
+    grade_tech: Mapped[str] = mapped_column(String(3), default="")
+    grade_tech_num: Mapped[float] = mapped_column(Float, default=5.0)
+    grade_opportunity: Mapped[str] = mapped_column(String(3), default="")
+    grade_opportunity_num: Mapped[float] = mapped_column(Float, default=5.0)
     llm_model: Mapped[str] = mapped_column(String(100), default="")
     scored_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="scores")
+    project: Mapped[Project | None] = relationship("Project", back_populates="scores")
 
 
 # ---------------------------------------------------------------------------
@@ -130,12 +156,64 @@ class InitiativeOut(BaseModel):
     engagement_hook: str | None = None
     key_evidence: list[str] = []
     data_gaps: list[str] = []
+    # Dimension grades
+    grade_team: str | None = None
+    grade_team_num: float | None = None
+    grade_tech: str | None = None
+    grade_tech_num: float | None = None
+    grade_opportunity: str | None = None
+    grade_opportunity_num: float | None = None
     # Lightweight overview fields for list view
     technology_domains: str = ""
     categories: str = ""
     member_count: int = 0
     outreach_now_score: float | None = None
     venture_upside_score: float | None = None
+
+
+class EnrichmentOut(BaseModel):
+    id: int
+    source_type: str
+    summary: str
+    fetched_at: str
+
+
+class ProjectOut(BaseModel):
+    id: int
+    initiative_id: int
+    name: str
+    description: str
+    website: str
+    github_url: str
+    team: str
+    extra_links: dict[str, str] = {}
+    verdict: str | None = None
+    score: float | None = None
+    classification: str | None = None
+    grade_team: str | None = None
+    grade_team_num: float | None = None
+    grade_tech: str | None = None
+    grade_tech_num: float | None = None
+    grade_opportunity: str | None = None
+    grade_opportunity_num: float | None = None
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+    website: str = ""
+    github_url: str = ""
+    team: str = ""
+    extra_links: dict[str, str] = {}
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    website: str | None = None
+    github_url: str | None = None
+    team: str | None = None
+    extra_links: dict[str, str] | None = None
 
 
 class InitiativeDetail(InitiativeOut):
@@ -148,6 +226,7 @@ class InitiativeDetail(InitiativeOut):
     competitions: str = ""
     extra_links: dict[str, str] = {}
     enrichments: list[EnrichmentOut] = []
+    projects: list[ProjectOut] = []
     # Full overview fields
     market_domains: str = ""
     member_examples: str = ""
@@ -166,25 +245,6 @@ class InitiativeDetail(InitiativeOut):
     known_url_count: int = 0
     linkedin_hits: int = 0
     researchgate_hits: int = 0
-
-
-class EnrichmentOut(BaseModel):
-    id: int
-    source_type: str
-    summary: str
-    fetched_at: str
-
-
-class ScoreOut(BaseModel):
-    verdict: str
-    score: float
-    classification: str
-    reasoning: str
-    contact_who: str
-    contact_channel: str
-    engagement_hook: str
-    key_evidence: list[str]
-    data_gaps: list[str]
 
 
 class ImportResult(BaseModel):

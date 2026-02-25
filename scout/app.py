@@ -3,15 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
 from collections import Counter
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from scout.db import get_session, init_db
 from scout.enricher import enrich_github, enrich_team_page, enrich_website
@@ -24,63 +26,84 @@ from scout.models import (
     InitiativeDetail,
     InitiativeOut,
     OutreachScore,
+    Project,
+    ProjectCreate,
+    ProjectOut,
+    ProjectUpdate,
     StatsOut,
 )
-from scout.scorer import LLMClient, score_initiative
+from scout.scorer import LLMClient, score_initiative, score_project
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="Scout", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Scout", version="0.1.0", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Dependencies & Helpers
 # ---------------------------------------------------------------------------
 
 
+def db_session() -> Generator[Session, None, None]:
+    """FastAPI dependency that provides a DB session and closes it after the request."""
+    session = get_session()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+_MISSING = object()
+
+
+def _json(value: str | None, default: Any = _MISSING) -> Any:
+    """Safely parse a JSON string, returning default on failure."""
+    try:
+        return json.loads(value or "")
+    except json.JSONDecodeError:
+        return {} if default is _MISSING else default
+
+
+# Score field extraction shared by initiative and project helpers
+_SCORE_FIELDS = (
+    "verdict", "score", "classification", "reasoning", "contact_who",
+    "contact_channel", "engagement_hook", "grade_team", "grade_team_num",
+    "grade_tech", "grade_tech_num", "grade_opportunity", "grade_opportunity_num",
+)
+
+
+def _latest_score_fields(scores: list[OutreachScore]) -> dict[str, Any]:
+    if not scores:
+        result: dict[str, Any] = {f: None for f in _SCORE_FIELDS}
+        result["key_evidence"] = []
+        result["data_gaps"] = []
+        return result
+    latest = max(scores, key=lambda s: s.scored_at)
+    result = {f: getattr(latest, f) for f in _SCORE_FIELDS}
+    result["key_evidence"] = _json(latest.key_evidence_json, [])
+    result["data_gaps"] = _json(latest.data_gaps_json, [])
+    return result
+
+
 def _initiative_to_out(init: Initiative) -> InitiativeOut:
-    latest_score = None
-    if init.scores:
-        latest_score = max(init.scores, key=lambda s: s.scored_at)
     enriched = bool(init.enrichments)
     enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
-
-    evidence: list[str] = []
-    gaps: list[str] = []
-    if latest_score:
-        try:
-            evidence = json.loads(latest_score.key_evidence_json or "[]")
-        except (json.JSONDecodeError, TypeError):
-            pass
-        try:
-            gaps = json.loads(latest_score.data_gaps_json or "[]")
-        except (json.JSONDecodeError, TypeError):
-            pass
-
     return InitiativeOut(
-        id=init.id,
-        name=init.name,
-        uni=init.uni,
-        sector=init.sector,
-        mode=init.mode,
-        description=init.description,
-        website=init.website,
-        email=init.email,
-        relevance=init.relevance,
-        sheet_source=init.sheet_source,
+        id=init.id, name=init.name, uni=init.uni, sector=init.sector,
+        mode=init.mode, description=init.description, website=init.website,
+        email=init.email, relevance=init.relevance, sheet_source=init.sheet_source,
         enriched=enriched,
         enriched_at=enriched_at.isoformat() if enriched_at else None,
-        verdict=latest_score.verdict if latest_score else None,
-        score=latest_score.score if latest_score else None,
-        classification=latest_score.classification if latest_score else None,
-        reasoning=latest_score.reasoning if latest_score else None,
-        contact_who=latest_score.contact_who if latest_score else None,
-        contact_channel=latest_score.contact_channel if latest_score else None,
-        engagement_hook=latest_score.engagement_hook if latest_score else None,
-        key_evidence=evidence,
-        data_gaps=gaps,
+        **_latest_score_fields(init.scores),
         technology_domains=init.technology_domains,
         categories=init.categories,
         member_count=init.member_count,
@@ -89,52 +112,68 @@ def _initiative_to_out(init: Initiative) -> InitiativeOut:
     )
 
 
+_PROJECT_SCORE_KEYS = (
+    "verdict", "score", "classification",
+    "grade_team", "grade_team_num", "grade_tech", "grade_tech_num",
+    "grade_opportunity", "grade_opportunity_num",
+)
+
+
+def _project_to_out(proj: Project) -> ProjectOut:
+    sf = _latest_score_fields(proj.scores)
+    return ProjectOut(
+        id=proj.id, initiative_id=proj.initiative_id,
+        name=proj.name, description=proj.description,
+        website=proj.website, github_url=proj.github_url,
+        team=proj.team, extra_links=_json(proj.extra_links_json),
+        **{k: sf[k] for k in _PROJECT_SCORE_KEYS},
+    )
+
+
+_DETAIL_FIELDS = (
+    "team_page", "team_size", "linkedin", "github_org", "key_repos",
+    "sponsors", "competitions", "market_domains", "member_examples",
+    "member_roles", "github_repo_count", "github_contributors",
+    "github_commits_90d", "github_ci_present", "huggingface_model_hits",
+    "openalex_hits", "semantic_scholar_hits", "dd_key_roles",
+    "dd_references_count", "dd_is_investable", "profile_coverage_score",
+    "known_url_count", "linkedin_hits", "researchgate_hits",
+)
+
+
 def _initiative_to_detail(init: Initiative) -> InitiativeDetail:
     base = _initiative_to_out(init)
-    try:
-        extra_links = json.loads(init.extra_links_json or "{}")
-    except (json.JSONDecodeError, TypeError):
-        extra_links = {}
-
     enrichment_outs = [
-        EnrichmentOut(
-            id=e.id,
-            source_type=e.source_type,
-            summary=e.summary,
-            fetched_at=e.fetched_at.isoformat(),
-        )
+        EnrichmentOut(id=e.id, source_type=e.source_type, summary=e.summary,
+                      fetched_at=e.fetched_at.isoformat())
         for e in init.enrichments
     ]
-
+    project_outs = [_project_to_out(p) for p in init.projects]
+    extras = {f: getattr(init, f) for f in _DETAIL_FIELDS}
     return InitiativeDetail(
-        **base.model_dump(),
-        team_page=init.team_page,
-        team_size=init.team_size,
-        linkedin=init.linkedin,
-        github_org=init.github_org,
-        key_repos=init.key_repos,
-        sponsors=init.sponsors,
-        competitions=init.competitions,
-        extra_links=extra_links,
+        **base.model_dump(), **extras,
+        extra_links=_json(init.extra_links_json),
         enrichments=enrichment_outs,
-        market_domains=init.market_domains,
-        member_examples=init.member_examples,
-        member_roles=init.member_roles,
-        github_repo_count=init.github_repo_count,
-        github_contributors=init.github_contributors,
-        github_commits_90d=init.github_commits_90d,
-        github_ci_present=init.github_ci_present,
-        huggingface_model_hits=init.huggingface_model_hits,
-        openalex_hits=init.openalex_hits,
-        semantic_scholar_hits=init.semantic_scholar_hits,
-        dd_key_roles=init.dd_key_roles,
-        dd_references_count=init.dd_references_count,
-        dd_is_investable=init.dd_is_investable,
-        profile_coverage_score=init.profile_coverage_score,
-        known_url_count=init.known_url_count,
-        linkedin_hits=init.linkedin_hits,
-        researchgate_hits=init.researchgate_hits,
+        projects=project_outs,
     )
+
+
+async def _run_enrichment(session: Session, init: Initiative) -> int:
+    """Delete old enrichments, run all enrichers, add results to session.
+
+    Caller must commit.
+    """
+    session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
+    added = 0
+    for enrich_fn in (enrich_website, enrich_team_page, enrich_github):
+        try:
+            result = await enrich_fn(init)
+            if result:
+                session.add(result)
+                added += 1
+        except Exception as exc:
+            log.warning("Enrichment failed (%s) for %s: %s", enrich_fn.__name__, init.name, exc)
+    return added
 
 
 # ---------------------------------------------------------------------------
@@ -156,21 +195,20 @@ async def root():
 
 
 @app.post("/api/import", response_model=ImportResult)
-async def import_file(file: UploadFile = File(...)):
+async def import_file(file: UploadFile = File(...), session: Session = Depends(db_session)):
     if not file.filename or not file.filename.endswith(".xlsx"):
         raise HTTPException(400, "Only .xlsx files are supported")
 
-    tmp_path = Path("/tmp") / f"scout_import_{file.filename}"
     content = await file.read()
-    tmp_path.write_bytes(content)
-
+    tmp_path = None
     try:
-        session = get_session()
-        result = import_xlsx(tmp_path, session)
-        session.close()
-        return result
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            f.write(content)
+            tmp_path = Path(f.name)
+        return import_xlsx(tmp_path, session)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path:
+            tmp_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +231,10 @@ async def list_initiatives(
     sort_dir: str = Query("desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(200, ge=1, le=500),
+    session: Session = Depends(db_session),
 ):
-    session = get_session()
     initiatives = session.execute(select(Initiative)).scalars().all()
     items = [_initiative_to_out(i) for i in initiatives]
-    session.close()
 
     # Filter
     if verdict:
@@ -224,59 +261,32 @@ async def list_initiatives(
         elif sort_by == "verdict":
             order = {"reach_out_now": 0, "reach_out_soon": 1, "monitor": 2, "skip": 3}
             return order.get(item.verdict or "", 4)
+        elif sort_by == "grade_team":
+            return item.grade_team_num if item.grade_team_num is not None else 99
+        elif sort_by == "grade_tech":
+            return item.grade_tech_num if item.grade_tech_num is not None else 99
+        elif sort_by == "grade_opportunity":
+            return item.grade_opportunity_num if item.grade_opportunity_num is not None else 99
         return item.name.lower()
 
     items.sort(key=sort_key, reverse=(sort_dir == "desc"))
-
     total = len(items)
     start = (page - 1) * per_page
     items = items[start : start + per_page]
-
     return InitiativeListResponse(items=items, total=total)
 
 
 @app.get("/api/initiatives/{initiative_id}", response_model=InitiativeDetail)
-async def get_initiative(initiative_id: int):
-    session = get_session()
+async def get_initiative(initiative_id: int, session: Session = Depends(db_session)):
     init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
     if not init:
-        session.close()
         raise HTTPException(404, "Initiative not found")
-    detail = _initiative_to_detail(init)
-    session.close()
-    return detail
+    return _initiative_to_detail(init)
 
 
 # ---------------------------------------------------------------------------
-# Routes: Enrichment
+# Routes: Enrichment (batch before parameterized to avoid route shadowing)
 # ---------------------------------------------------------------------------
-
-
-@app.post("/api/enrich/{initiative_id}")
-async def enrich_one(initiative_id: int):
-    session = get_session()
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
-    if not init:
-        session.close()
-        raise HTTPException(404, "Initiative not found")
-
-    # Delete old enrichments for this initiative
-    session.execute(delete(Enrichment).where(Enrichment.initiative_id == initiative_id))
-    session.commit()
-
-    added = 0
-    for enrich_fn in (enrich_website, enrich_team_page, enrich_github):
-        try:
-            result = await enrich_fn(init)
-            if result:
-                session.add(result)
-                added += 1
-        except Exception as exc:
-            log.warning("Enrichment failed for %s: %s", init.name, exc)
-
-    session.commit()
-    session.close()
-    return {"enrichments_added": added}
 
 
 @app.post("/api/enrich/batch")
@@ -285,52 +295,102 @@ async def enrich_batch(body: dict[str, Any] | None = None):
 
     async def stream():
         session = get_session()
-        query = select(Initiative)
-        if initiative_ids:
-            query = query.where(Initiative.id.in_(initiative_ids))
-        initiatives = session.execute(query).scalars().all()
-        total = len(initiatives)
-        enriched = 0
-        failed = 0
+        try:
+            query = select(Initiative)
+            if initiative_ids:
+                query = query.where(Initiative.id.in_(initiative_ids))
+            initiatives = session.execute(query).scalars().all()
+            total = len(initiatives)
+            enriched = 0
+            failed = 0
+            # Pre-collect names for SSE progress (survives rollback)
+            init_names = {init.id: init.name for init in initiatives}
 
-        for idx, init in enumerate(initiatives):
-            yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init.name})}\n\n"
+            for idx, init in enumerate(initiatives):
+                yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_names[init.id]})}\n\n"
+                try:
+                    await _run_enrichment(session, init)
+                    session.commit()
+                    enriched += 1
+                except Exception as exc:
+                    log.warning("Batch enrich failed for %s: %s", init_names[init.id], exc)
+                    failed += 1
+                    session.rollback()
 
-            # Delete old enrichments
-            session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
-            session.commit()
+                await asyncio.sleep(0.1)
 
-            try:
-                for enrich_fn in (enrich_website, enrich_team_page, enrich_github):
-                    result = await enrich_fn(init)
-                    if result:
-                        session.add(result)
-                session.commit()
-                enriched += 1
-            except Exception as exc:
-                log.warning("Batch enrich failed for %s: %s", init.name, exc)
-                failed += 1
-                session.rollback()
-
-            await asyncio.sleep(0.1)  # small delay between initiatives
-
-        session.close()
-        yield f"data: {json.dumps({'type': 'complete', 'stats': {'enriched': enriched, 'failed': failed}})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'stats': {'enriched': enriched, 'failed': failed}})}\n\n"
+        finally:
+            session.close()
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+@app.post("/api/enrich/{initiative_id}")
+async def enrich_one(initiative_id: int, session: Session = Depends(db_session)):
+    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
+    if not init:
+        raise HTTPException(404, "Initiative not found")
+    added = await _run_enrichment(session, init)
+    session.commit()
+    return {"enrichments_added": added}
+
+
 # ---------------------------------------------------------------------------
-# Routes: Scoring
+# Routes: Scoring (batch before parameterized to avoid route shadowing)
 # ---------------------------------------------------------------------------
+
+
+@app.post("/api/score/batch")
+async def score_batch(body: dict[str, Any] | None = None):
+    initiative_ids = (body or {}).get("initiative_ids")
+
+    async def stream():
+        session = get_session()
+        try:
+            query = select(Initiative)
+            if initiative_ids:
+                query = query.where(Initiative.id.in_(initiative_ids))
+            initiatives = session.execute(query).scalars().all()
+            total = len(initiatives)
+            scored = 0
+            failed = 0
+            # Pre-collect names for SSE progress (survives rollback)
+            init_names = {init.id: init.name for init in initiatives}
+
+            client = LLMClient()
+
+            for idx, init in enumerate(initiatives):
+                yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_names[init.id]})}\n\n"
+
+                enrichments = session.execute(
+                    select(Enrichment).where(Enrichment.initiative_id == init.id)
+                ).scalars().all()
+
+                try:
+                    outreach_score = await score_initiative(init, list(enrichments), client)
+                    session.execute(delete(OutreachScore).where(OutreachScore.initiative_id == init.id))
+                    session.add(outreach_score)
+                    session.commit()
+                    scored += 1
+                except Exception as exc:
+                    log.warning("Scoring failed for %s: %s", init_names[init.id], exc)
+                    failed += 1
+                    session.rollback()
+
+                await asyncio.sleep(0.3)
+
+            yield f"data: {json.dumps({'type': 'complete', 'stats': {'scored': scored, 'failed': failed}})}\n\n"
+        finally:
+            session.close()
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.post("/api/score/{initiative_id}")
-async def score_one(initiative_id: int):
-    session = get_session()
+async def score_one(initiative_id: int, session: Session = Depends(db_session)):
     init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
     if not init:
-        session.close()
         raise HTTPException(404, "Initiative not found")
 
     enrichments = session.execute(
@@ -340,62 +400,99 @@ async def score_one(initiative_id: int):
     client = LLMClient()
     try:
         outreach_score = await score_initiative(init, list(enrichments), client)
-        # Delete old scores for this initiative
         session.execute(delete(OutreachScore).where(OutreachScore.initiative_id == initiative_id))
         session.add(outreach_score)
         session.commit()
     except Exception as exc:
-        session.close()
         raise HTTPException(500, f"Scoring failed: {exc}") from exc
 
-    session.close()
     return {
         "verdict": outreach_score.verdict,
         "score": outreach_score.score,
         "classification": outreach_score.classification,
+        "grade_team": outreach_score.grade_team,
+        "grade_tech": outreach_score.grade_tech,
+        "grade_opportunity": outreach_score.grade_opportunity,
     }
 
 
-@app.post("/api/score/batch")
-async def score_batch(body: dict[str, Any] | None = None):
-    initiative_ids = (body or {}).get("initiative_ids")
+# ---------------------------------------------------------------------------
+# Routes: Projects
+# ---------------------------------------------------------------------------
 
-    async def stream():
-        session = get_session()
-        query = select(Initiative)
-        if initiative_ids:
-            query = query.where(Initiative.id.in_(initiative_ids))
-        initiatives = session.execute(query).scalars().all()
-        total = len(initiatives)
-        scored = 0
-        failed = 0
 
-        client = LLMClient()
+@app.get("/api/initiatives/{initiative_id}/projects", response_model=list[ProjectOut])
+async def list_projects(initiative_id: int, session: Session = Depends(db_session)):
+    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
+    if not init:
+        raise HTTPException(404, "Initiative not found")
+    return [_project_to_out(p) for p in init.projects]
 
-        for idx, init in enumerate(initiatives):
-            yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init.name})}\n\n"
 
-            enrichments = session.execute(
-                select(Enrichment).where(Enrichment.initiative_id == init.id)
-            ).scalars().all()
+@app.post("/api/initiatives/{initiative_id}/projects", response_model=ProjectOut, status_code=201)
+async def create_project(initiative_id: int, body: ProjectCreate, session: Session = Depends(db_session)):
+    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
+    if not init:
+        raise HTTPException(404, "Initiative not found")
+    proj = Project(
+        initiative_id=initiative_id, name=body.name, description=body.description,
+        website=body.website, github_url=body.github_url, team=body.team,
+        extra_links_json=json.dumps(body.extra_links),
+    )
+    session.add(proj)
+    session.commit()
+    session.refresh(proj)
+    return _project_to_out(proj)
 
-            try:
-                outreach_score = await score_initiative(init, list(enrichments), client)
-                session.execute(delete(OutreachScore).where(OutreachScore.initiative_id == init.id))
-                session.add(outreach_score)
-                session.commit()
-                scored += 1
-            except Exception as exc:
-                log.warning("Scoring failed for %s: %s", init.name, exc)
-                failed += 1
-                session.rollback()
 
-            await asyncio.sleep(0.3)  # rate limit buffer
+@app.put("/api/projects/{project_id}", response_model=ProjectOut)
+async def update_project(project_id: int, body: ProjectUpdate, session: Session = Depends(db_session)):
+    proj = session.execute(select(Project).where(Project.id == project_id)).scalars().first()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    for field in ("name", "description", "website", "github_url", "team"):
+        val = getattr(body, field)
+        if val is not None:
+            setattr(proj, field, val)
+    if body.extra_links is not None:
+        proj.extra_links_json = json.dumps(body.extra_links)
+    session.commit()
+    return _project_to_out(proj)
 
-        session.close()
-        yield f"data: {json.dumps({'type': 'complete', 'stats': {'scored': scored, 'failed': failed}})}\n\n"
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: int, session: Session = Depends(db_session)):
+    proj = session.execute(select(Project).where(Project.id == project_id)).scalars().first()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    session.delete(proj)
+    session.commit()
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/score")
+async def score_project_endpoint(project_id: int, session: Session = Depends(db_session)):
+    proj = session.execute(select(Project).where(Project.id == project_id)).scalars().first()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    client = LLMClient()
+    try:
+        outreach_score = await score_project(proj, proj.initiative, client)
+        session.execute(delete(OutreachScore).where(OutreachScore.project_id == project_id))
+        session.add(outreach_score)
+        session.commit()
+    except Exception as exc:
+        raise HTTPException(500, f"Scoring failed: {exc}") from exc
+
+    return {
+        "verdict": outreach_score.verdict,
+        "score": outreach_score.score,
+        "classification": outreach_score.classification,
+        "grade_team": outreach_score.grade_team,
+        "grade_tech": outreach_score.grade_tech,
+        "grade_opportunity": outreach_score.grade_opportunity,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -404,32 +501,28 @@ async def score_batch(body: dict[str, Any] | None = None):
 
 
 @app.get("/api/stats", response_model=StatsOut)
-async def get_stats():
-    session = get_session()
+async def get_stats(session: Session = Depends(db_session)):
     initiatives = session.execute(select(Initiative)).scalars().all()
-
-    total = len(initiatives)
-    enriched = sum(1 for i in initiatives if i.enrichments)
-    scored = sum(1 for i in initiatives if i.scores)
 
     by_verdict: Counter[str] = Counter()
     by_classification: Counter[str] = Counter()
     by_uni: Counter[str] = Counter()
+    enriched = 0
+    scored = 0
 
     for init in initiatives:
         by_uni[init.uni or "Unknown"] += 1
+        if init.enrichments:
+            enriched += 1
         if init.scores:
+            scored += 1
             latest = max(init.scores, key=lambda s: s.scored_at)
             by_verdict[latest.verdict] += 1
             by_classification[latest.classification] += 1
 
-    session.close()
     return StatsOut(
-        total=total,
-        enriched=enriched,
-        scored=scored,
-        by_verdict=dict(by_verdict),
-        by_classification=dict(by_classification),
+        total=len(initiatives), enriched=enriched, scored=scored,
+        by_verdict=dict(by_verdict), by_classification=dict(by_classification),
         by_uni=dict(by_uni),
     )
 
@@ -440,13 +533,12 @@ async def get_stats():
 
 
 @app.delete("/api/reset")
-async def reset_db():
-    session = get_session()
+async def reset_db(session: Session = Depends(db_session)):
     session.execute(delete(OutreachScore))
     session.execute(delete(Enrichment))
+    session.execute(delete(Project))
     session.execute(delete(Initiative))
     session.commit()
-    session.close()
     return {"ok": True}
 
 
@@ -455,14 +547,8 @@ async def reset_db():
 # ---------------------------------------------------------------------------
 
 
-@app.on_event("startup")
-async def startup():
-    init_db()
-
-
 def main():
     import uvicorn
-    init_db()
     uvicorn.run("scout.app:app", host="127.0.0.1", port=8001, reload=True)
 
 

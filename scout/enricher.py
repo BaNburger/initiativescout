@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from lxml import html as lxml_html
 
-from scout.db import get_session
 from scout.models import Enrichment, Initiative
 
 log = logging.getLogger(__name__)
@@ -20,15 +19,14 @@ GITHUB_API = "https://api.github.com"
 
 
 # ---------------------------------------------------------------------------
-# Website enrichment
+# Page enrichment (shared by website + team page)
 # ---------------------------------------------------------------------------
 
 
-async def enrich_website(initiative: Initiative) -> Enrichment | None:
-    """Fetch initiative website, extract text content."""
-    url = (initiative.website or "").strip()
-    if not url:
-        return None
+async def _enrich_page(
+    initiative: Initiative, url: str, source_type: str, summarize: bool = True,
+) -> Enrichment | None:
+    """Fetch a page, extract text, return an Enrichment."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
@@ -42,14 +40,20 @@ async def enrich_website(initiative: Initiative) -> Enrichment | None:
     if not text.strip():
         return None
 
-    summary = _summarize_text(text, url)
+    summary = _summarize_text(text, url) if summarize else f"Content from {url}"
     return Enrichment(
         initiative_id=initiative.id,
-        source_type="website",
+        source_type=source_type,
         raw_text=text[:_MAX_TEXT],
         summary=summary,
         fetched_at=datetime.now(UTC),
     )
+
+
+async def enrich_website(initiative: Initiative) -> Enrichment | None:
+    """Fetch initiative website, extract text content."""
+    url = (initiative.website or "").strip()
+    return await _enrich_page(initiative, url, "website") if url else None
 
 
 async def enrich_team_page(initiative: Initiative) -> Enrichment | None:
@@ -57,25 +61,7 @@ async def enrich_team_page(initiative: Initiative) -> Enrichment | None:
     url = (initiative.team_page or "").strip()
     if not url or url == (initiative.website or "").strip():
         return None
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
-
-    try:
-        raw_html = await _fetch_url(url)
-    except Exception:
-        return None
-
-    text = _extract_text(raw_html)
-    if not text.strip():
-        return None
-
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="team_page",
-        raw_text=text[:_MAX_TEXT],
-        summary=f"Team page content from {url}",
-        fetched_at=datetime.now(UTC),
-    )
+    return await _enrich_page(initiative, url, "team_page", summarize=False)
 
 
 # ---------------------------------------------------------------------------
