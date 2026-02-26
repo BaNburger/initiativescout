@@ -49,6 +49,9 @@ def _session():
     session = get_session()
     try:
         yield session
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -81,14 +84,24 @@ def scout_overview() -> str:
             "project": "A sub-project within an initiative. Can be scored independently.",
             "outreach_score": "LLM-generated verdict, score (1-5), classification, reasoning, and engagement recommendations.",
         },
+        "scoring_architecture": {
+            "description": "Each initiative is scored on 3 dimensions in parallel via LLM.",
+            "dimensions": {
+                "team": "Team quality from team page, LinkedIn, member roles, team size.",
+                "tech": "Technical depth from GitHub activity, research output, key repos.",
+                "opportunity": "Market opportunity — pure LLM judgment on the full dossier.",
+            },
+            "aggregation": "Verdict and score computed deterministically from average of 3 grade numerics.",
+        },
         "workflow": [
             "0. list_scout_databases() — see available databases. select_scout_database(name) to switch.",
             "1. get_stats() — see how many initiatives exist and scoring coverage.",
             "2. list_initiatives() — browse with filters (verdict, uni, classification, search).",
             "3. get_initiative(id) — full details with enrichments and scores.",
             "4. enrich_initiative(id) — fetch fresh web/GitHub data.",
-            "5. score_initiative_tool(id) — get LLM-powered outreach recommendation.",
-            "6. update_initiative(id, ...) — correct or add information.",
+            "5. score_initiative_tool(id) — scores 3 dimensions in parallel, aggregates deterministically.",
+            "6. list_scoring_prompts() / update_scoring_prompt() — view or customize dimension prompts.",
+            "7. update_initiative(id, ...) — correct or add information.",
         ],
         "verdicts": {
             "reach_out_now": "Strong signals, worth a cold email this week.",
@@ -191,7 +204,15 @@ async def enrich_initiative(initiative_id: int) -> dict:
 
 @mcp.tool()
 async def score_initiative_tool(initiative_id: int) -> dict:
-    """Run LLM-based outreach scoring for an initiative. Requires ANTHROPIC_API_KEY."""
+    """Score an initiative across 3 dimensions (team, tech, opportunity) in parallel.
+
+    Makes 3 LLM calls using dimension-specific prompts and enrichment data.
+    Verdict and score are computed deterministically from the average grade.
+    Requires ANTHROPIC_API_KEY environment variable.
+
+    Args:
+        initiative_id: The numeric ID of the initiative to score.
+    """
     with _session() as session:
         try:
             init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
@@ -308,6 +329,38 @@ async def score_project_tool(project_id: int) -> dict:
             }
         except Exception as exc:
             return {"error": f"Scoring failed: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Tools: Scoring Prompts
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_scoring_prompts() -> list[dict]:
+    """List the 3 scoring prompt definitions (team, tech, opportunity).
+
+    Each prompt controls how the LLM evaluates one dimension of an initiative.
+    Returns key, label, content (the system prompt text), and updated_at.
+    """
+    with _session() as session:
+        return services.get_scoring_prompts(session)
+
+
+@mcp.tool()
+def update_scoring_prompt(key: str, content: str) -> dict:
+    """Update the system prompt for a scoring dimension.
+
+    Args:
+        key: Dimension key — one of "team", "tech", or "opportunity".
+        content: New system prompt text. The LLM will receive this as the
+            system message when scoring this dimension.
+    """
+    with _session() as session:
+        result = services.update_scoring_prompt(session, key, content)
+        if result is None:
+            return {"error": f"Scoring prompt '{key}' not found"}
+        return result
 
 
 # ---------------------------------------------------------------------------

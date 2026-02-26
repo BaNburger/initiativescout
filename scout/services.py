@@ -9,7 +9,7 @@ from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from scout.enricher import enrich_github, enrich_team_page, enrich_website
-from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project
+from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
 from scout.scorer import LLMClient, score_initiative, score_project
 
 log = logging.getLogger(__name__)
@@ -344,7 +344,8 @@ async def run_scoring(
     enrichments = session.execute(
         select(Enrichment).where(Enrichment.initiative_id == init.id)
     ).scalars().all()
-    outreach = await score_initiative(init, list(enrichments), client)
+    prompts = load_scoring_prompts(session)
+    outreach = await score_initiative(init, list(enrichments), client, prompts)
     session.execute(delete(OutreachScore).where(
         OutreachScore.initiative_id == init.id,
         OutreachScore.project_id.is_(None),
@@ -409,3 +410,39 @@ def get_custom_columns(session: Session) -> list[dict]:
          "show_in_list": c.show_in_list, "sort_order": c.sort_order}
         for c in cols
     ]
+
+
+# ---------------------------------------------------------------------------
+# Scoring prompts
+# ---------------------------------------------------------------------------
+
+
+def load_scoring_prompts(session: Session) -> dict[str, str]:
+    """Return {key: content} dict of scoring prompts for use by the scorer."""
+    rows = session.execute(select(ScoringPrompt)).scalars().all()
+    return {r.key: r.content for r in rows}
+
+
+def get_scoring_prompts(session: Session) -> list[dict]:
+    """Return full scoring prompt objects for the API."""
+    rows = session.execute(
+        select(ScoringPrompt).order_by(ScoringPrompt.key)
+    ).scalars().all()
+    return [
+        {"key": r.key, "label": r.label, "content": r.content,
+         "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+        for r in rows
+    ]
+
+
+def update_scoring_prompt(session: Session, key: str, content: str) -> dict | None:
+    """Update a scoring prompt's content. Returns the updated prompt or None."""
+    prompt = session.execute(
+        select(ScoringPrompt).where(ScoringPrompt.key == key)
+    ).scalars().first()
+    if not prompt:
+        return None
+    prompt.content = content
+    session.commit()
+    return {"key": prompt.key, "label": prompt.label, "content": prompt.content,
+            "updated_at": prompt.updated_at.isoformat() if prompt.updated_at else None}

@@ -191,6 +191,13 @@ textarea.inline-input { resize: vertical; min-height: 60px; }
 .list-table th[draggable="true"]:active { cursor: grabbing; }
 .list-table th.drag-over { border-left: 2px solid var(--accent); background: var(--surface-2); }
 
+/* --- Prompt editor --- */
+.prompt-editor-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 30px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; }
+.prompt-editor-box h2 { font-size: 20px; margin: 0; }
+.prompt-section { margin-bottom: 20px; }
+.prompt-textarea { width: 100%; min-height: 200px; background: var(--bg); border: 1px solid var(--border); color: var(--ink); padding: 10px; border-radius: var(--radius); font-family: var(--mono); font-size: 12px; line-height: 1.5; resize: vertical; outline: none; }
+.prompt-textarea:focus { border-color: var(--accent); }
+
 /* --- Utility classes --- */
 .text-green { color: var(--green); }
 .text-amber { color: var(--amber); }

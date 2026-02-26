@@ -527,7 +527,7 @@ document.getElementById('import-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('import-overlay')) hideImport();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') hideImport();
+  if (e.key === 'Escape') { hideImport(); hidePrompts(); }
 });
 
 const importBox = document.getElementById('import-box');
@@ -893,6 +893,50 @@ async function removeCustomColumn(e, columnId) {
     alert('Failed: ' + err.message);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Scoring Prompts
+// ---------------------------------------------------------------------------
+async function showPrompts() {
+  const overlay = document.getElementById('prompt-overlay');
+  const container = document.getElementById('prompt-editors');
+  overlay.classList.remove('hidden');
+  container.innerHTML = '<p class="text-faint">Loading prompts...</p>';
+
+  try {
+    const prompts = await api('GET', '/api/scoring-prompts');
+    container.innerHTML = prompts.map(p => `
+      <div class="prompt-section" data-prompt-key="${esc(p.key)}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <label class="card-label">${esc(p.label)}</label>
+          <button class="btn btn-sm" onclick="savePrompt('${esc(p.key)}')">Save</button>
+        </div>
+        <textarea class="prompt-textarea" id="prompt-${esc(p.key)}">${esc(p.content)}</textarea>
+      </div>
+    `).join('');
+  } catch (err) {
+    container.innerHTML = `<p class="text-red">Failed to load prompts: ${esc(err.message)}</p>`;
+  }
+}
+
+function hidePrompts() {
+  document.getElementById('prompt-overlay').classList.add('hidden');
+}
+
+async function savePrompt(key) {
+  const textarea = document.getElementById(`prompt-${key}`);
+  if (!textarea) return;
+  try {
+    await api('PUT', `/api/scoring-prompts/${key}`, { content: textarea.value });
+    alert(`Prompt "${key}" saved successfully.`);
+  } catch (err) {
+    alert('Save failed: ' + err.message);
+  }
+}
+
+document.getElementById('prompt-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('prompt-overlay')) hidePrompts();
+});
 
 // ---------------------------------------------------------------------------
 // Init

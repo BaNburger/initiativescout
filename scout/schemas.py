@@ -143,15 +143,6 @@ class ImportResult(BaseModel):
     duplicates_updated: int
 
 
-class CustomColumnOut(BaseModel):
-    id: int
-    key: str
-    label: str
-    col_type: str
-    show_in_list: bool
-    sort_order: int
-
-
 class CustomColumnCreate(BaseModel):
     key: str
     label: str
@@ -181,3 +172,7 @@ class StatsOut(BaseModel):
     by_verdict: dict[str, int]
     by_classification: dict[str, int]
     by_uni: dict[str, int]
+
+
+class ScoringPromptUpdate(BaseModel):
+    content: str

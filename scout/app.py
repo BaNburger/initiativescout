@@ -29,6 +29,7 @@ from scout.schemas import (
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
+    ScoringPromptUpdate,
     StatsOut,
 )
 from scout.scorer import LLMClient
@@ -398,6 +399,27 @@ async def delete_custom_column(column_id: int, session: Session = Depends(db_ses
     session.delete(col)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Routes: Scoring Prompts
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/scoring-prompts", tags=["Scoring"],
+         summary="List scoring prompt definitions (team, tech, opportunity)")
+async def list_scoring_prompts(session: Session = Depends(db_session)):
+    return services.get_scoring_prompts(session)
+
+
+@app.put("/api/scoring-prompts/{key}", tags=["Scoring"],
+         summary="Update a scoring prompt's content")
+async def update_scoring_prompt(key: str, body: ScoringPromptUpdate,
+                                session: Session = Depends(db_session)):
+    result = services.update_scoring_prompt(session, key, body.content)
+    if result is None:
+        raise HTTPException(404, f"Scoring prompt '{key}' not found")
+    return result
 
 
 # ---------------------------------------------------------------------------

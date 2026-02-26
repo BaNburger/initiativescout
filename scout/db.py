@@ -37,7 +37,7 @@ def init_db(db_path: str | Path | None = None) -> None:
 
 
 def _migrate_existing_db(engine) -> None:
-    """Add columns that may be missing in older databases."""
+    """Add columns/tables that may be missing in older databases."""
     inspector = sa_inspect(engine)
     if not inspector.has_table("initiatives"):
         return
@@ -47,6 +47,7 @@ def _migrate_existing_db(engine) -> None:
             conn.execute(text(
                 "ALTER TABLE initiatives ADD COLUMN custom_fields_json TEXT DEFAULT '{}'"
             ))
+    _seed_scoring_prompts(engine)
 
 
 def get_session() -> Session:
@@ -82,3 +83,17 @@ def create_database(name: str) -> None:
     if db_path.exists():
         raise ValueError(f"Database '{name}' already exists")
     init_db(db_path)
+
+
+def _seed_scoring_prompts(engine) -> None:
+    """Seed default scoring prompts if the table is empty."""
+    with engine.connect() as conn:
+        count = conn.execute(text("SELECT COUNT(*) FROM scoring_prompts")).scalar()
+        if count > 0:
+            return
+    from scout.scorer import DEFAULT_PROMPTS
+    with engine.begin() as conn:
+        for key, (label, content) in DEFAULT_PROMPTS.items():
+            conn.execute(text(
+                "INSERT INTO scoring_prompts (key, label, content) VALUES (:key, :label, :content)"
+            ), {"key": key, "label": label, "content": content})

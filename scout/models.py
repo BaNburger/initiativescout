@@ -138,3 +138,13 @@ class CustomColumn(Base):
     col_type: Mapped[str] = mapped_column(String(20), default="text")
     show_in_list: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ScoringPrompt(Base):
+    __tablename__ = "scoring_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

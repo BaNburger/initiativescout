@@ -17,6 +17,7 @@
   </div>
   <div class="header-actions">
     <button class="btn btn-sm" onclick="showImport()">Import XLSX</button>
+    <button class="btn btn-sm" onclick="showPrompts()">Prompts</button>
     <button class="btn btn-sm" id="btn-enrich-all" onclick="enrichBatch()" disabled>Enrich All</button>
     <button class="btn btn-sm" id="btn-score-all" onclick="scoreBatch()" disabled>Score All</button>
   </div>
@@ -95,6 +96,20 @@
     <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">Choose File</button>
     <input type="file" id="file-input" accept=".xlsx">
     <p style="margin-top:16px;font-size:12px;color:var(--ink-faint)">Press Escape to cancel</p>
+  </div>
+</div>
+
+<!-- Prompt editor overlay -->
+<div class="import-overlay hidden" id="prompt-overlay">
+  <div class="prompt-editor-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <h2>Scoring Prompts</h2>
+      <button class="btn btn-sm" onclick="hidePrompts()">Close</button>
+    </div>
+    <p style="font-size:13px;color:var(--ink-dim);margin-bottom:16px">
+      Each dimension is evaluated by an LLM using these system prompts. Edit to customize scoring criteria.
+    </p>
+    <div id="prompt-editors"></div>
   </div>
 </div>
 
