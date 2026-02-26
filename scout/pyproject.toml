@@ -23,6 +23,10 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.50.0"]
 
+[tool.setuptools]
+packages = ["scout"]
+package-dir = {"scout" = "."}
+
 [project.scripts]
 scout = "scout.app:main"
 scout-mcp = "scout.mcp_server:main"

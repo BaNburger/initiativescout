@@ -656,7 +656,7 @@ function renderDetail(d) {
   }
 
   // Links (with edit pencils)
-  const LINK_FIELDS = [['Website','website',d.website,d.website],['Email','email',d.email,'mailto:'+d.email],['LinkedIn','linkedin',d.linkedin,d.linkedin],['GitHub','github_org',d.github_org,'https://github.com/'+d.github_org],['Team','team_page',d.team_page,d.team_page]];
+  const LINK_FIELDS = [['Website','website',d.website,d.website],['Email','email',d.email,'mailto:'+d.email],['LinkedIn','linkedin',d.linkedin,d.linkedin],['GitHub','github_org',d.github_org,d.github_org],['Team','team_page',d.team_page,d.team_page]];
   html += `<div class="detail-section"><h3>Links</h3><div class="link-row">`;
   LINK_FIELDS.forEach(([label, field, raw, url]) => {
     if (raw) {
