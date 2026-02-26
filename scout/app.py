@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,23 +13,19 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from scout import services
-from scout.db import create_database, current_db_name, get_session, init_db, list_databases, switch_db
+from scout.db import DB_NAME_RE, create_database, current_db_name, get_session, init_db, list_databases, switch_db
 from scout.importer import import_xlsx
-from scout.models import (
-    CustomColumn,
+from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project
+from scout.schemas import (
     CustomColumnCreate,
     CustomColumnUpdate,
-    Enrichment,
     ImportResult,
-    Initiative,
     InitiativeDetail,
     InitiativeOut,
     InitiativeUpdate,
-    OutreachScore,
-    Project,
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
@@ -153,20 +148,12 @@ async def list_initiatives(
     per_page: int = Query(200, ge=1, le=500),
     session: Session = Depends(db_session),
 ):
-    inits = session.execute(
-        select(Initiative).options(
-            selectinload(Initiative.enrichments),
-            selectinload(Initiative.scores),
-        )
-    ).scalars().all()
-    items = [services.initiative_summary(i) for i in inits]
-    items = services.filter_and_sort(
-        items, verdict=verdict, classification=classification,
+    items, total = services.query_initiatives(
+        session, verdict=verdict, classification=classification,
         uni=uni, search=search, sort_by=sort_by, sort_dir=sort_dir,
+        page=page, per_page=per_page,
     )
-    total = len(items)
-    start = (page - 1) * per_page
-    return {"items": items[start:start + per_page], "total": total}
+    return {"items": items, "total": total}
 
 
 @app.get("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
@@ -333,9 +320,6 @@ async def score_project_endpoint(project_id: int, session: Session = Depends(db_
 # Routes: Databases
 # ---------------------------------------------------------------------------
 
-_DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
 @app.get("/api/databases", tags=["Databases"], summary="List available databases")
 async def list_databases_route():
     return {"databases": list_databases(), "current": current_db_name()}
@@ -344,7 +328,7 @@ async def list_databases_route():
 @app.post("/api/databases/select", tags=["Databases"], summary="Switch to a different database")
 async def select_database(body: dict[str, Any]):
     name = (body.get("name") or "").strip()
-    if not name or not _DB_NAME_RE.match(name):
+    if not name or not DB_NAME_RE.match(name):
         raise HTTPException(400, "Invalid database name (letters, numbers, hyphens, underscores)")
     switch_db(name)
     return {"current": current_db_name()}
@@ -353,7 +337,7 @@ async def select_database(body: dict[str, Any]):
 @app.post("/api/databases/create", tags=["Databases"], summary="Create a new empty database")
 async def create_database_route(body: dict[str, Any]):
     name = (body.get("name") or "").strip()
-    if not name or not _DB_NAME_RE.match(name):
+    if not name or not DB_NAME_RE.match(name):
         raise HTTPException(400, "Invalid database name (letters, numbers, hyphens, underscores)")
     try:
         create_database(name)

@@ -8,7 +8,8 @@ import openpyxl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from scout.models import ImportResult, Initiative
+from scout.models import Initiative
+from scout.schemas import ImportResult
 
 log = logging.getLogger(__name__)
 

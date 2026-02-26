@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -126,7 +125,7 @@ class LLMClient:
         if self.provider == "anthropic":
             import anthropic
             self.model = self.model or "claude-haiku-4-5-20251001"
-            self._client = anthropic.Anthropic(
+            self._client = anthropic.AsyncAnthropic(
                 api_key=self._api_key or os.environ.get("ANTHROPIC_API_KEY")
             )
         elif self.provider in ("openai", "openai_compatible"):
@@ -139,26 +138,25 @@ class LLMClient:
             url = self._base_url or os.environ.get("OPENAI_BASE_URL")
             if url:
                 kwargs["base_url"] = url
-            self._client = openai.OpenAI(**kwargs)
+            self._client = openai.AsyncOpenAI(**kwargs)
         else:
             raise ValueError(f"Unknown LLM provider: {self.provider!r}")
 
-    def _call_sync(self, system: str, user: str) -> dict[str, Any]:
+    async def call(self, system: str, user: str) -> dict[str, Any]:
         if self.provider == "anthropic":
-            response = self._client.messages.create(
+            response = await self._client.messages.create(
                 model=self.model,
                 max_tokens=2048,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
             text = response.content[0].text.strip()
-            # Extract JSON from markdown code blocks (handles ```json etc.)
             m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
             if m:
                 text = m.group(1)
             return json.loads(text)
         else:
-            response = self._client.chat.completions.create(
+            response = await self._client.chat.completions.create(
                 model=self.model,
                 max_tokens=2048,
                 response_format={"type": "json_object"},
@@ -169,9 +167,6 @@ class LLMClient:
             )
             text = response.choices[0].message.content or "{}"
             return json.loads(text)
-
-    async def call(self, system: str, user: str) -> dict[str, Any]:
-        return await asyncio.to_thread(self._call_sync, system, user)
 
 
 # ---------------------------------------------------------------------------

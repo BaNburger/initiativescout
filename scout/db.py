@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from sqlalchemy import create_engine, inspect as sa_inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from scout.models import Base
+
+DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 _lock = threading.Lock()
 _engine = None

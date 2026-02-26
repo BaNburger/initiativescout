@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
 
@@ -10,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from sqlalchemy import select
 
 from scout import services
-from scout.db import current_db_name, get_session, init_db, list_databases, switch_db
+from scout.db import DB_NAME_RE, current_db_name, get_session, init_db, list_databases, switch_db
 from scout.models import Initiative, Project
 
 log = logging.getLogger(__name__)
@@ -127,13 +126,12 @@ def list_initiatives(
         limit: Max results (default 50, max 500).
     """
     with _session() as session:
-        items = [services.initiative_summary(i)
-                 for i in session.execute(select(Initiative)).scalars().all()]
-        items = services.filter_and_sort(
-            items, verdict=verdict, classification=classification,
+        items, _ = services.query_initiatives(
+            session, verdict=verdict, classification=classification,
             uni=uni, search=search, sort_by=sort_by, sort_dir=sort_dir,
+            page=1, per_page=max(1, min(limit, 500)),
         )
-        return items[:max(1, min(limit, 500))]
+        return items
 
 
 @mcp.tool()
@@ -323,14 +321,11 @@ def list_scout_databases() -> dict:
     return {"databases": list_databases(), "current": current_db_name()}
 
 
-_DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
 @mcp.tool()
 def select_scout_database(name: str) -> dict:
     """Switch to a different Scout database. Creates it if it doesn't exist."""
     name = name.strip()
-    if not name or not _DB_NAME_RE.match(name):
+    if not name or not DB_NAME_RE.match(name):
         return {"error": "Invalid database name (letters, numbers, hyphens, underscores only)"}
     switch_db(name)
     return {"current": current_db_name(), "message": f"Switched to database '{name}'"}

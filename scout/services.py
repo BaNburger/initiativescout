@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import Counter
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from scout.enricher import enrich_github, enrich_team_page, enrich_website
@@ -50,8 +49,6 @@ PROJECT_SCORE_KEYS = (
     "grade_team", "grade_team_num", "grade_tech", "grade_tech_num",
     "grade_opportunity", "grade_opportunity_num",
 )
-
-_VERDICT_ORDER = {"reach_out_now": 3, "reach_out_soon": 2, "monitor": 1, "skip": 0}
 
 # ---------------------------------------------------------------------------
 # Serialization helpers
@@ -122,43 +119,184 @@ def project_summary(proj: Project) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Filtering and sorting
+# SQL-based list query
 # ---------------------------------------------------------------------------
 
 
-def filter_and_sort(
-    items: list[dict], *, verdict=None, classification=None, uni=None, search=None,
-    sort_by="score", sort_dir="desc",
-) -> list[dict]:
+def _latest_score_subquery():
+    """Subquery returning the latest initiative-level score per initiative."""
+    return (
+        select(
+            OutreachScore.initiative_id,
+            OutreachScore.verdict,
+            OutreachScore.score,
+            OutreachScore.classification,
+            OutreachScore.reasoning,
+            OutreachScore.contact_who,
+            OutreachScore.contact_channel,
+            OutreachScore.engagement_hook,
+            OutreachScore.key_evidence_json,
+            OutreachScore.data_gaps_json,
+            OutreachScore.grade_team,
+            OutreachScore.grade_team_num,
+            OutreachScore.grade_tech,
+            OutreachScore.grade_tech_num,
+            OutreachScore.grade_opportunity,
+            OutreachScore.grade_opportunity_num,
+            OutreachScore.scored_at,
+            func.row_number()
+            .over(
+                partition_by=OutreachScore.initiative_id,
+                order_by=OutreachScore.scored_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(OutreachScore.project_id.is_(None))
+        .subquery()
+    )
+
+
+def query_initiatives(
+    session: Session,
+    *,
+    verdict: str | None = None,
+    classification: str | None = None,
+    uni: str | None = None,
+    search: str | None = None,
+    sort_by: str = "score",
+    sort_dir: str = "desc",
+    page: int = 1,
+    per_page: int = 200,
+) -> tuple[list[dict], int]:
+    """Return (items, total) with filtering, sorting, and pagination in SQL."""
+    ls = _latest_score_subquery()
+
+    # Enrichment aggregates as a subquery
+    enrich_sub = (
+        select(
+            Enrichment.initiative_id,
+            func.count(Enrichment.id).label("enrich_count"),
+            func.max(Enrichment.fetched_at).label("enrich_latest"),
+        )
+        .group_by(Enrichment.initiative_id)
+        .subquery()
+    )
+
+    # Base query: Initiative LEFT JOIN latest score + enrichment aggregates
+    base = (
+        select(
+            Initiative,
+            ls.c.verdict.label("ls_verdict"),
+            ls.c.score.label("ls_score"),
+            ls.c.classification.label("ls_classification"),
+            ls.c.reasoning.label("ls_reasoning"),
+            ls.c.contact_who.label("ls_contact_who"),
+            ls.c.contact_channel.label("ls_contact_channel"),
+            ls.c.engagement_hook.label("ls_engagement_hook"),
+            ls.c.key_evidence_json.label("ls_key_evidence_json"),
+            ls.c.data_gaps_json.label("ls_data_gaps_json"),
+            ls.c.grade_team.label("ls_grade_team"),
+            ls.c.grade_team_num.label("ls_grade_team_num"),
+            ls.c.grade_tech.label("ls_grade_tech"),
+            ls.c.grade_tech_num.label("ls_grade_tech_num"),
+            ls.c.grade_opportunity.label("ls_grade_opportunity"),
+            ls.c.grade_opportunity_num.label("ls_grade_opportunity_num"),
+            func.coalesce(enrich_sub.c.enrich_count, 0).label("enrich_count"),
+            enrich_sub.c.enrich_latest.label("enrich_latest"),
+        )
+        .outerjoin(ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1))
+        .outerjoin(enrich_sub, Initiative.id == enrich_sub.c.initiative_id)
+    )
+
+    # -- Filters --
     if verdict:
         vs = {v.strip().lower() for v in verdict.split(",")}
-        items = [i for i in items if (i.get("verdict") or "unscored") in vs]
+        conditions = []
+        if "unscored" in vs:
+            vs.discard("unscored")
+            conditions.append(ls.c.verdict.is_(None))
+        if vs:
+            conditions.append(func.lower(ls.c.verdict).in_(vs))
+        if conditions:
+            base = base.where(or_(*conditions))
+
     if classification:
         cs = {c.strip().lower() for c in classification.split(",")}
-        items = [i for i in items if (i.get("classification") or "") in cs]
+        base = base.where(func.lower(ls.c.classification).in_(cs))
+
     if uni:
         us = {u.strip().upper() for u in uni.split(",")}
-        items = [i for i in items if i["uni"].upper() in us]
+        base = base.where(func.upper(Initiative.uni).in_(us))
+
     if search:
-        q = search.lower()
-        items = [i for i in items if q in i["name"].lower()
-                 or q in i.get("description", "").lower() or q in i.get("sector", "").lower()]
+        q = f"%{search.lower()}%"
+        base = base.where(or_(
+            func.lower(Initiative.name).like(q),
+            func.lower(Initiative.description).like(q),
+            func.lower(Initiative.sector).like(q),
+        ))
 
-    def sort_key(item: dict):
-        if sort_by == "score":
-            return item["score"] if item["score"] is not None else -1
-        if sort_by == "name":
-            return item["name"].lower()
-        if sort_by == "uni":
-            return item["uni"].lower()
-        if sort_by == "verdict":
-            return _VERDICT_ORDER.get(item.get("verdict") or "", -1)
-        if sort_by in ("grade_team", "grade_tech", "grade_opportunity"):
-            return item.get(f"{sort_by}_num") or 99
-        return item["name"].lower()
+    # -- Count total before pagination --
+    total = session.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
 
-    items.sort(key=sort_key, reverse=(sort_dir == "desc"))
-    return items
+    # -- Sort --
+    verdict_order = case(
+        (ls.c.verdict == "reach_out_now", 3),
+        (ls.c.verdict == "reach_out_soon", 2),
+        (ls.c.verdict == "monitor", 1),
+        (ls.c.verdict == "skip", 0),
+        else_=-1,
+    )
+    sort_map = {
+        "score": func.coalesce(ls.c.score, -1),
+        "name": func.lower(Initiative.name),
+        "uni": func.lower(Initiative.uni),
+        "verdict": verdict_order,
+        "grade_team": func.coalesce(ls.c.grade_team_num, 99),
+        "grade_tech": func.coalesce(ls.c.grade_tech_num, 99),
+        "grade_opportunity": func.coalesce(ls.c.grade_opportunity_num, 99),
+    }
+    sort_col = sort_map.get(sort_by, func.lower(Initiative.name))
+    base = base.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+    # -- Pagination --
+    offset = (page - 1) * per_page
+    base = base.limit(per_page).offset(offset)
+
+    # -- Execute and build result dicts --
+    rows = session.execute(base).all()
+    items = []
+    for row in rows:
+        init = row[0]
+        items.append({
+            "id": init.id, "name": init.name, "uni": init.uni, "sector": init.sector,
+            "mode": init.mode, "description": init.description, "website": init.website,
+            "email": init.email, "relevance": init.relevance, "sheet_source": init.sheet_source,
+            "enriched": row.enrich_count > 0,
+            "enriched_at": row.enrich_latest.isoformat() if row.enrich_latest else None,
+            "verdict": row.ls_verdict, "score": row.ls_score,
+            "classification": row.ls_classification,
+            "reasoning": row.ls_reasoning,
+            "contact_who": row.ls_contact_who,
+            "contact_channel": row.ls_contact_channel,
+            "engagement_hook": row.ls_engagement_hook,
+            "key_evidence": json_parse(row.ls_key_evidence_json, []),
+            "data_gaps": json_parse(row.ls_data_gaps_json, []),
+            "grade_team": row.ls_grade_team,
+            "grade_team_num": row.ls_grade_team_num,
+            "grade_tech": row.ls_grade_tech,
+            "grade_tech_num": row.ls_grade_tech_num,
+            "grade_opportunity": row.ls_grade_opportunity,
+            "grade_opportunity_num": row.ls_grade_opportunity_num,
+            "technology_domains": init.technology_domains,
+            "categories": init.categories,
+            "member_count": init.member_count,
+            "outreach_now_score": init.outreach_now_score,
+            "venture_upside_score": init.venture_upside_score,
+            "custom_fields": json_parse(init.custom_fields_json, {}),
+        })
+
+    return items, total
 
 
 # ---------------------------------------------------------------------------
@@ -228,24 +366,36 @@ async def run_project_scoring(
 
 
 def compute_stats(session: Session) -> dict:
-    initiatives = session.execute(select(Initiative)).scalars().all()
-    by_verdict: Counter[str] = Counter()
-    by_classification: Counter[str] = Counter()
-    by_uni: Counter[str] = Counter()
-    enriched = scored = 0
-    for init in initiatives:
-        by_uni[init.uni or "Unknown"] += 1
-        if init.enrichments:
-            enriched += 1
-        if init.scores:
-            scored += 1
-            latest = max(init.scores, key=lambda s: s.scored_at)
-            by_verdict[latest.verdict] += 1
-            by_classification[latest.classification] += 1
+    """Aggregate statistics computed in SQL (no N+1 queries)."""
+    total = session.execute(select(func.count(Initiative.id))).scalar() or 0
+
+    enriched = session.execute(
+        select(func.count(func.distinct(Enrichment.initiative_id)))
+    ).scalar() or 0
+
+    # Latest initiative-level score per initiative
+    ls = _latest_score_subquery()
+    latest = select(ls.c.initiative_id, ls.c.verdict, ls.c.classification).where(ls.c.rn == 1).subquery()
+
+    scored = session.execute(select(func.count()).select_from(latest)).scalar() or 0
+
+    by_verdict = dict(session.execute(
+        select(latest.c.verdict, func.count()).group_by(latest.c.verdict)
+    ).all())
+
+    by_classification = dict(session.execute(
+        select(latest.c.classification, func.count()).group_by(latest.c.classification)
+    ).all())
+
+    uni_col = case((Initiative.uni == "", "Unknown"), else_=Initiative.uni)
+    by_uni = dict(session.execute(
+        select(uni_col, func.count()).group_by(uni_col)
+    ).all())
+
     return {
-        "total": len(initiatives), "enriched": enriched, "scored": scored,
-        "by_verdict": dict(by_verdict), "by_classification": dict(by_classification),
-        "by_uni": dict(by_uni),
+        "total": total, "enriched": enriched, "scored": scored,
+        "by_verdict": by_verdict, "by_classification": by_classification,
+        "by_uni": by_uni,
     }
 
 

@@ -4,6 +4,7 @@
 const state = {
   initiatives: [],
   selectedId: null,
+  currentDetail: null,
   sort: { by: 'score', dir: 'desc' },
   loading: false,
   currentDb: 'scout',
@@ -76,6 +77,7 @@ async function loadStats() {
 async function loadDetail(id) {
   const data = await api('GET', `/api/initiatives/${id}`);
   state.selectedId = id;
+  state.currentDetail = data;
   renderDetail(data);
   document.querySelectorAll('.list-table tbody tr').forEach(tr => {
     tr.classList.toggle('selected', parseInt(tr.dataset.id) === id);
@@ -720,14 +722,13 @@ const SIGNALS = [
 // ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
-async function showProjectForm(initiativeId, projectId) {
+function showProjectForm(initiativeId, projectId) {
   const slot = document.getElementById('project-form-slot');
   if (!slot) return;
 
   let p = { name: '', description: '', website: '', github_url: '', team: '' };
-  if (projectId) {
-    const detail = await api('GET', `/api/initiatives/${initiativeId}`);
-    const found = (detail.projects || []).find(x => x.id === projectId);
+  if (projectId && state.currentDetail && state.currentDetail.id === initiativeId) {
+    const found = (state.currentDetail.projects || []).find(x => x.id === projectId);
     if (found) p = found;
   }
 
@@ -795,6 +796,7 @@ async function scoreProject(projectId) {
 // ---------------------------------------------------------------------------
 function _resetDetailPanel() {
   state.selectedId = null;
+  state.currentDetail = null;
   document.getElementById('detail-content').style.display = 'none';
   document.getElementById('detail-empty').style.display = 'flex';
 }
