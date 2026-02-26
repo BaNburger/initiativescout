@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,14 +11,18 @@ from typing import Any, Generator
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from scout import services
-from scout.db import get_session, init_db
+from scout.db import create_database, current_db_name, get_session, init_db, list_databases, switch_db
 from scout.importer import import_xlsx
 from scout.models import (
+    CustomColumn,
+    CustomColumnCreate,
+    CustomColumnUpdate,
     Enrichment,
     ImportResult,
     Initiative,
@@ -58,11 +63,13 @@ app = FastAPI(
         {"name": "Projects", "description": "Manage sub-projects within initiatives."},
         {"name": "Import", "description": "Bulk import initiatives from XLSX spreadsheets."},
         {"name": "Stats", "description": "Aggregate statistics and breakdowns."},
+        {"name": "Databases", "description": "Manage multiple Scout databases and custom columns."},
         {"name": "Admin", "description": "Administrative operations."},
     ],
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +153,12 @@ async def list_initiatives(
     per_page: int = Query(200, ge=1, le=500),
     session: Session = Depends(db_session),
 ):
-    inits = session.execute(select(Initiative)).scalars().all()
+    inits = session.execute(
+        select(Initiative).options(
+            selectinload(Initiative.enrichments),
+            selectinload(Initiative.scores),
+        )
+    ).scalars().all()
     items = [services.initiative_summary(i) for i in inits]
     items = services.filter_and_sort(
         items, verdict=verdict, classification=classification,
@@ -168,6 +180,11 @@ async def get_initiative(initiative_id: int, session: Session = Depends(db_sessi
 async def update_initiative(initiative_id: int, body: InitiativeUpdate, session: Session = Depends(db_session)):
     init = _get_or_404(session, Initiative, initiative_id, "Initiative")
     services.apply_updates(init, body.model_dump(), services.UPDATABLE_FIELDS)
+    if body.custom_fields is not None:
+        existing = services.json_parse(init.custom_fields_json, {})
+        existing.update(body.custom_fields)
+        existing = {k: v for k, v in existing.items() if v is not None}
+        init.custom_fields_json = json.dumps(existing)
     session.commit()
     return services.initiative_detail(init)
 
@@ -180,8 +197,9 @@ async def update_initiative(initiative_id: int, body: InitiativeUpdate, session:
 def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
     """SSE streaming wrapper for batch enrich/score operations."""
     async def stream():
-        session = get_session()
+        session = None
         try:
+            session = get_session()
             query = select(Initiative)
             if initiative_ids:
                 query = query.where(Initiative.id.in_(initiative_ids))
@@ -203,10 +221,12 @@ def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
 
             yield f"data: {json.dumps({'type': 'complete', 'stats': {stat_key: ok, 'failed': failed}})}\n\n"
         except Exception:
-            session.rollback()
+            if session is not None:
+                session.rollback()
             raise
         finally:
-            session.close()
+            if session is not None:
+                session.close()
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -307,6 +327,93 @@ async def score_project_endpoint(project_id: int, session: Session = Depends(db_
     except Exception as exc:
         raise HTTPException(500, f"Scoring failed: {exc}") from exc
     return {f: getattr(outreach, f) for f in services.SCORE_RESPONSE_FIELDS}
+
+
+# ---------------------------------------------------------------------------
+# Routes: Databases
+# ---------------------------------------------------------------------------
+
+_DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+@app.get("/api/databases", tags=["Databases"], summary="List available databases")
+async def list_databases_route():
+    return {"databases": list_databases(), "current": current_db_name()}
+
+
+@app.post("/api/databases/select", tags=["Databases"], summary="Switch to a different database")
+async def select_database(body: dict[str, Any]):
+    name = (body.get("name") or "").strip()
+    if not name or not _DB_NAME_RE.match(name):
+        raise HTTPException(400, "Invalid database name (letters, numbers, hyphens, underscores)")
+    switch_db(name)
+    return {"current": current_db_name()}
+
+
+@app.post("/api/databases/create", tags=["Databases"], summary="Create a new empty database")
+async def create_database_route(body: dict[str, Any]):
+    name = (body.get("name") or "").strip()
+    if not name or not _DB_NAME_RE.match(name):
+        raise HTTPException(400, "Invalid database name (letters, numbers, hyphens, underscores)")
+    try:
+        create_database(name)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"current": current_db_name()}
+
+
+# ---------------------------------------------------------------------------
+# Routes: Custom Columns
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/custom-columns", tags=["Databases"], summary="List custom column definitions")
+async def list_custom_columns(session: Session = Depends(db_session)):
+    return services.get_custom_columns(session)
+
+
+@app.post("/api/custom-columns", tags=["Databases"], status_code=201,
+          summary="Add a custom column definition")
+async def create_custom_column(body: CustomColumnCreate, session: Session = Depends(db_session)):
+    existing = session.execute(
+        select(CustomColumn).where(CustomColumn.key == body.key)
+    ).scalars().first()
+    if existing:
+        raise HTTPException(409, f"Column key '{body.key}' already exists")
+    col = CustomColumn(
+        key=body.key, label=body.label, col_type=body.col_type,
+        show_in_list=body.show_in_list, sort_order=body.sort_order,
+    )
+    session.add(col)
+    session.commit()
+    session.refresh(col)
+    return {"id": col.id, "key": col.key, "label": col.label,
+            "col_type": col.col_type, "show_in_list": col.show_in_list,
+            "sort_order": col.sort_order}
+
+
+@app.put("/api/custom-columns/{column_id}", tags=["Databases"],
+         summary="Update a custom column definition")
+async def update_custom_column(column_id: int, body: CustomColumnUpdate,
+                               session: Session = Depends(db_session)):
+    col = _get_or_404(session, CustomColumn, column_id, "Custom column")
+    for field in ("label", "col_type", "show_in_list", "sort_order"):
+        val = getattr(body, field)
+        if val is not None:
+            setattr(col, field, val)
+    session.commit()
+    return {"id": col.id, "key": col.key, "label": col.label,
+            "col_type": col.col_type, "show_in_list": col.show_in_list,
+            "sort_order": col.sort_order}
+
+
+@app.delete("/api/custom-columns/{column_id}", tags=["Databases"],
+            summary="Remove a custom column definition")
+async def delete_custom_column(column_id: int, session: Session = Depends(db_session)):
+    col = _get_or_404(session, CustomColumn, column_id, "Custom column")
+    session.delete(col)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

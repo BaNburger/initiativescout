@@ -1,0 +1,903 @@
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const state = {
+  initiatives: [],
+  selectedId: null,
+  sort: { by: 'score', dir: 'desc' },
+  loading: false,
+  currentDb: 'scout',
+  customColumns: [],
+  columnOrder: null, // null = default order; array of column keys when customised
+};
+
+const _COL_KEY_RE = /^[a-zA-Z0-9_-]+$/;
+
+function _colOrderStorageKey() {
+  return `scout-col-order-${state.currentDb}`;
+}
+
+function loadColumnOrder() {
+  const saved = JSON.parse(localStorage.getItem(_colOrderStorageKey()) || 'null');
+  state.columnOrder = Array.isArray(saved) ? saved : null;
+}
+
+function saveColumnOrder() {
+  localStorage.setItem(_colOrderStorageKey(), JSON.stringify(state.columnOrder));
+}
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body instanceof FormData) {
+    opts.body = body;
+  } else if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(path, opts);
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`${resp.status}: ${err}`);
+  }
+  return resp.json();
+}
+
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
+async function loadInitiatives() {
+  const f = getFilters();
+  let url = `/api/initiatives?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500`;
+  if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
+  if (f.classification) url += `&classification=${encodeURIComponent(f.classification)}`;
+  if (f.uni) url += `&uni=${encodeURIComponent(f.uni)}`;
+  if (f.search) url += `&search=${encodeURIComponent(f.search)}`;
+  const data = await api('GET', url);
+  state.initiatives = data.items;
+  renderList();
+  loadStats();
+}
+
+async function loadStats() {
+  const stats = await api('GET', '/api/stats');
+  document.getElementById('stat-total').textContent = stats.total;
+  document.getElementById('stat-enriched').textContent = stats.enriched;
+  document.getElementById('stat-scored').textContent = stats.scored;
+  document.getElementById('stat-now').textContent = `${stats.by_verdict.reach_out_now || 0} reach out now`;
+  document.getElementById('stat-soon').textContent = `${stats.by_verdict.reach_out_soon || 0} soon`;
+  document.getElementById('stat-monitor').textContent = `${stats.by_verdict.monitor || 0} monitor`;
+  document.getElementById('btn-enrich-all').disabled = stats.total === 0;
+  document.getElementById('btn-score-all').disabled = stats.total === 0;
+}
+
+async function loadDetail(id) {
+  const data = await api('GET', `/api/initiatives/${id}`);
+  state.selectedId = id;
+  renderDetail(data);
+  document.querySelectorAll('.list-table tbody tr').forEach(tr => {
+    tr.classList.toggle('selected', parseInt(tr.dataset.id) === id);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Filters & sort
+// ---------------------------------------------------------------------------
+function getFilters() {
+  return {
+    verdict: document.getElementById('filter-verdict').value,
+    classification: document.getElementById('filter-class').value,
+    uni: document.getElementById('filter-uni').value,
+    search: document.getElementById('filter-search').value,
+  };
+}
+
+let _filterTimeout;
+function applyFilters() {
+  clearTimeout(_filterTimeout);
+  _filterTimeout = setTimeout(() => loadInitiatives(), 200);
+}
+
+function sortBy(field) {
+  if (state.sort.by === field) {
+    state.sort.dir = state.sort.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    state.sort.by = field;
+    state.sort.dir = field === 'name' ? 'asc' : 'desc';
+  }
+  loadInitiatives();
+}
+
+// ---------------------------------------------------------------------------
+// Column definitions & inline editing
+// ---------------------------------------------------------------------------
+// NOTE: esc() and escAttr() sanitise all user-supplied data before insertion
+// into the DOM. The innerHTML assignments below only contain content that has
+// passed through esc()/escAttr(), which converts <, >, &, and quotes to their
+// HTML entity equivalents, preventing script injection.
+
+function escAttr(s) { return esc(s || '').replace(/'/g, '&#39;'); }
+function editAttr(id, field, value, type) {
+  return ` data-edit-id="${id}" data-edit-field="${field}" data-edit-value="${escAttr(value)}"${type ? ` data-edit-type="${type}"` : ''}`;
+}
+function editFromAttr(el, e) {
+  if (e) e.stopPropagation();
+  inlineEdit(el, +el.dataset.editId, el.dataset.editField, el.dataset.editValue, el.dataset.editType);
+}
+
+const CORE_COLUMNS = [
+  { key: 'name', label: 'Initiative', sort: 'name',
+    render: i => `<td class="name-cell editable" title="${esc(i.name)}"${editAttr(i.id,'name',i.name)} ondblclick="editFromAttr(this,event)">${esc(i.name)}</td>` },
+  { key: 'uni', label: 'Uni', sort: 'uni',
+    render: i => `<td class="uni-cell editable"${editAttr(i.id,'uni',i.uni,'select-uni')} ondblclick="editFromAttr(this,event)">${esc(i.uni)}</td>` },
+  { key: 'verdict', label: 'Verdict', sort: 'verdict',
+    render: i => { const v = i.verdict || 'unscored'; return `<td><span class="verdict-badge verdict-${v}">${VERDICT_SHORT[v] || '\u2014'}</span></td>`; } },
+  { key: 'team', label: 'Team', sort: 'grade_team',
+    render: i => `<td>${gradeBadge(i.grade_team)}</td>` },
+  { key: 'tech', label: 'Tech', sort: 'grade_tech',
+    render: i => `<td>${gradeBadge(i.grade_tech)}</td>` },
+  { key: 'opp', label: 'Opp', sort: 'grade_opportunity',
+    render: i => `<td>${gradeBadge(i.grade_opportunity)}</td>` },
+  { key: 'class', label: 'Class', sort: null,
+    render: i => `<td><span class="class-badge">${esc((i.classification || '').replace(/_/g, ' '))}</span></td>` },
+];
+
+function getColumns() {
+  const cols = [...CORE_COLUMNS];
+  state.customColumns
+    .filter(cc => cc.show_in_list)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .forEach(cc => {
+      cols.push({
+        key: `custom_${cc.key}`, label: cc.label, sort: null, customColumnId: cc.id,
+        render: i => {
+          const val = (i.custom_fields || {})[cc.key] || '';
+          return `<td class="editable"${editAttr(i.id, 'custom:' + cc.key, val)} ondblclick="editFromAttr(this,event)">${esc(val)}</td>`;
+        }
+      });
+    });
+  return cols;
+}
+
+function inlineEdit(el, id, field, currentValue, type) {
+  if (el.querySelector('.inline-input, .inline-select')) return;
+  const original = el.innerHTML;
+  let input;
+
+  if (type === 'select-uni') {
+    input = document.createElement('select');
+    input.className = 'inline-select';
+    ['TUM', 'LMU', 'HM', 'TUM/LMU', 'TUM/HM', 'LMU/HM'].forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt; o.textContent = opt;
+      if (opt === currentValue) o.selected = true;
+      input.appendChild(o);
+    });
+  } else if (type === 'textarea') {
+    input = document.createElement('textarea');
+    input.className = 'inline-input';
+    input.value = currentValue || '';
+    input.rows = 4;
+  } else {
+    input = document.createElement('input');
+    input.className = 'inline-input';
+    input.type = 'text';
+    input.value = currentValue || '';
+  }
+
+  el.innerHTML = '';
+  el.appendChild(input);
+  input.focus();
+  if (input.select) input.select();
+
+  let done = false;
+  async function save() {
+    if (done) return;
+    done = true;
+    const newVal = input.value.trim();
+    // Prevent saving empty required fields
+    if (field === 'name' && !newVal) { el.innerHTML = original; return; }
+    if (newVal === (currentValue || '').trim()) { el.innerHTML = original; return; }
+    try {
+      let body;
+      if (field.startsWith('custom:')) {
+        const customKey = field.slice(7);
+        body = { custom_fields: { [customKey]: newVal || null } };
+      } else {
+        body = { [field]: newVal };
+      }
+      await api('PUT', `/api/initiatives/${id}`, body);
+      loadInitiatives();
+      if (state.selectedId === id) loadDetail(id);
+    } catch (err) {
+      el.innerHTML = original;
+      alert('Save failed: ' + err.message);
+    }
+  }
+  function cancel() { done = true; el.innerHTML = original; }
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && type !== 'textarea') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Column drag-and-drop
+// ---------------------------------------------------------------------------
+function initColumnDnD() {
+  let dragKey = null;
+  document.querySelectorAll('#list-head th[draggable="true"]').forEach(th => {
+    th.addEventListener('dragstart', e => {
+      dragKey = th.dataset.colKey;
+      e.dataTransfer.effectAllowed = 'move';
+      th.style.opacity = '0.4';
+    });
+    th.addEventListener('dragend', () => {
+      th.style.opacity = '1';
+      document.querySelectorAll('#list-head th').forEach(h => h.classList.remove('drag-over'));
+    });
+    th.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      th.classList.add('drag-over');
+    });
+    th.addEventListener('dragleave', () => th.classList.remove('drag-over'));
+    th.addEventListener('drop', e => {
+      e.preventDefault();
+      th.classList.remove('drag-over');
+      const toKey = th.dataset.colKey;
+      if (dragKey === toKey) return;
+      const order = [...(state.columnOrder || getColumns().map(c => c.key))];
+      const fromPos = order.indexOf(dragKey);
+      const toPos = order.indexOf(toKey);
+      if (fromPos < 0 || toPos < 0) return;
+      order.splice(fromPos, 1);
+      order.splice(toPos, 0, dragKey);
+      state.columnOrder = order;
+      saveColumnOrder();
+      renderList();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Render list
+// ---------------------------------------------------------------------------
+function renderList() {
+  const tbody = document.getElementById('list-body');
+  const thead = document.getElementById('list-head');
+  const empty = document.getElementById('empty-state');
+  const COLUMNS = getColumns();
+
+  if (state.initiatives.length === 0) {
+    tbody.innerHTML = '';
+    thead.innerHTML = '';
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Build ordered columns by key (stable across add/remove)
+  const colByKey = new Map(COLUMNS.map((c, i) => [c.key, i]));
+  let orderedKeys;
+  if (state.columnOrder) {
+    // Start with saved keys that still exist
+    orderedKeys = state.columnOrder.filter(k => colByKey.has(k));
+    // Append any new columns not in saved order
+    COLUMNS.forEach(c => { if (!orderedKeys.includes(c.key)) orderedKeys.push(c.key); });
+  } else {
+    orderedKeys = COLUMNS.map(c => c.key);
+  }
+  state.columnOrder = orderedKeys;
+
+  // Render header — all values passed through esc() / escAttr()
+  thead.innerHTML = orderedKeys.map(key => {
+    const col = COLUMNS[colByKey.get(key)];
+    const isCustom = col.customColumnId != null;
+    return `<th draggable="true" data-col-key="${esc(col.key)}" ${col.sort ? `onclick="sortBy('${col.sort}')"` : ''}${isCustom ? ` oncontextmenu="removeCustomColumn(event, ${parseInt(col.customColumnId)})"` : ''}>${esc(col.label)}</th>`;
+  }).join('') + `<th class="add-col-th" style="cursor:pointer;color:var(--accent);font-size:16px;padding:6px 10px" onclick="addCustomColumn()" title="Add custom column">+</th>`;
+
+  // Render body — cell content is escaped inside each column's render()
+  const orderedIndices = orderedKeys.map(k => colByKey.get(k));
+  tbody.innerHTML = state.initiatives.map(i => {
+    const cells = orderedIndices.map(idx => COLUMNS[idx].render(i)).join('');
+    return `<tr data-id="${parseInt(i.id)}" onclick="loadDetail(${parseInt(i.id)})" class="${i.id === state.selectedId ? 'selected' : ''}">${cells}<td></td></tr>`;
+  }).join('');
+
+  initColumnDnD();
+}
+
+// ---------------------------------------------------------------------------
+// Render detail — all user content passed through esc()/escAttr()/safeUrl()
+// ---------------------------------------------------------------------------
+function renderDetail(d) {
+  document.getElementById('detail-empty').style.display = 'none';
+  const el = document.getElementById('detail-content');
+  el.style.display = 'block';
+
+  const v = d.verdict || 'unscored';
+  const vLabel = VERDICT_LONG[v] || 'Not Scored';
+
+  const ea = (f,v,t) => editAttr(d.id,f,v,t);
+  let html = `
+    <div class="detail-header">
+      <h2 class="editable"${ea('name',d.name)} ondblclick="editFromAttr(this)">${esc(d.name)}</h2>
+      <div class="meta">
+        <span class="editable"${ea('uni',d.uni,'select-uni')} ondblclick="editFromAttr(this)">${esc(d.uni)}</span>
+        <span class="editable"${ea('sector',d.sector)} ondblclick="editFromAttr(this)">${esc(d.sector) || 'Sector'}</span>
+        <span class="editable"${ea('mode',d.mode)} ondblclick="editFromAttr(this)">${esc(d.mode) || 'Mode'}</span>
+        <span class="editable"${ea('relevance',d.relevance)} ondblclick="editFromAttr(this)">Rating: ${esc(d.relevance) || '\u2014'}</span>
+        ${d.enriched ? `<span>Enriched</span>` : '<span class="text-amber">Not enriched</span>'}
+      </div>
+    </div>`;
+
+  // Verdict card
+  if (d.verdict) {
+    html += `
+    <div class="detail-verdict ${esc(v)}">
+      <div class="verdict-label">${esc(vLabel)} \u2014 ${d.score?.toFixed(1) || '?'}/5 \u2014 ${esc(d.classification?.replace(/_/g, ' ') || '')}</div>
+      <div class="reasoning">${esc(d.reasoning || '')}</div>
+    </div>`;
+  }
+
+  // Dimension grades
+  if (d.grade_team || d.grade_tech || d.grade_opportunity) {
+    html += `<div class="grade-cards">${[['grade_team','Team'],['grade_tech','Tech'],['grade_opportunity','Opportunity']].map(
+      ([k,l]) => `<div class="card card--compact"><div class="grade-value ${gradeColorClass(d[k])}">${esc(d[k]||'\u2014')}</div><div class="card-label">${l}</div></div>`
+    ).join('')}</div>`;
+  }
+
+  // Contact
+  if (d.contact_who) {
+    html += `
+    <div class="card">
+      <div class="card-label">Contact</div>
+      <div>${esc(d.contact_who)}</div>
+    </div>`;
+  }
+
+  // Engagement hook
+  if (d.engagement_hook) {
+    html += `<div class="card card--accent-left">${esc(d.engagement_hook)}</div>`;
+  }
+
+  html += listSection('Key Evidence', d.key_evidence);
+  html += listSection('Data Gaps', d.data_gaps);
+
+  // Description
+  html += `<div class="detail-section"><h3>Description</h3><p class="editable"${ea('description',d.description,'textarea')} ondblclick="editFromAttr(this)">${esc(d.description) || 'Double-click to add description...'}</p></div>`;
+
+  // Domain tags
+  const hasDomains = d.technology_domains || d.market_domains || d.categories;
+  if (hasDomains) {
+    html += `<div class="detail-section"><h3>Domains</h3><div>`;
+    if (d.technology_domains) {
+      d.technology_domains.split(';').map(s => s.trim()).filter(Boolean).forEach(t => {
+        html += `<span class="domain-pill tech">${esc(t.replace(/_/g, ' '))}</span>`;
+      });
+    }
+    if (d.market_domains) {
+      d.market_domains.split(';').map(s => s.trim()).filter(Boolean).forEach(m => {
+        html += `<span class="domain-pill market">${esc(m.replace(/_/g, ' '))}</span>`;
+      });
+    }
+    if (d.categories) {
+      html += `<span class="domain-pill cat">${esc(d.categories)}</span>`;
+    }
+    html += `</div></div>`;
+  }
+
+  // Pre-computed scores
+  if (d.outreach_now_score || d.venture_upside_score) {
+    html += `<div class="detail-section"><h3>Pipeline Scores</h3>`;
+    if (d.outreach_now_score != null) {
+      const pct = Math.min(d.outreach_now_score / 5 * 100, 100);
+      html += `<div class="score-bar-row"><span class="score-bar-label">Outreach</span><div class="score-bar"><div class="bar-fill green" style="width:${pct}%"></div></div><span class="score-bar-val">${d.outreach_now_score.toFixed(1)}</span></div>`;
+    }
+    if (d.venture_upside_score != null) {
+      const pct = Math.min(d.venture_upside_score / 5 * 100, 100);
+      html += `<div class="score-bar-row"><span class="score-bar-label">Venture Upside</span><div class="score-bar"><div class="bar-fill blue" style="width:${pct}%"></div></div><span class="score-bar-val">${d.venture_upside_score.toFixed(1)}</span></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Signal cards
+  const signalsHtml = SIGNALS.map(([k,l]) => signalCard(d[k], l)).join('');
+  if (signalsHtml) html += `<div class="detail-section"><h3>Signals</h3><div class="signal-grid">${signalsHtml}</div></div>`;
+
+  // Due diligence
+  if (d.dd_is_investable || d.dd_key_roles || d.dd_references_count) {
+    html += `<div class="detail-section"><h3>Due Diligence</h3><ul>`;
+    if (d.dd_is_investable) html += `<li class="text-green">Investable</li>`;
+    if (d.dd_references_count) html += `<li>References: ${esc(String(d.dd_references_count))}</li>`;
+    if (d.dd_key_roles) html += `<li>Key roles: ${esc(d.dd_key_roles.replace(/_/g, ' '))}</li>`;
+    if (d.member_roles) html += `<li>Member roles: ${esc(d.member_roles.replace(/_/g, ' '))}</li>`;
+    html += `</ul></div>`;
+  }
+
+  // Links (with edit pencils)
+  const LINK_FIELDS = [['Website','website',d.website,d.website],['Email','email',d.email,'mailto:'+d.email],['LinkedIn','linkedin',d.linkedin,d.linkedin],['GitHub','github_org',d.github_org,d.github_org],['Team','team_page',d.team_page,d.team_page]];
+  html += `<div class="detail-section"><h3>Links</h3><div class="link-row">`;
+  LINK_FIELDS.forEach(([label, field, raw, url]) => {
+    if (raw) {
+      html += `<a href="${esc(safeUrl(url))}" target="_blank" class="link-pill">${esc(label)}</a>`;
+      html += `<span class="edit-pencil"${editAttr(d.id, field, raw)} onclick="editFromAttr(this)">&#9998;</span>`;
+    } else {
+      html += `<span class="link-pill editable text-faint" style="cursor:pointer"${editAttr(d.id, field, '')} ondblclick="editFromAttr(this)">+ ${label}</span>`;
+    }
+  });
+  html += `</div></div>`;
+
+  // Extra info (editable)
+  html += `<div class="detail-section"><h3>Additional Info</h3><ul>`;
+  [['team_size','Team size'],['key_repos','Key repos'],['sponsors','Sponsors'],['competitions','Competitions']].forEach(([f,l]) => {
+    html += `<li class="editable"${ea(f,d[f])} ondblclick="editFromAttr(this)">${l}: ${esc(d[f]) || '\u2014'}</li>`;
+  });
+  html += `</ul></div>`;
+
+  // Custom fields
+  if (state.customColumns.length > 0) {
+    html += `<div class="detail-section"><h3>Custom Fields</h3><ul>`;
+    state.customColumns.forEach(cc => {
+      const val = (d.custom_fields || {})[cc.key] || '';
+      html += `<li class="editable"${editAttr(d.id, 'custom:' + cc.key, val)} ondblclick="editFromAttr(this)">${esc(cc.label)}: ${esc(val) || '\u2014'}</li>`;
+    });
+    html += `</ul></div>`;
+  }
+
+  // Enrichments
+  if (d.enrichments && d.enrichments.length > 0) {
+    html += `<div class="detail-section"><h3>Enrichment Sources</h3><ul>`;
+    d.enrichments.forEach(e => {
+      html += `<li>${esc(e.source_type)} \u2014 ${esc(e.fetched_at.split('T')[0])}</li>`;
+    });
+    html += `</ul></div>`;
+  }
+
+  // Projects
+  html += `<div class="detail-section"><h3>Projects</h3>`;
+  html += `<div id="project-form-slot"></div>`;
+  if (d.projects && d.projects.length > 0) {
+    d.projects.forEach(p => {
+      const pv = p.verdict || 'unscored';
+      const pvLabel = VERDICT_SHORT[pv] || '';
+      html += `<div class="card" id="project-${parseInt(p.id)}">`;
+      html += `<div class="project-card-header">`;
+      html += `<h4>${esc(p.name)} ${pvLabel ? `<span class="verdict-badge verdict-${esc(pv)} ml-2 text-xs">${pvLabel}</span>` : ''}</h4>`;
+      html += `<div class="project-card-actions">`;
+      html += `<button class="btn btn-sm" onclick="scoreProject(${parseInt(p.id)})" title="Score">Score</button>`;
+      html += `<button class="btn btn-sm" onclick="showProjectForm(${parseInt(d.id)}, ${parseInt(p.id)})" title="Edit">Edit</button>`;
+      html += `<button class="btn btn-sm text-red" onclick="deleteProject(${parseInt(p.id)}, ${parseInt(d.id)})" title="Delete">Del</button>`;
+      html += `</div></div>`;
+      const meta = [];
+      if (p.description) meta.push(p.description);
+      if (p.team) meta.push(`Team: ${p.team}`);
+      if (meta.length > 0) html += `<div class="project-meta">${esc(meta.join(' \u2014 '))}</div>`;
+      const pLinks = [];
+      if (p.website) pLinks.push(`<a href="${esc(safeUrl(p.website))}" target="_blank" class="link-pill">Website</a>`);
+      if (p.github_url) pLinks.push(`<a href="${esc(safeUrl(p.github_url))}" target="_blank" class="link-pill">GitHub</a>`);
+      if (p.extra_links) {
+        Object.entries(p.extra_links).forEach(([k, v]) => {
+          if (v) pLinks.push(`<a href="${esc(safeUrl(v))}" target="_blank" class="link-pill">${esc(k)}</a>`);
+        });
+      }
+      if (pLinks.length > 0) html += `<div class="link-row">${pLinks.join('')}</div>`;
+      if (p.grade_team || p.grade_tech || p.grade_opportunity) {
+        html += `<div class="project-grades">`;
+        html += `<span class="pg-item">Team ${gradeBadge(p.grade_team)}</span>`;
+        html += `<span class="pg-item">Tech ${gradeBadge(p.grade_tech)}</span>`;
+        html += `<span class="pg-item">Opp ${gradeBadge(p.grade_opportunity)}</span>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+  } else {
+    html += `<p class="text-faint text-sm">No projects yet</p>`;
+  }
+  html += `<button class="btn btn-sm mt-2" onclick="showProjectForm(${parseInt(d.id)})">+ Add Project</button>`;
+  html += `</div>`;
+
+  // Actions
+  html += `
+    <div class="detail-actions">
+      <button class="btn btn-sm" onclick="enrichOne(${parseInt(d.id)})">Enrich</button>
+      <button class="btn btn-sm btn-primary" onclick="scoreOne(${parseInt(d.id)})">Score</button>
+    </div>`;
+
+  el.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
+function showImport() {
+  document.getElementById('import-overlay').classList.remove('hidden');
+}
+function hideImport() {
+  document.getElementById('import-overlay').classList.add('hidden');
+}
+
+document.getElementById('import-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('import-overlay')) hideImport();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') hideImport();
+});
+
+const importBox = document.getElementById('import-box');
+importBox.addEventListener('dragover', e => { e.preventDefault(); importBox.classList.add('dragover'); });
+importBox.addEventListener('dragleave', () => importBox.classList.remove('dragover'));
+importBox.addEventListener('drop', e => {
+  e.preventDefault();
+  importBox.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) uploadFile(file);
+});
+
+async function uploadFile(file) {
+  if (!file.name.endsWith('.xlsx')) {
+    alert('Please select an .xlsx file');
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const result = await api('POST', '/api/import', fd);
+    hideImport();
+    alert(`Imported ${result.total_imported} initiatives (${result.spin_off_count} spin-off targets, ${result.all_initiatives_count} all initiatives, ${result.duplicates_updated} updated)`);
+    loadInitiatives();
+  } catch (err) {
+    alert('Import failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Enrich & Score (single)
+// ---------------------------------------------------------------------------
+async function enrichOne(id) {
+  try {
+    const r = await api('POST', `/api/enrich/${id}`);
+    alert(`Added ${r.enrichments_added} enrichments`);
+    loadDetail(id);
+    loadStats();
+  } catch (err) {
+    alert('Enrich failed: ' + err.message);
+  }
+}
+
+async function scoreOne(id) {
+  try {
+    const r = await api('POST', `/api/score/${id}`);
+    alert(`Verdict: ${r.verdict} (${r.score})`);
+    loadDetail(id);
+    loadInitiatives();
+  } catch (err) {
+    alert('Score failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Batch operations via SSE (streaming fetch)
+// ---------------------------------------------------------------------------
+async function streamBatch(url, body) {
+  const container = document.getElementById('progress-container');
+  const label = document.getElementById('progress-label');
+  const fill = document.getElementById('progress-fill');
+  container.classList.add('active');
+  fill.style.width = '0%';
+  let gotComplete = false;
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'progress') {
+            const pct = Math.round((event.current / event.total) * 100);
+            fill.style.width = pct + '%';
+            label.textContent = `${event.current}/${event.total} \u2014 ${event.name}`;
+          } else if (event.type === 'complete') {
+            gotComplete = true;
+            label.textContent = `Done! ${JSON.stringify(event.stats)}`;
+            setTimeout(() => container.classList.remove('active'), 3000);
+            loadInitiatives();
+          }
+        } catch {}
+      }
+    }
+    // Stream ended without a complete event — clean up
+    if (!gotComplete) {
+      label.textContent = 'Stream ended unexpectedly';
+      setTimeout(() => container.classList.remove('active'), 3000);
+      loadInitiatives();
+    }
+  } catch (err) {
+    label.textContent = `Error: ${err.message}`;
+    setTimeout(() => container.classList.remove('active'), 5000);
+  }
+}
+
+function enrichBatch() { streamBatch('/api/enrich/batch', null); }
+function scoreBatch() { streamBatch('/api/score/batch', null); }
+
+// ---------------------------------------------------------------------------
+// Keyboard navigation
+// ---------------------------------------------------------------------------
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const items = state.initiatives;
+    if (items.length === 0) return;
+    const idx = items.findIndex(i => i.id === state.selectedId);
+    let next;
+    if (e.key === 'ArrowDown') next = Math.min(idx + 1, items.length - 1);
+    else next = Math.max(idx - 1, 0);
+    if (next >= 0 && next < items.length) {
+      loadDetail(items[next].id);
+      const row = document.querySelector(`tr[data-id="${items[next].id}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest' });
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+function esc(s) {
+  if (!s) return '';
+  const div = document.createElement('div');
+  div.textContent = String(s);
+  return div.innerHTML;
+}
+
+function safeUrl(url) {
+  if (!url) return '#';
+  const s = String(url).trim();
+  if (/^(javascript|data|vbscript):/i.test(s)) return '#';
+  return s;
+}
+
+function gradeColorClass(grade) {
+  if (!grade) return '';
+  const c = grade.charAt(0).toUpperCase();
+  if (c === 'A') return 'grade-a';
+  if (c === 'B') return 'grade-b';
+  if (c === 'C') return 'grade-c';
+  return 'grade-d';
+}
+
+function gradeBadge(grade) {
+  if (!grade) return '<span class="text-faint">\u2014</span>';
+  return `<span class="grade-badge ${gradeColorClass(grade)}">${esc(grade)}</span>`;
+}
+
+const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: 'MON', skip: 'SKIP' };
+const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
+
+function signalCard(value, label) {
+  return value ? `<div class="card card--compact"><div class="signal-value">${esc(String(value))}</div><div class="card-label">${esc(label)}</div></div>` : '';
+}
+
+function listSection(title, items) {
+  if (!items?.length) return '';
+  return `<div class="detail-section"><h3>${esc(title)}</h3><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`;
+}
+
+const SIGNALS = [
+  ['member_count','Members'],['github_repo_count','Repos'],['github_contributors','Contributors'],
+  ['github_commits_90d','Commits (90d)'],['huggingface_model_hits','HF Models'],['openalex_hits','OpenAlex'],
+  ['semantic_scholar_hits','Semantic Scholar'],['linkedin_hits','LinkedIn'],['researchgate_hits','ResearchGate'],
+];
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+async function showProjectForm(initiativeId, projectId) {
+  const slot = document.getElementById('project-form-slot');
+  if (!slot) return;
+
+  let p = { name: '', description: '', website: '', github_url: '', team: '' };
+  if (projectId) {
+    const detail = await api('GET', `/api/initiatives/${initiativeId}`);
+    const found = (detail.projects || []).find(x => x.id === projectId);
+    if (found) p = found;
+  }
+
+  slot.innerHTML = `
+    <div class="card card--form">
+      <div class="pf-row"><label class="card-label">Name *</label><input id="pf-name" value="${escAttr(p.name)}"></div>
+      <div class="pf-row"><label class="card-label">Description</label><textarea id="pf-desc">${esc(p.description)}</textarea></div>
+      <div class="pf-row"><label class="card-label">Website</label><input id="pf-website" value="${escAttr(p.website)}"></div>
+      <div class="pf-row"><label class="card-label">GitHub URL</label><input id="pf-github" value="${escAttr(p.github_url)}"></div>
+      <div class="pf-row"><label class="card-label">Team</label><input id="pf-team" value="${escAttr(p.team)}"></div>
+      <div class="pf-actions">
+        <button class="btn btn-sm btn-primary" onclick="submitProject(${parseInt(initiativeId)}, ${projectId ? parseInt(projectId) : 'null'})">${projectId ? 'Update' : 'Create'}</button>
+        <button class="btn btn-sm" onclick="document.getElementById('project-form-slot').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+  slot.querySelector('#pf-name').focus();
+}
+
+async function submitProject(initiativeId, projectId) {
+  const name = document.getElementById('pf-name').value.trim();
+  if (!name) { alert('Name is required'); return; }
+
+  const body = {
+    name,
+    description: document.getElementById('pf-desc').value.trim(),
+    website: document.getElementById('pf-website').value.trim(),
+    github_url: document.getElementById('pf-github').value.trim(),
+    team: document.getElementById('pf-team').value.trim(),
+  };
+
+  try {
+    if (projectId) {
+      await api('PUT', `/api/projects/${projectId}`, body);
+    } else {
+      await api('POST', `/api/initiatives/${initiativeId}/projects`, body);
+    }
+    loadDetail(initiativeId);
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+async function deleteProject(projectId, initiativeId) {
+  if (!confirm('Delete this project and its scores?')) return;
+  try {
+    await api('DELETE', `/api/projects/${projectId}`);
+    loadDetail(initiativeId);
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+
+async function scoreProject(projectId) {
+  try {
+    const r = await api('POST', `/api/projects/${projectId}/score`);
+    alert(`Project verdict: ${r.verdict} (${r.score})`);
+    if (state.selectedId) loadDetail(state.selectedId);
+  } catch (err) {
+    alert('Score failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Database management
+// ---------------------------------------------------------------------------
+function _resetDetailPanel() {
+  state.selectedId = null;
+  document.getElementById('detail-content').style.display = 'none';
+  document.getElementById('detail-empty').style.display = 'flex';
+}
+
+async function loadDatabases() {
+  const data = await api('GET', '/api/databases');
+  const sel = document.getElementById('db-selector');
+  sel.innerHTML = data.databases.map(name =>
+    `<option value="${esc(name)}" ${name === data.current ? 'selected' : ''}>${esc(name)}</option>`
+  ).join('');
+  state.currentDb = data.current;
+  loadColumnOrder();
+}
+
+async function switchDatabase(name) {
+  try {
+    const result = await api('POST', '/api/databases/select', { name });
+    state.currentDb = result.current;
+    _resetDetailPanel();
+    loadColumnOrder();
+    await loadCustomColumns();
+    await loadInitiatives();
+  } catch (err) {
+    // Revert dropdown to the actual current DB
+    document.getElementById('db-selector').value = state.currentDb;
+    alert('Switch failed: ' + err.message);
+  }
+}
+
+async function showCreateDb() {
+  const name = prompt('New database name (letters, numbers, hyphens):');
+  if (!name) return;
+  if (!_COL_KEY_RE.test(name)) {
+    alert('Invalid name. Use only letters, numbers, hyphens, and underscores.');
+    return;
+  }
+  try {
+    const result = await api('POST', '/api/databases/create', { name });
+    state.currentDb = result.current;
+    _resetDetailPanel();
+    loadColumnOrder();
+    await loadDatabases();
+    await loadCustomColumns();
+    await loadInitiatives();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom columns
+// ---------------------------------------------------------------------------
+async function loadCustomColumns() {
+  state.customColumns = await api('GET', '/api/custom-columns');
+}
+
+async function addCustomColumn() {
+  const key = prompt('Column key (no spaces, e.g. "funding_stage"):');
+  if (!key) return;
+  if (!_COL_KEY_RE.test(key)) {
+    alert('Invalid key. Use only letters, numbers, hyphens, and underscores.');
+    return;
+  }
+  const label = prompt('Display label (e.g. "Funding Stage"):');
+  if (!label) return;
+  try {
+    await api('POST', '/api/custom-columns', { key, label, show_in_list: true, col_type: 'text' });
+    await loadCustomColumns();
+    // Reset column order so new column appears
+    state.columnOrder = null;
+    localStorage.removeItem(_colOrderStorageKey());
+    renderList();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+async function removeCustomColumn(e, columnId) {
+  e.preventDefault();
+  const col = state.customColumns.find(c => c.id === columnId);
+  if (!col) return;
+  if (!confirm(`Remove column "${col.label}"?`)) return;
+  try {
+    await api('DELETE', `/api/custom-columns/${columnId}`);
+    await loadCustomColumns();
+    // Remove from saved column order
+    if (state.columnOrder) {
+      const removedKey = `custom_${col.key}`;
+      state.columnOrder = state.columnOrder.filter(k => k !== removedKey);
+      saveColumnOrder();
+    }
+    renderList();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+async function initApp() {
+  await loadDatabases();
+  await loadCustomColumns();
+  await loadInitiatives();
+}
+initApp();

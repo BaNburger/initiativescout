@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+import re
+from typing import Any
+
+from pydantic import BaseModel, field_validator
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -32,6 +35,7 @@ class Initiative(Base):
     relevance: Mapped[str] = mapped_column(String(50), default="")
     sheet_source: Mapped[str] = mapped_column(String(50), default="")
     extra_links_json: Mapped[str] = mapped_column(Text, default="{}")
+    custom_fields_json: Mapped[str] = mapped_column(Text, default="{}")
     imported_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     # --- Fields from overview spreadsheet ---
@@ -129,6 +133,17 @@ class OutreachScore(Base):
     project: Mapped[Project | None] = relationship("Project", back_populates="scores")
 
 
+class CustomColumn(Base):
+    __tablename__ = "custom_columns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    col_type: Mapped[str] = mapped_column(String(20), default="text")
+    show_in_list: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
 # ---------------------------------------------------------------------------
 # Pydantic schemas for API responses
 # ---------------------------------------------------------------------------
@@ -171,6 +186,7 @@ class InitiativeOut(_GradesMixin):
     member_count: int = 0
     outreach_now_score: float | None = None
     venture_upside_score: float | None = None
+    custom_fields: dict[str, Any] = {}
 
 
 class EnrichmentOut(BaseModel):
@@ -228,6 +244,7 @@ class InitiativeUpdate(BaseModel):
     key_repos: str | None = None
     sponsors: str | None = None
     competitions: str | None = None
+    custom_fields: dict[str, Any] | None = None
 
 
 class InitiativeDetail(InitiativeOut):
@@ -266,6 +283,37 @@ class ImportResult(BaseModel):
     spin_off_count: int
     all_initiatives_count: int
     duplicates_updated: int
+
+
+class CustomColumnOut(BaseModel):
+    id: int
+    key: str
+    label: str
+    col_type: str
+    show_in_list: bool
+    sort_order: int
+
+
+class CustomColumnCreate(BaseModel):
+    key: str
+    label: str
+    col_type: str = "text"
+    show_in_list: bool = False
+    sort_order: int = 0
+
+    @field_validator("key")
+    @classmethod
+    def key_must_be_safe(cls, v: str) -> str:
+        if not re.match(r"^[a-zA-Z0-9_-]+$", v):
+            raise ValueError("key must contain only letters, numbers, hyphens, and underscores")
+        return v
+
+
+class CustomColumnUpdate(BaseModel):
+    label: str | None = None
+    col_type: str | None = None
+    show_in_list: bool | None = None
+    sort_order: int | None = None
 
 
 class StatsOut(BaseModel):

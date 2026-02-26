@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from scout.enricher import enrich_github, enrich_team_page, enrich_website
-from scout.models import Enrichment, Initiative, OutreachScore, Project
+from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import LLMClient, score_initiative, score_project
 
 log = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ def initiative_summary(init: Initiative) -> dict:
         "member_count": init.member_count,
         "outreach_now_score": init.outreach_now_score,
         "venture_upside_score": init.venture_upside_score,
+        "custom_fields": json_parse(init.custom_fields_json, {}),
     }
 
 
@@ -246,3 +247,15 @@ def compute_stats(session: Session) -> dict:
         "by_verdict": dict(by_verdict), "by_classification": dict(by_classification),
         "by_uni": dict(by_uni),
     }
+
+
+def get_custom_columns(session: Session) -> list[dict]:
+    """Fetch custom column definitions for the current database."""
+    cols = session.execute(
+        select(CustomColumn).order_by(CustomColumn.sort_order)
+    ).scalars().all()
+    return [
+        {"id": c.id, "key": c.key, "label": c.label, "col_type": c.col_type,
+         "show_in_list": c.show_in_list, "sort_order": c.sort_order}
+        for c in cols
+    ]

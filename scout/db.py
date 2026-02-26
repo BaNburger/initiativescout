@@ -1,29 +1,81 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect as sa_inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from scout.models import Base
 
+_lock = threading.Lock()
 _engine = None
 _SessionLocal = None
+_current_db_path: Path | None = None
+
+DATA_DIR = Path(__file__).parent / "data"
 
 
 def init_db(db_path: str | Path | None = None) -> None:
-    global _engine, _SessionLocal
-    if db_path is None:
-        db_path = Path(__file__).parent / "data" / "scout.db"
-    db_path = Path(db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    url = f"sqlite:///{db_path}"
-    _engine = create_engine(url, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(_engine)
-    _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
+    global _engine, _SessionLocal, _current_db_path
+    with _lock:
+        if _engine is not None:
+            _engine.dispose()
+        if db_path is None:
+            db_path = DATA_DIR / "scout.db"
+        db_path = Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        url = f"sqlite:///{db_path}"
+        _engine = create_engine(url, connect_args={"check_same_thread": False})
+        Base.metadata.create_all(_engine)
+        _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
+        _current_db_path = db_path
+        _migrate_existing_db(_engine)
+
+
+def _migrate_existing_db(engine) -> None:
+    """Add columns that may be missing in older databases."""
+    inspector = sa_inspect(engine)
+    if not inspector.has_table("initiatives"):
+        return
+    columns = {col["name"] for col in inspector.get_columns("initiatives")}
+    if "custom_fields_json" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE initiatives ADD COLUMN custom_fields_json TEXT DEFAULT '{}'"
+            ))
 
 
 def get_session() -> Session:
-    if _SessionLocal is None:
-        raise RuntimeError("init_db() has not been called")
-    return _SessionLocal()  # type: ignore[misc]
+    with _lock:
+        if _SessionLocal is None:
+            raise RuntimeError("init_db() has not been called")
+        factory = _SessionLocal
+    return factory()  # type: ignore[misc]
+
+
+def current_db_name() -> str:
+    """Return the stem (filename without .db) of the active database."""
+    if _current_db_path is None:
+        return "scout"
+    return _current_db_path.stem
+
+
+def list_databases() -> list[str]:
+    """Return sorted list of DB stems in the data directory."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return sorted(p.stem for p in DATA_DIR.glob("*.db"))
+
+
+def switch_db(name: str) -> None:
+    """Switch to a different database by stem name. Creates if it doesn't exist."""
+    db_path = DATA_DIR / f"{name}.db"
+    init_db(db_path)
+
+
+def create_database(name: str) -> None:
+    """Create a new database and switch to it."""
+    db_path = DATA_DIR / f"{name}.db"
+    if db_path.exists():
+        raise ValueError(f"Database '{name}' already exists")
+    init_db(db_path)

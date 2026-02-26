@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy import select
 
 from scout import services
-from scout.db import get_session, init_db
+from scout.db import current_db_name, get_session, init_db, list_databases, switch_db
 from scout.models import Initiative, Project
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,15 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _session():
+    session = get_session()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
 def _get_or_error(session, model, entity_id, label="Entity"):
     obj = session.execute(select(model).where(model.id == entity_id)).scalars().first()
     if not obj:
@@ -73,6 +83,7 @@ def scout_overview() -> str:
             "outreach_score": "LLM-generated verdict, score (1-5), classification, reasoning, and engagement recommendations.",
         },
         "workflow": [
+            "0. list_scout_databases() — see available databases. select_scout_database(name) to switch.",
             "1. get_stats() — see how many initiatives exist and scoring coverage.",
             "2. list_initiatives() — browse with filters (verdict, uni, classification, search).",
             "3. get_initiative(id) — full details with enrichments and scores.",
@@ -115,8 +126,7 @@ def list_initiatives(
         sort_dir: Sort direction: asc or desc.
         limit: Max results (default 50, max 500).
     """
-    session = get_session()
-    try:
+    with _session() as session:
         items = [services.initiative_summary(i)
                  for i in session.execute(select(Initiative)).scalars().all()]
         items = services.filter_and_sort(
@@ -124,19 +134,14 @@ def list_initiatives(
             uni=uni, search=search, sort_by=sort_by, sort_dir=sort_dir,
         )
         return items[:max(1, min(limit, 500))]
-    finally:
-        session.close()
 
 
 @mcp.tool()
 def get_initiative(initiative_id: int) -> dict:
     """Get full details for a single initiative including enrichments, projects, and scores."""
-    session = get_session()
-    try:
+    with _session() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         return err if err else services.initiative_detail(init)
-    finally:
-        session.close()
 
 
 @mcp.tool()
@@ -149,8 +154,7 @@ def update_initiative(
     key_repos: str | None = None, sponsors: str | None = None, competitions: str | None = None,
 ) -> dict:
     """Update fields on an initiative. Only provided (non-null) arguments are applied."""
-    session = get_session()
-    try:
+    with _session() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
@@ -164,8 +168,6 @@ def update_initiative(
         services.apply_updates(init, updates, services.UPDATABLE_FIELDS)
         session.commit()
         return services.initiative_detail(init)
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +178,7 @@ def update_initiative(
 @mcp.tool()
 async def enrich_initiative(initiative_id: int) -> dict:
     """Fetch fresh enrichment data from the initiative's website, team page, and GitHub."""
-    session = get_session()
-    try:
+    with _session() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
@@ -188,37 +189,33 @@ async def enrich_initiative(initiative_id: int) -> dict:
             "enrichments_added": len(new),
             "sources": [e.source_type for e in new],
         }
-    finally:
-        session.close()
 
 
 @mcp.tool()
 async def score_initiative_tool(initiative_id: int) -> dict:
     """Run LLM-based outreach scoring for an initiative. Requires ANTHROPIC_API_KEY."""
-    session = get_session()
-    try:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
-        if err:
-            return err
-        outreach = await services.run_scoring(session, init)
-        session.commit()
-        return {
-            "initiative_id": init.id, "initiative_name": init.name,
-            "verdict": outreach.verdict, "score": outreach.score,
-            "classification": outreach.classification,
-            "reasoning": outreach.reasoning,
-            "contact_who": outreach.contact_who,
-            "contact_channel": outreach.contact_channel,
-            "engagement_hook": outreach.engagement_hook,
-            "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-            "grade_opportunity": outreach.grade_opportunity,
-            "key_evidence": services.json_parse(outreach.key_evidence_json, []),
-            "data_gaps": services.json_parse(outreach.data_gaps_json, []),
-        }
-    except Exception as exc:
-        return {"error": f"Scoring failed: {exc}"}
-    finally:
-        session.close()
+    with _session() as session:
+        try:
+            init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+            if err:
+                return err
+            outreach = await services.run_scoring(session, init)
+            session.commit()
+            return {
+                "initiative_id": init.id, "initiative_name": init.name,
+                "verdict": outreach.verdict, "score": outreach.score,
+                "classification": outreach.classification,
+                "reasoning": outreach.reasoning,
+                "contact_who": outreach.contact_who,
+                "contact_channel": outreach.contact_channel,
+                "engagement_hook": outreach.engagement_hook,
+                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+                "grade_opportunity": outreach.grade_opportunity,
+                "key_evidence": services.json_parse(outreach.key_evidence_json, []),
+                "data_gaps": services.json_parse(outreach.data_gaps_json, []),
+            }
+        except Exception as exc:
+            return {"error": f"Scoring failed: {exc}"}
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +226,8 @@ async def score_initiative_tool(initiative_id: int) -> dict:
 @mcp.tool()
 def get_stats() -> dict:
     """Get summary statistics about all initiatives in the database."""
-    session = get_session()
-    try:
+    with _session() as session:
         return services.compute_stats(session)
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +241,7 @@ def create_project(
     description: str = "", website: str = "", github_url: str = "", team: str = "",
 ) -> dict:
     """Create a new project under an initiative."""
-    session = get_session()
-    try:
+    with _session() as session:
         _, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
@@ -260,8 +253,6 @@ def create_project(
         session.commit()
         session.refresh(proj)
         return services.project_summary(proj)
-    finally:
-        session.close()
 
 
 @mcp.tool()
@@ -271,8 +262,7 @@ def update_project(
     website: str | None = None, github_url: str | None = None, team: str | None = None,
 ) -> dict:
     """Update fields on a project. Only provided (non-null) arguments are applied."""
-    session = get_session()
-    try:
+    with _session() as session:
         proj, err = _get_or_error(session, Project, project_id, "Project")
         if err:
             return err
@@ -282,51 +272,75 @@ def update_project(
         services.apply_updates(proj, updates, ("name", "description", "website", "github_url", "team"))
         session.commit()
         return services.project_summary(proj)
-    finally:
-        session.close()
 
 
 @mcp.tool()
 def delete_project(project_id: int) -> dict:
     """Delete a project and its associated scores."""
-    session = get_session()
-    try:
+    with _session() as session:
         proj, err = _get_or_error(session, Project, project_id, "Project")
         if err:
             return err
         session.delete(proj)
         session.commit()
         return {"ok": True, "deleted_project_id": project_id}
-    finally:
-        session.close()
 
 
 @mcp.tool()
 async def score_project_tool(project_id: int) -> dict:
     """Run LLM-based outreach scoring for a project in context of its parent initiative."""
-    session = get_session()
-    try:
-        proj, err = _get_or_error(session, Project, project_id, "Project")
-        if err:
-            return err
-        init, err = _get_or_error(session, Initiative, proj.initiative_id, "Initiative")
-        if err:
-            return err
-        outreach = await services.run_project_scoring(session, proj, init)
-        session.commit()
-        return {
-            "project_id": proj.id, "project_name": proj.name,
-            "initiative_id": init.id, "initiative_name": init.name,
-            "verdict": outreach.verdict, "score": outreach.score,
-            "classification": outreach.classification,
-            "reasoning": outreach.reasoning,
-            "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-            "grade_opportunity": outreach.grade_opportunity,
-        }
-    except Exception as exc:
-        return {"error": f"Scoring failed: {exc}"}
-    finally:
-        session.close()
+    with _session() as session:
+        try:
+            proj, err = _get_or_error(session, Project, project_id, "Project")
+            if err:
+                return err
+            init, err = _get_or_error(session, Initiative, proj.initiative_id, "Initiative")
+            if err:
+                return err
+            outreach = await services.run_project_scoring(session, proj, init)
+            session.commit()
+            return {
+                "project_id": proj.id, "project_name": proj.name,
+                "initiative_id": init.id, "initiative_name": init.name,
+                "verdict": outreach.verdict, "score": outreach.score,
+                "classification": outreach.classification,
+                "reasoning": outreach.reasoning,
+                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+                "grade_opportunity": outreach.grade_opportunity,
+            }
+        except Exception as exc:
+            return {"error": f"Scoring failed: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Tools: Databases
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_scout_databases() -> dict:
+    """List all available Scout databases and show which one is currently active."""
+    return {"databases": list_databases(), "current": current_db_name()}
+
+
+_DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+@mcp.tool()
+def select_scout_database(name: str) -> dict:
+    """Switch to a different Scout database. Creates it if it doesn't exist."""
+    name = name.strip()
+    if not name or not _DB_NAME_RE.match(name):
+        return {"error": "Invalid database name (letters, numbers, hyphens, underscores only)"}
+    switch_db(name)
+    return {"current": current_db_name(), "message": f"Switched to database '{name}'"}
+
+
+@mcp.tool()
+def get_custom_columns() -> list[dict]:
+    """List custom column definitions for the current database."""
+    with _session() as session:
+        return services.get_custom_columns(session)
 
 
 # ---------------------------------------------------------------------------
