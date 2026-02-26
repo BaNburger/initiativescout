@@ -88,16 +88,21 @@ Default prompts are seeded on first run and can be freely modified per database.
 
 The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's functionality as tools for Claude Desktop and other MCP clients.
 
+**Autonomous workflow:** `get_stats()` → `get_work_queue()` → follow `recommended_action` for each item → repeat until queue is empty.
+
 **Available tools:**
 
 | Tool | Description |
 |------|-------------|
+| `get_stats` | Summary statistics and breakdowns |
+| `get_work_queue` | Prioritized queue of initiatives needing enrichment or scoring |
 | `list_initiatives` | Browse and filter initiatives with verdict, uni, classification, search filters |
 | `get_initiative` | Full details with enrichments, projects, and scores |
+| `create_initiative` | Add a new initiative to the database |
 | `update_initiative` | Update initiative fields (partial update) |
+| `delete_initiative` | Remove an initiative and all associated data |
 | `enrich_initiative` | Fetch fresh web/GitHub enrichment data |
 | `score_initiative_tool` | Score 3 dimensions in parallel, aggregate deterministically |
-| `get_stats` | Summary statistics and breakdowns |
 | `create_project` | Add a sub-project to an initiative |
 | `update_project` | Update project fields |
 | `delete_project` | Remove a project and its scores |
@@ -106,7 +111,11 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 | `update_scoring_prompt` | Customize a dimension's LLM system prompt |
 | `list_scout_databases` | List available databases |
 | `select_scout_database` | Switch to a different database |
+| `create_scout_database` | Create a new empty database |
 | `get_custom_columns` | List custom column definitions |
+| `create_custom_column` | Add a custom column definition |
+| `update_custom_column` | Update a custom column definition |
+| `delete_custom_column` | Remove a custom column definition |
 
 ## Project Structure
 

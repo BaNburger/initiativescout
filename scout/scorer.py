@@ -34,6 +34,14 @@ from scout.models import Enrichment, Initiative, OutreachScore, Project
 
 log = logging.getLogger(__name__)
 
+
+class LLMCallError(Exception):
+    """LLM call failed or returned unparseable output."""
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
 # ---------------------------------------------------------------------------
 # Grade map
 # ---------------------------------------------------------------------------
@@ -195,30 +203,40 @@ class LLMClient:
 
     async def call(self, system: str, user: str) -> dict[str, Any]:
         """Send system+user message to the LLM, return parsed JSON."""
-        if self.provider == "anthropic":
-            response = await self._client.messages.create(
-                model=self.model,
-                max_tokens=2048,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
-            text = response.content[0].text.strip()
-            m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
-            if m:
-                text = m.group(1)
+        try:
+            if self.provider == "anthropic":
+                response = await self._client.messages.create(
+                    model=self.model,
+                    max_tokens=2048,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                )
+                text = response.content[0].text.strip()
+                m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
+                if m:
+                    text = m.group(1)
+            else:
+                response = await self._client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=2048,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
+                text = response.choices[0].message.content or "{}"
+        except LLMCallError:
+            raise
+        except Exception as exc:
+            raise LLMCallError(f"LLM API call failed: {exc}", retryable=True) from exc
+
+        try:
             return json.loads(text)
-        else:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                max_tokens=2048,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            )
-            text = response.choices[0].message.content or "{}"
-            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise LLMCallError(
+                f"LLM returned invalid JSON: {text[:200]}", retryable=False,
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +388,10 @@ class DimensionResult:
 def _validate_grade(val: Any) -> str:
     """Normalize a grade string to a valid grade."""
     g = str(val or "C").strip().upper().replace(" ", "")
-    return g if g in VALID_GRADES else "C"
+    if g not in VALID_GRADES:
+        log.warning("Unrecognizable grade %r, defaulting to C", val)
+        return "C"
+    return g
 
 
 async def _score_dimension(client: LLMClient, system_prompt: str, dossier: str) -> DimensionResult:

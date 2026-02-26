@@ -312,6 +312,144 @@ def apply_updates(obj, updates: dict[str, Any], fields: tuple[str, ...]) -> None
             setattr(obj, field, val)
 
 
+def create_initiative(session: Session, **kwargs: Any) -> Initiative:
+    """Create a new initiative. Accepts any UPDATABLE_FIELDS as keyword args."""
+    data = {k: v for k, v in kwargs.items() if k in UPDATABLE_FIELDS and v is not None}
+    init = Initiative(**data)
+    session.add(init)
+    session.flush()  # assign ID
+    return init
+
+
+def delete_initiative(session: Session, initiative_id: int) -> bool:
+    """Delete an initiative (cascade handles enrichments, scores, projects). Returns True if found."""
+    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
+    if not init:
+        return False
+    session.delete(init)
+    session.commit()
+    return True
+
+
+def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
+    """Return initiatives needing work, prioritized by what's missing.
+
+    Priority 1: Not enriched AND not scored
+    Priority 2: Enriched but not scored
+    Priority 3: Scored but not enriched (stale data)
+    """
+    # Subquery: enriched initiative IDs
+    enriched_ids = (
+        select(func.distinct(Enrichment.initiative_id)).subquery()
+    )
+    # Subquery: scored initiative IDs (latest initiative-level score)
+    scored_ids = (
+        select(func.distinct(OutreachScore.initiative_id))
+        .where(OutreachScore.project_id.is_(None))
+        .subquery()
+    )
+
+    has_enrichment = Initiative.id.in_(select(enriched_ids))
+    has_score = Initiative.id.in_(select(scored_ids))
+
+    priority = case(
+        (~has_enrichment & ~has_score, 1),
+        (has_enrichment & ~has_score, 2),
+        (has_score & ~has_enrichment, 3),
+        else_=99,
+    )
+
+    query = (
+        select(Initiative, priority.label("priority"))
+        .where(priority < 99)
+        .order_by(priority, Initiative.id)
+        .limit(max(1, min(limit, 100)))
+    )
+
+    rows = session.execute(query).all()
+    queue = []
+    for row in rows:
+        init = row[0]
+        p = row[1]
+        has_web = bool((init.website or "").strip())
+        has_gh = bool((init.github_org or "").strip())
+        needs_enrich = p in (1, 3)
+        needs_score = p in (1, 2)
+        if needs_enrich:
+            action = "enrich"
+        elif needs_score:
+            action = "score"
+        else:
+            action = "re-enrich"
+        queue.append({
+            "id": init.id, "name": init.name, "uni": init.uni,
+            "has_website": has_web, "has_github": has_gh,
+            "needs_enrichment": needs_enrich, "needs_scoring": needs_score,
+            "recommended_action": action,
+        })
+    return queue
+
+
+# ---------------------------------------------------------------------------
+# Custom column CRUD
+# ---------------------------------------------------------------------------
+
+
+def _column_dict(col: CustomColumn) -> dict:
+    return {
+        "id": col.id, "key": col.key, "label": col.label,
+        "col_type": col.col_type, "show_in_list": col.show_in_list,
+        "sort_order": col.sort_order,
+    }
+
+
+def create_custom_column(
+    session: Session, key: str, label: str,
+    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+) -> dict | None:
+    """Create a custom column. Returns None if key already exists."""
+    existing = session.execute(
+        select(CustomColumn).where(CustomColumn.key == key)
+    ).scalars().first()
+    if existing:
+        return None
+    col = CustomColumn(
+        key=key, label=label, col_type=col_type,
+        show_in_list=show_in_list, sort_order=sort_order,
+    )
+    session.add(col)
+    session.commit()
+    session.refresh(col)
+    return _column_dict(col)
+
+
+def update_custom_column(session: Session, column_id: int, **kwargs: Any) -> dict | None:
+    """Update a custom column. Returns None if not found."""
+    col = session.execute(
+        select(CustomColumn).where(CustomColumn.id == column_id)
+    ).scalars().first()
+    if not col:
+        return None
+    for field in ("label", "col_type", "show_in_list", "sort_order"):
+        val = kwargs.get(field)
+        if val is not None:
+            setattr(col, field, val)
+    session.commit()
+    return _column_dict(col)
+
+
+def delete_custom_column(session: Session, column_id: int) -> bool:
+    """Delete a custom column. Returns False if not found."""
+    col = session.execute(
+        select(CustomColumn).where(CustomColumn.id == column_id)
+    ).scalars().first()
+    if not col:
+        return False
+    session.delete(col)
+    session.commit()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Operations
 # ---------------------------------------------------------------------------
@@ -405,11 +543,7 @@ def get_custom_columns(session: Session) -> list[dict]:
     cols = session.execute(
         select(CustomColumn).order_by(CustomColumn.sort_order)
     ).scalars().all()
-    return [
-        {"id": c.id, "key": c.key, "label": c.label, "col_type": c.col_type,
-         "show_in_list": c.show_in_list, "sort_order": c.sort_order}
-        for c in cols
-    ]
+    return [_column_dict(c) for c in cols]
 
 
 # ---------------------------------------------------------------------------

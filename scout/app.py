@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from scout import services
 from scout.db import DB_NAME_RE, create_database, current_db_name, get_session, init_db, list_databases, switch_db
 from scout.importer import import_xlsx
-from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project
+from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.schemas import (
     CustomColumnCreate,
     CustomColumnUpdate,
@@ -188,21 +188,27 @@ def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
         session = None
         try:
             session = get_session()
-            query = select(Initiative)
+            # Load IDs + names upfront so a rollback doesn't expire ORM objects
+            query = select(Initiative.id, Initiative.name)
             if initiative_ids:
                 query = query.where(Initiative.id.in_(initiative_ids))
-            initiatives = session.execute(query).scalars().all()
-            total = len(initiatives)
+            rows = session.execute(query).all()
+            total = len(rows)
             ok = failed = 0
 
-            for idx, init in enumerate(initiatives):
-                yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init.name})}\n\n"
+            for idx, (init_id, init_name) in enumerate(rows):
+                yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_name})}\n\n"
                 try:
+                    # Re-fetch a fresh ORM object each iteration
+                    init = session.execute(select(Initiative).where(Initiative.id == init_id)).scalars().first()
+                    if init is None:
+                        failed += 1
+                        continue
                     await process_fn(session, init)
                     session.commit()
                     ok += 1
                 except Exception as exc:
-                    log.warning("Batch %s failed for %s: %s", stat_key, init.name, exc)
+                    log.warning("Batch %s failed for %s: %s", stat_key, init_name, exc)
                     failed += 1
                     session.rollback()
                 await asyncio.sleep(delay)
@@ -360,44 +366,34 @@ async def list_custom_columns(session: Session = Depends(db_session)):
 @app.post("/api/custom-columns", tags=["Databases"], status_code=201,
           summary="Add a custom column definition")
 async def create_custom_column(body: CustomColumnCreate, session: Session = Depends(db_session)):
-    existing = session.execute(
-        select(CustomColumn).where(CustomColumn.key == body.key)
-    ).scalars().first()
-    if existing:
-        raise HTTPException(409, f"Column key '{body.key}' already exists")
-    col = CustomColumn(
-        key=body.key, label=body.label, col_type=body.col_type,
+    result = services.create_custom_column(
+        session, key=body.key, label=body.label, col_type=body.col_type,
         show_in_list=body.show_in_list, sort_order=body.sort_order,
     )
-    session.add(col)
-    session.commit()
-    session.refresh(col)
-    return {"id": col.id, "key": col.key, "label": col.label,
-            "col_type": col.col_type, "show_in_list": col.show_in_list,
-            "sort_order": col.sort_order}
+    if result is None:
+        raise HTTPException(409, f"Column key '{body.key}' already exists")
+    return result
 
 
 @app.put("/api/custom-columns/{column_id}", tags=["Databases"],
          summary="Update a custom column definition")
 async def update_custom_column(column_id: int, body: CustomColumnUpdate,
                                session: Session = Depends(db_session)):
-    col = _get_or_404(session, CustomColumn, column_id, "Custom column")
-    for field in ("label", "col_type", "show_in_list", "sort_order"):
-        val = getattr(body, field)
-        if val is not None:
-            setattr(col, field, val)
-    session.commit()
-    return {"id": col.id, "key": col.key, "label": col.label,
-            "col_type": col.col_type, "show_in_list": col.show_in_list,
-            "sort_order": col.sort_order}
+    result = services.update_custom_column(
+        session, column_id,
+        label=body.label, col_type=body.col_type,
+        show_in_list=body.show_in_list, sort_order=body.sort_order,
+    )
+    if result is None:
+        raise HTTPException(404, "Custom column not found")
+    return result
 
 
 @app.delete("/api/custom-columns/{column_id}", tags=["Databases"],
             summary="Remove a custom column definition")
 async def delete_custom_column(column_id: int, session: Session = Depends(db_session)):
-    col = _get_or_404(session, CustomColumn, column_id, "Custom column")
-    session.delete(col)
-    session.commit()
+    if not services.delete_custom_column(session, column_id):
+        raise HTTPException(404, "Custom column not found")
     return {"ok": True}
 
 

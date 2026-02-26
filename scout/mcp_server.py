@@ -9,8 +9,9 @@ from mcp.server.fastmcp import FastMCP
 from sqlalchemy import select
 
 from scout import services
-from scout.db import DB_NAME_RE, current_db_name, get_session, init_db, list_databases, switch_db
+from scout.db import DB_NAME_RE, create_database, current_db_name, get_session, init_db, list_databases, switch_db
 from scout.models import Initiative, Project
+from scout.scorer import LLMCallError
 
 log = logging.getLogger(__name__)
 
@@ -30,9 +31,10 @@ mcp = FastMCP(
     "Scout",
     instructions=(
         "Scout is an outreach intelligence tool for Munich student initiatives. "
-        "Use these tools to list, inspect, enrich, and score initiatives. "
-        "Start with get_stats() for an overview, then list_initiatives() to browse, "
-        "then get_initiative(id) for full details."
+        "QUICK START: get_stats() → get_work_queue() → follow recommended_action for each item. "
+        "AUTONOMOUS: get_work_queue() → enrich_initiative(id) → score_initiative_tool(id) → repeat until queue empty. "
+        "NEW DATA: create_initiative(name, uni, website) → enrich_initiative(id) → score_initiative_tool(id). "
+        "ERRORS: All errors return {error, error_code, retryable}. Retry if retryable=true."
     ),
     lifespan=scout_lifespan,
     json_response=True,
@@ -59,8 +61,12 @@ def _session():
 def _get_or_error(session, model, entity_id, label="Entity"):
     obj = session.execute(select(model).where(model.id == entity_id)).scalars().first()
     if not obj:
-        return None, {"error": f"{label} {entity_id} not found"}
+        return None, _error(f"{label} {entity_id} not found", "NOT_FOUND")
     return obj, None
+
+
+def _error(message: str, error_code: str, retryable: bool = False) -> dict:
+    return {"error": message, "error_code": error_code, "retryable": retryable}
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +89,7 @@ def scout_overview() -> str:
             "enrichment": "Web-scraped data from the initiative's website, team page, or GitHub org.",
             "project": "A sub-project within an initiative. Can be scored independently.",
             "outreach_score": "LLM-generated verdict, score (1-5), classification, reasoning, and engagement recommendations.",
+            "custom_column": "User-defined field for tracking additional per-initiative data.",
         },
         "scoring_architecture": {
             "description": "Each initiative is scored on 3 dimensions in parallel via LLM.",
@@ -95,14 +102,42 @@ def scout_overview() -> str:
         },
         "workflow": [
             "0. list_scout_databases() — see available databases. select_scout_database(name) to switch.",
-            "1. get_stats() — see how many initiatives exist and scoring coverage.",
-            "2. list_initiatives() — browse with filters (verdict, uni, classification, search).",
-            "3. get_initiative(id) — full details with enrichments and scores.",
+            "1. get_stats() — see total, enriched, scored counts.",
+            "2. get_work_queue() — get next initiatives needing enrichment or scoring.",
+            "3. create_initiative(name, uni, ...) — add new initiatives to track.",
             "4. enrich_initiative(id) — fetch fresh web/GitHub data.",
-            "5. score_initiative_tool(id) — scores 3 dimensions in parallel, aggregates deterministically.",
-            "6. list_scoring_prompts() / update_scoring_prompt() — view or customize dimension prompts.",
-            "7. update_initiative(id, ...) — correct or add information.",
+            "5. score_initiative_tool(id) — score 3 dimensions in parallel.",
+            "6. list_initiatives(verdict, ...) — browse and filter results.",
+            "7. get_initiative(id) — full details with enrichments and scores.",
+            "8. update_initiative(id, ...) — correct or add information.",
+            "9. list_scoring_prompts() / update_scoring_prompt() — customize dimension prompts.",
+            "10. delete_initiative(id) — remove duplicates or irrelevant entries.",
         ],
+        "autonomous_workflow": {
+            "description": "For AI agents processing initiatives autonomously.",
+            "steps": [
+                "1. get_stats() — understand database state.",
+                "2. get_work_queue(limit=10) — get prioritized items needing work.",
+                "3. For each item, follow recommended_action: 'enrich' → enrich_initiative(id), 'score' → score_initiative_tool(id).",
+                "4. Repeat get_work_queue() until queue is empty.",
+                "5. list_initiatives(verdict='reach_out_now') — review top results.",
+            ],
+            "new_data_flow": "create_initiative(name, uni, website) → enrich_initiative(id) → score_initiative_tool(id)",
+        },
+        "performance_expectations": {
+            "enrichment": "2-5 seconds per initiative (web scraping).",
+            "scoring": "5-15 seconds per initiative (3 parallel LLM calls).",
+            "listing": "Instant (SQL query).",
+        },
+        "error_handling": {
+            "format": "Errors return {error, error_code, retryable}.",
+            "codes": {
+                "NOT_FOUND": "Entity does not exist.",
+                "LLM_ERROR": "LLM API call failed or returned bad output. Check retryable flag.",
+                "ALREADY_EXISTS": "Duplicate entity (database or custom column key).",
+                "VALIDATION_ERROR": "Invalid input (e.g. bad database name format).",
+            },
+        },
         "verdicts": {
             "reach_out_now": "Strong signals, worth a cold email this week.",
             "reach_out_soon": "Promising but needs a trigger event. Queue for next month.",
@@ -127,6 +162,10 @@ def list_initiatives(
 ) -> list[dict]:
     """List and filter student initiatives.
 
+    WHAT: Returns initiative summaries with scores, classifications, and verdicts.
+    WHEN: Use to browse, search, or filter the database. For autonomous processing, use get_work_queue() instead.
+    RESPONSE: Each item includes id, name, uni, verdict, score, classification, enriched status, and grade breakdown.
+
     Args:
         verdict: Filter by outreach verdict. Comma-separated from:
                  reach_out_now, reach_out_soon, monitor, skip, unscored.
@@ -149,10 +188,93 @@ def list_initiatives(
 
 @mcp.tool()
 def get_initiative(initiative_id: int) -> dict:
-    """Get full details for a single initiative including enrichments, projects, and scores."""
+    """Get full details for a single initiative including enrichments, projects, and scores.
+
+    WHAT: Returns complete profile, all enrichments, projects, scores, and computed data gaps.
+    WHEN: Use after list_initiatives() to inspect a specific initiative before enriching or scoring.
+    RESPONSE: verdict=null means unscored. enriched=false means no web data fetched yet.
+        data_gaps lists what's missing (e.g. "No GitHub data"). enrichments array shows fetched sources.
+    NEXT: If enriched=false, call enrich_initiative(id). If verdict=null, call score_initiative_tool(id).
+    """
     with _session() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         return err if err else services.initiative_detail(init)
+
+
+@mcp.tool()
+def create_initiative(
+    name: str, uni: str,
+    sector: str | None = None, mode: str | None = None,
+    description: str | None = None, website: str | None = None,
+    email: str | None = None, relevance: str | None = None,
+    team_page: str | None = None, team_size: str | None = None,
+    linkedin: str | None = None, github_org: str | None = None,
+    key_repos: str | None = None, sponsors: str | None = None,
+    competitions: str | None = None,
+) -> dict:
+    """Create a new initiative in the database.
+
+    WHAT: Creates a new initiative record with the given fields.
+    WHEN: Use when you discover a new student initiative to track.
+    NEXT: Call enrich_initiative(id) to fetch web/GitHub data, then score_initiative_tool(id).
+
+    Args:
+        name: Initiative name (required).
+        uni: University — typically TUM, LMU, or HM (required).
+        sector: Industry sector, e.g. "AI", "FinTech", "BioTech".
+        website: Initiative website URL — needed for enrichment.
+        github_org: GitHub org or username — needed for tech enrichment.
+        email: Contact email address.
+        linkedin: LinkedIn URL for the initiative or founder.
+        description: Short description of what the initiative does.
+    """
+    with _session() as session:
+        init = services.create_initiative(
+            session, name=name, uni=uni, sector=sector, mode=mode,
+            description=description, website=website, email=email,
+            relevance=relevance, team_page=team_page, team_size=team_size,
+            linkedin=linkedin, github_org=github_org, key_repos=key_repos,
+            sponsors=sponsors, competitions=competitions,
+        )
+        session.commit()
+        detail = services.initiative_detail(init)
+        detail["hint"] = "Call enrich_initiative(id) next to fetch web/GitHub data."
+        return detail
+
+
+@mcp.tool()
+def delete_initiative(initiative_id: int) -> dict:
+    """Delete an initiative and all its enrichments, scores, and projects.
+
+    WHAT: Permanently removes an initiative and all associated data (cascading delete).
+    WHEN: Use when an initiative is duplicate, out of scope, or no longer relevant.
+    """
+    with _session() as session:
+        if not services.delete_initiative(session, initiative_id):
+            return _error(f"Initiative {initiative_id} not found", "NOT_FOUND")
+        return {"ok": True, "deleted_initiative_id": initiative_id}
+
+
+@mcp.tool()
+def get_work_queue(limit: int = 10) -> dict:
+    """Get the next initiatives that need enrichment or scoring.
+
+    WHAT: Returns a prioritized queue of initiatives needing work, with recommended actions.
+    WHEN: Use this to drive autonomous workflows — call it, then follow each item's recommended_action.
+    NEXT: For each item, call enrich_initiative(id) or score_initiative_tool(id) as recommended.
+
+    Priority order:
+    1. Not enriched AND not scored → recommended_action: "enrich"
+    2. Enriched but not scored → recommended_action: "score"
+    3. Scored but not enriched (stale) → recommended_action: "re-enrich"
+
+    Args:
+        limit: Max items to return (1-100, default 10).
+    """
+    with _session() as session:
+        queue = services.get_work_queue(session, limit)
+        stats = services.compute_stats(session)
+        return {"queue": queue, "database_stats": stats}
 
 
 @mcp.tool()
@@ -164,7 +286,13 @@ def update_initiative(
     team_size: str | None = None, linkedin: str | None = None, github_org: str | None = None,
     key_repos: str | None = None, sponsors: str | None = None, competitions: str | None = None,
 ) -> dict:
-    """Update fields on an initiative. Only provided (non-null) arguments are applied."""
+    """Update fields on an initiative. Only provided (non-null) arguments are applied.
+
+    WHAT: Modifies initiative profile data. Returns the full updated detail.
+    WHEN: Use to correct data, add missing URLs (website, github_org, linkedin) before enrichment,
+        or fill in context (description, sector) before scoring.
+    NEXT: If you added website/github_org, call enrich_initiative(id) to fetch fresh data.
+    """
     with _session() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
@@ -188,27 +316,60 @@ def update_initiative(
 
 @mcp.tool()
 async def enrich_initiative(initiative_id: int) -> dict:
-    """Fetch fresh enrichment data from the initiative's website, team page, and GitHub."""
+    """Fetch fresh enrichment data from the initiative's website, team page, and GitHub.
+
+    WHAT: Scrapes the initiative's website, team page, and GitHub org for text content.
+        Takes 2-5 seconds per source. Replaces old enrichments if at least one succeeds.
+    WHEN: Call BEFORE score_initiative_tool(). Enrichment data is what the scorer reads.
+    RESPONSE: sources_succeeded lists which sources returned data. sources_not_configured
+        lists sources that couldn't run (e.g. no website URL set).
+    NEXT: Call score_initiative_tool(id) to score using the enrichment data.
+    """
     with _session() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
         new = await services.run_enrichment(session, init)
         session.commit()
-        return {
+
+        succeeded = [e.source_type for e in new]
+        possible = {"website", "team_page", "github"}
+        not_configured = []
+        if not (init.website or "").strip():
+            not_configured.append("website")
+        if not (init.team_page or "").strip():
+            not_configured.append("team_page")
+        if not (init.github_org or "").strip():
+            not_configured.append("github")
+        failed = list(possible - set(succeeded) - set(not_configured))
+
+        result = {
             "initiative_id": init.id, "initiative_name": init.name,
             "enrichments_added": len(new),
-            "sources": [e.source_type for e in new],
+            "sources_succeeded": succeeded,
+            "sources_failed": failed,
+            "sources_not_configured": not_configured,
         }
+        if not_configured:
+            result["hint"] = (
+                f"Set {', '.join(not_configured)} on the initiative via update_initiative() "
+                "to enable more enrichment sources."
+            )
+        return result
 
 
 @mcp.tool()
 async def score_initiative_tool(initiative_id: int) -> dict:
     """Score an initiative across 3 dimensions (team, tech, opportunity) in parallel.
 
-    Makes 3 LLM calls using dimension-specific prompts and enrichment data.
-    Verdict and score are computed deterministically from the average grade.
-    Requires ANTHROPIC_API_KEY environment variable.
+    WHAT: Makes 3 parallel LLM calls (team, tech, opportunity). Verdict and score are
+        computed deterministically from the average grade. Takes 5-15 seconds.
+        Requires ANTHROPIC_API_KEY environment variable.
+    WHEN: Call AFTER enrich_initiative(). Scoring without enrichment data produces weaker results.
+    RESPONSE: Returns verdict (reach_out_now/reach_out_soon/monitor/skip), score (1-5),
+        classification, per-dimension grades, reasoning, contact recommendation, and data_gaps.
+    ERRORS: Returns {error, error_code: "LLM_ERROR", retryable} on failure.
+        If retryable=true, the API call failed transiently — wait and retry.
 
     Args:
         initiative_id: The numeric ID of the initiative to score.
@@ -233,8 +394,10 @@ async def score_initiative_tool(initiative_id: int) -> dict:
                 "key_evidence": services.json_parse(outreach.key_evidence_json, []),
                 "data_gaps": services.json_parse(outreach.data_gaps_json, []),
             }
+        except LLMCallError as exc:
+            return _error(f"Scoring failed: {exc}", "LLM_ERROR", retryable=exc.retryable)
         except Exception as exc:
-            return {"error": f"Scoring failed: {exc}"}
+            return _error(f"Scoring failed: {exc}", "LLM_ERROR")
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +407,12 @@ async def score_initiative_tool(initiative_id: int) -> dict:
 
 @mcp.tool()
 def get_stats() -> dict:
-    """Get summary statistics about all initiatives in the database."""
+    """Get summary statistics about all initiatives in the database.
+
+    WHAT: Returns counts (total, enriched, scored) and breakdowns by verdict, classification, and uni.
+    WHEN: Use as the first call to understand the database state. If scored < total, use get_work_queue()
+        to find initiatives needing work.
+    """
     with _session() as session:
         return services.compute_stats(session)
 
@@ -259,7 +427,12 @@ def create_project(
     initiative_id: int, name: str,
     description: str = "", website: str = "", github_url: str = "", team: str = "",
 ) -> dict:
-    """Create a new project under an initiative."""
+    """Create a new project under an initiative.
+
+    WHAT: Creates a sub-project linked to a parent initiative.
+    WHEN: Use when an initiative has distinct sub-projects that should be scored separately.
+    NEXT: Call score_project_tool(project_id) to score the project.
+    """
     with _session() as session:
         _, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
@@ -280,7 +453,11 @@ def update_project(
     name: str | None = None, description: str | None = None,
     website: str | None = None, github_url: str | None = None, team: str | None = None,
 ) -> dict:
-    """Update fields on a project. Only provided (non-null) arguments are applied."""
+    """Update fields on a project. Only provided (non-null) arguments are applied.
+
+    WHAT: Modifies project profile data. Returns the updated project summary.
+    WHEN: Use to add missing info (website, github_url, team) before scoring.
+    """
     with _session() as session:
         proj, err = _get_or_error(session, Project, project_id, "Project")
         if err:
@@ -295,7 +472,10 @@ def update_project(
 
 @mcp.tool()
 def delete_project(project_id: int) -> dict:
-    """Delete a project and its associated scores."""
+    """Delete a project and its associated scores.
+
+    WHAT: Permanently removes a project and its scores. Does not affect the parent initiative.
+    """
     with _session() as session:
         proj, err = _get_or_error(session, Project, project_id, "Project")
         if err:
@@ -307,7 +487,12 @@ def delete_project(project_id: int) -> dict:
 
 @mcp.tool()
 async def score_project_tool(project_id: int) -> dict:
-    """Run LLM-based outreach scoring for a project in context of its parent initiative."""
+    """Run LLM-based outreach scoring for a project in context of its parent initiative.
+
+    WHAT: Single LLM call scoring the project using parent initiative context. Takes 5-15 seconds.
+    WHEN: Call after creating or updating a project. Requires ANTHROPIC_API_KEY.
+    ERRORS: Returns {error, error_code: "LLM_ERROR", retryable} on failure.
+    """
     with _session() as session:
         try:
             proj, err = _get_or_error(session, Project, project_id, "Project")
@@ -327,8 +512,10 @@ async def score_project_tool(project_id: int) -> dict:
                 "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
                 "grade_opportunity": outreach.grade_opportunity,
             }
+        except LLMCallError as exc:
+            return _error(f"Scoring failed: {exc}", "LLM_ERROR", retryable=exc.retryable)
         except Exception as exc:
-            return {"error": f"Scoring failed: {exc}"}
+            return _error(f"Scoring failed: {exc}", "LLM_ERROR")
 
 
 # ---------------------------------------------------------------------------
@@ -340,8 +527,9 @@ async def score_project_tool(project_id: int) -> dict:
 def list_scoring_prompts() -> list[dict]:
     """List the 3 scoring prompt definitions (team, tech, opportunity).
 
-    Each prompt controls how the LLM evaluates one dimension of an initiative.
-    Returns key, label, content (the system prompt text), and updated_at.
+    WHAT: Returns each prompt's key, label, content (system prompt text), and updated_at.
+    WHEN: Use to inspect or audit how the LLM evaluates each dimension before scoring.
+    NEXT: Use update_scoring_prompt(key, content) to customize a dimension's evaluation criteria.
     """
     with _session() as session:
         return services.get_scoring_prompts(session)
@@ -351,15 +539,18 @@ def list_scoring_prompts() -> list[dict]:
 def update_scoring_prompt(key: str, content: str) -> dict:
     """Update the system prompt for a scoring dimension.
 
+    WHAT: Replaces the system prompt used by the LLM when evaluating this dimension.
+    WHEN: Use to customize evaluation criteria, change grading emphasis, or add context.
+    NEXT: Re-score initiatives with score_initiative_tool() to apply the new prompt.
+
     Args:
         key: Dimension key — one of "team", "tech", or "opportunity".
-        content: New system prompt text. The LLM will receive this as the
-            system message when scoring this dimension.
+        content: New system prompt text. Must include JSON response format instructions.
     """
     with _session() as session:
         result = services.update_scoring_prompt(session, key, content)
         if result is None:
-            return {"error": f"Scoring prompt '{key}' not found"}
+            return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
         return result
 
 
@@ -370,25 +561,129 @@ def update_scoring_prompt(key: str, content: str) -> dict:
 
 @mcp.tool()
 def list_scout_databases() -> dict:
-    """List all available Scout databases and show which one is currently active."""
+    """List all available Scout databases and show which one is currently active.
+
+    WHAT: Returns database names and highlights the active one.
+    WHEN: Use at start of session to see available datasets.
+    """
     return {"databases": list_databases(), "current": current_db_name()}
 
 
 @mcp.tool()
 def select_scout_database(name: str) -> dict:
-    """Switch to a different Scout database. Creates it if it doesn't exist."""
+    """Switch to a different Scout database. Creates it if it doesn't exist.
+
+    WHAT: Changes the active database. All subsequent tool calls operate on this database.
+    WHEN: Use to switch between different initiative datasets.
+    """
     name = name.strip()
     if not name or not DB_NAME_RE.match(name):
-        return {"error": "Invalid database name (letters, numbers, hyphens, underscores only)"}
+        return _error("Invalid database name (letters, numbers, hyphens, underscores only)", "VALIDATION_ERROR")
     switch_db(name)
     return {"current": current_db_name(), "message": f"Switched to database '{name}'"}
 
 
 @mcp.tool()
+def create_scout_database(name: str) -> dict:
+    """Create a new empty Scout database and switch to it.
+
+    WHAT: Creates a fresh database file and switches to it.
+    WHEN: Use when starting a new dataset or separating initiative groups.
+
+    Args:
+        name: Database name (letters, numbers, hyphens, underscores only).
+    """
+    name = name.strip()
+    if not name or not DB_NAME_RE.match(name):
+        return _error("Invalid database name (letters, numbers, hyphens, underscores only)", "VALIDATION_ERROR")
+    try:
+        create_database(name)
+    except ValueError as exc:
+        return _error(str(exc), "ALREADY_EXISTS")
+    return {"current": current_db_name(), "message": f"Created and switched to database '{name}'"}
+
+
+@mcp.tool()
 def get_custom_columns() -> list[dict]:
-    """List custom column definitions for the current database."""
+    """List custom column definitions for the current database.
+
+    WHAT: Returns all user-defined columns with their types and display settings.
+    WHEN: Use before create/update to see what columns already exist.
+    """
     with _session() as session:
         return services.get_custom_columns(session)
+
+
+@mcp.tool()
+def create_custom_column(
+    key: str, label: str,
+    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+) -> dict:
+    """Create a new custom column definition.
+
+    WHAT: Adds a user-defined field that can store per-initiative data.
+    WHEN: Use when you need to track additional attributes not covered by built-in fields.
+
+    Args:
+        key: Unique machine-readable key (lowercase, no spaces, e.g. "funding_stage").
+        label: Human-readable display label (e.g. "Funding Stage").
+        col_type: Column type — "text", "number", "boolean", or "url". Default "text".
+        show_in_list: Whether to show in the initiative list view. Default true.
+        sort_order: Display order (lower = first). Default 0.
+    """
+    with _session() as session:
+        result = services.create_custom_column(
+            session, key=key, label=label, col_type=col_type,
+            show_in_list=show_in_list, sort_order=sort_order,
+        )
+        if result is None:
+            return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
+        return result
+
+
+@mcp.tool()
+def update_custom_column(
+    column_id: int,
+    label: str | None = None, col_type: str | None = None,
+    show_in_list: bool | None = None, sort_order: int | None = None,
+) -> dict:
+    """Update a custom column definition. Only provided (non-null) arguments are applied.
+
+    WHAT: Modifies an existing custom column's display settings.
+    WHEN: Use to rename, change type, or reorder columns.
+
+    Args:
+        column_id: The numeric ID of the custom column.
+        label: New display label.
+        col_type: New column type — "text", "number", "boolean", or "url".
+        show_in_list: Whether to show in the list view.
+        sort_order: Display order (lower = first).
+    """
+    with _session() as session:
+        result = services.update_custom_column(
+            session, column_id,
+            label=label, col_type=col_type,
+            show_in_list=show_in_list, sort_order=sort_order,
+        )
+        if result is None:
+            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+        return result
+
+
+@mcp.tool()
+def delete_custom_column(column_id: int) -> dict:
+    """Delete a custom column definition.
+
+    WHAT: Removes a custom column definition. Note: stored values on initiatives are kept.
+    WHEN: Use when a custom column is no longer needed.
+
+    Args:
+        column_id: The numeric ID of the custom column to delete.
+    """
+    with _session() as session:
+        if not services.delete_custom_column(session, column_id):
+            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+    return {"ok": True, "deleted_column_id": column_id}
 
 
 # ---------------------------------------------------------------------------

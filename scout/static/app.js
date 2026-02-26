@@ -14,6 +14,57 @@ const state = {
 
 const _COL_KEY_RE = /^[a-zA-Z0-9_-]+$/;
 
+// ---------------------------------------------------------------------------
+// Utility (defined early — used by column renderers and all HTML builders)
+// ---------------------------------------------------------------------------
+const _escDiv = document.createElement('div');
+function esc(s) {
+  if (!s) return '';
+  _escDiv.textContent = String(s);
+  return _escDiv.innerHTML;
+}
+
+function escAttr(s) { return esc(s || '').replace(/'/g, '&#39;'); }
+
+function safeUrl(url) {
+  if (!url) return '#';
+  const s = String(url).trim();
+  if (/^(javascript|data|vbscript):/i.test(s)) return '#';
+  return s;
+}
+
+function gradeColorClass(grade) {
+  if (!grade) return '';
+  const c = grade.charAt(0).toUpperCase();
+  if (c === 'A') return 'grade-a';
+  if (c === 'B') return 'grade-b';
+  if (c === 'C') return 'grade-c';
+  return 'grade-d';
+}
+
+function gradeBadge(grade) {
+  if (!grade) return '<span class="text-faint">\u2014</span>';
+  return `<span class="grade-badge ${gradeColorClass(grade)}">${esc(grade)}</span>`;
+}
+
+const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: 'MON', skip: 'SKIP' };
+const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
+
+function signalCard(value, label) {
+  return value ? `<div class="card card--compact"><div class="signal-value">${esc(String(value))}</div><div class="card-label">${esc(label)}</div></div>` : '';
+}
+
+function listSection(title, items) {
+  if (!items?.length) return '';
+  return `<div class="detail-section"><h3>${esc(title)}</h3><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`;
+}
+
+const SIGNALS = [
+  ['member_count','Members'],['github_repo_count','Repos'],['github_contributors','Contributors'],
+  ['github_commits_90d','Commits (90d)'],['huggingface_model_hits','HF Models'],['openalex_hits','OpenAlex'],
+  ['semantic_scholar_hits','Semantic Scholar'],['linkedin_hits','LinkedIn'],['researchgate_hits','ResearchGate'],
+];
+
 function _colOrderStorageKey() {
   return `scout-col-order-${state.currentDb}`;
 }
@@ -47,9 +98,158 @@ async function api(method, path, body) {
 }
 
 // ---------------------------------------------------------------------------
+// Toast notifications (replaces alert())
+// ---------------------------------------------------------------------------
+function showToast(message, type) {
+  type = type || 'info';
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-' + type;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(function() {
+    toast.classList.add('dismissing');
+    toast.addEventListener('animationend', function() { toast.remove(); });
+  }, 4000);
+}
+
+// ---------------------------------------------------------------------------
+// Modal dialogs (replaces confirm() and prompt())
+// ---------------------------------------------------------------------------
+function showConfirmModal(message) {
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    // Build modal DOM safely using createElement + textContent
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+    var p = document.createElement('p');
+    p.textContent = message;
+    box.appendChild(p);
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-sm';
+    cancelBtn.textContent = 'Cancel';
+    var confirmBtn = document.createElement('button');
+    confirmBtn.className = 'btn btn-sm btn-danger';
+    confirmBtn.textContent = 'Confirm';
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    box.appendChild(actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    function cleanup(result) { overlay.remove(); resolve(result); }
+    cancelBtn.onclick = function() { cleanup(false); };
+    confirmBtn.onclick = function() { cleanup(true); };
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(false); });
+  });
+}
+
+function showPromptModal(title, label, placeholder) {
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    // Build modal DOM safely using createElement + textContent
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+    var h3 = document.createElement('h3');
+    h3.textContent = title;
+    box.appendChild(h3);
+    var lbl = document.createElement('label');
+    lbl.className = 'card-label';
+    lbl.textContent = label;
+    box.appendChild(lbl);
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = placeholder || '';
+    box.appendChild(input);
+    var actions = document.createElement('div');
+    actions.className = 'modal-actions';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-sm';
+    cancelBtn.textContent = 'Cancel';
+    var okBtn = document.createElement('button');
+    okBtn.className = 'btn btn-sm btn-primary';
+    okBtn.textContent = 'OK';
+    actions.appendChild(cancelBtn);
+    actions.appendChild(okBtn);
+    box.appendChild(actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    function cleanup(val) { overlay.remove(); resolve(val); }
+    cancelBtn.onclick = function() { cleanup(null); };
+    okBtn.onclick = function() { cleanup(input.value.trim()); };
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') cleanup(input.value.trim());
+      if (e.key === 'Escape') cleanup(null);
+    });
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(null); });
+    setTimeout(function() { input.focus(); }, 50);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Loading skeletons
+// ---------------------------------------------------------------------------
+function showListSkeleton() {
+  var tbody = document.getElementById('list-body');
+  var rows = [];
+  for (var i = 0; i < 8; i++) {
+    rows.push('<tr><td colspan="99"><div class="skeleton-row">' +
+      '<div class="skeleton skeleton-cell w-name"></div>' +
+      '<div class="skeleton skeleton-cell w-sm"></div>' +
+      '<div class="skeleton skeleton-cell w-md"></div>' +
+      '<div class="skeleton skeleton-cell w-sm"></div>' +
+      '<div class="skeleton skeleton-cell w-sm"></div>' +
+      '<div class="skeleton skeleton-cell w-sm"></div>' +
+      '<div class="skeleton skeleton-cell w-lg"></div>' +
+      '</div></td></tr>');
+  }
+  // Skeleton rows contain no user data — only static CSS class names
+  tbody.innerHTML = rows.join('');
+}
+
+function showDetailSkeleton() {
+  document.getElementById('detail-empty').style.display = 'none';
+  var el = document.getElementById('detail-content');
+  el.style.display = 'block';
+  el.className = '';
+  // Skeleton contains no user data — only static placeholder shapes
+  el.innerHTML = '<div class="detail-skeleton">' +
+    '<div class="skeleton" style="height:24px;width:60%"></div>' +
+    '<div class="skeleton" style="height:14px;width:40%;margin-top:8px"></div>' +
+    '<div class="skeleton" style="height:80px;width:100%;margin-top:20px"></div>' +
+    '<div class="skeleton" style="height:14px;width:70%;margin-top:16px"></div>' +
+    '<div class="skeleton" style="height:14px;width:50%;margin-top:8px"></div>' +
+    '</div>';
+}
+
+// ---------------------------------------------------------------------------
+// Button loading helper
+// ---------------------------------------------------------------------------
+function btnLoading(btn, loading) {
+  if (loading) {
+    btn.disabled = true;
+    btn._origText = btn.textContent.trim();
+    // Clear and rebuild button content safely
+    btn.textContent = '';
+    var spinner = document.createElement('span');
+    spinner.className = 'spinner';
+    btn.appendChild(spinner);
+    btn.appendChild(document.createTextNode(btn._origText));
+  } else if (btn._origText !== undefined) {
+    btn.textContent = btn._origText;
+    btn.disabled = false;
+    delete btn._origText;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
 async function loadInitiatives() {
+  showListSkeleton();
   const f = getFilters();
   let url = `/api/initiatives?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500`;
   if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
@@ -75,6 +275,7 @@ async function loadStats() {
 }
 
 async function loadDetail(id) {
+  showDetailSkeleton();
   const data = await api('GET', `/api/initiatives/${id}`);
   state.selectedId = id;
   state.currentDetail = data;
@@ -100,6 +301,26 @@ let _filterTimeout;
 function applyFilters() {
   clearTimeout(_filterTimeout);
   _filterTimeout = setTimeout(() => loadInitiatives(), 200);
+  updateFilterIndicators();
+}
+
+function updateFilterIndicators() {
+  const f = getFilters();
+  const hasAny = f.verdict || f.classification || f.uni || f.search;
+  document.getElementById('filter-verdict').classList.toggle('filter-active', !!f.verdict);
+  document.getElementById('filter-class').classList.toggle('filter-active', !!f.classification);
+  document.getElementById('filter-uni').classList.toggle('filter-active', !!f.uni);
+  document.getElementById('filter-search').classList.toggle('filter-active', !!f.search);
+  document.getElementById('btn-clear-filters').classList.toggle('visible', !!hasAny);
+}
+
+function clearFilters() {
+  document.getElementById('filter-verdict').value = '';
+  document.getElementById('filter-class').value = '';
+  document.getElementById('filter-uni').value = '';
+  document.getElementById('filter-search').value = '';
+  updateFilterIndicators();
+  loadInitiatives();
 }
 
 function sortBy(field) {
@@ -140,10 +361,10 @@ const CORE_COLUMNS = [
     render: i => `<td>${gradeBadge(i.grade_team)}</td>` },
   { key: 'tech', label: 'Tech', sort: 'grade_tech',
     render: i => `<td>${gradeBadge(i.grade_tech)}</td>` },
-  { key: 'opp', label: 'Opp', sort: 'grade_opportunity',
-    render: i => `<td>${gradeBadge(i.grade_opportunity)}</td>` },
-  { key: 'class', label: 'Class', sort: null,
-    render: i => `<td><span class="class-badge">${esc((i.classification || '').replace(/_/g, ' '))}</span></td>` },
+  { key: 'opp', label: 'Opp', sort: 'grade_opportunity', cssClass: 'col-opp',
+    render: i => `<td class="col-opp">${gradeBadge(i.grade_opportunity)}</td>` },
+  { key: 'class', label: 'Class', sort: null, cssClass: 'col-class',
+    render: i => `<td class="col-class"><span class="class-badge">${esc((i.classification || '').replace(/_/g, ' '))}</span></td>` },
 ];
 
 function getColumns() {
@@ -215,7 +436,7 @@ function inlineEdit(el, id, field, currentValue, type) {
       if (state.selectedId === id) loadDetail(id);
     } catch (err) {
       el.innerHTML = original;
-      alert('Save failed: ' + err.message);
+      showToast('Save failed: ' + err.message, 'error');
     }
   }
   function cancel() { done = true; el.innerHTML = original; }
@@ -300,8 +521,9 @@ function renderList() {
   thead.innerHTML = orderedKeys.map(key => {
     const col = COLUMNS[colByKey.get(key)];
     const isCustom = col.customColumnId != null;
-    return `<th draggable="true" data-col-key="${esc(col.key)}" ${col.sort ? `onclick="sortBy('${col.sort}')"` : ''}${isCustom ? ` oncontextmenu="removeCustomColumn(event, ${parseInt(col.customColumnId)})"` : ''}>${esc(col.label)}</th>`;
-  }).join('') + `<th class="add-col-th" style="cursor:pointer;color:var(--accent);font-size:16px;padding:6px 10px" onclick="addCustomColumn()" title="Add custom column">+</th>`;
+    const cls = col.cssClass ? ` class="${col.cssClass}"` : '';
+    return `<th draggable="true" data-col-key="${esc(col.key)}"${cls} ${col.sort ? `onclick="sortBy('${col.sort}')"` : ''}${isCustom ? ` oncontextmenu="removeCustomColumn(event, ${parseInt(col.customColumnId)})"` : ''}>${esc(col.label)}</th>`;
+  }).join('') + `<th class="add-col-th" onclick="addCustomColumn()" title="Add custom column">+</th>`;
 
   // Render body — cell content is escaped inside each column's render()
   const orderedIndices = orderedKeys.map(k => colByKey.get(k));
@@ -320,6 +542,7 @@ function renderDetail(d) {
   document.getElementById('detail-empty').style.display = 'none';
   const el = document.getElementById('detail-content');
   el.style.display = 'block';
+  el.className = 'detail-content-enter';
 
   const v = d.verdict || 'unscored';
   const vLabel = VERDICT_LONG[v] || 'Not Scored';
@@ -498,7 +721,7 @@ function renderDetail(d) {
       html += `</div>`;
     });
   } else {
-    html += `<p class="text-faint text-sm">No projects yet</p>`;
+    html += `<div class="card card--dashed">No projects yet — click below to add one</div>`;
   }
   html += `<button class="btn btn-sm mt-2" onclick="showProjectForm(${parseInt(d.id)})">+ Add Project</button>`;
   html += `</div>`;
@@ -506,8 +729,8 @@ function renderDetail(d) {
   // Actions
   html += `
     <div class="detail-actions">
-      <button class="btn btn-sm" onclick="enrichOne(${parseInt(d.id)})">Enrich</button>
-      <button class="btn btn-sm btn-primary" onclick="scoreOne(${parseInt(d.id)})">Score</button>
+      <button class="btn btn-sm" id="btn-enrich-one" onclick="enrichOne(${parseInt(d.id)})">Enrich</button>
+      <button class="btn btn-sm btn-primary" id="btn-score-one" onclick="scoreOne(${parseInt(d.id)})">Score</button>
     </div>`;
 
   el.innerHTML = html;
@@ -547,7 +770,7 @@ document.getElementById('file-input').addEventListener('change', e => {
 
 async function uploadFile(file) {
   if (!file.name.endsWith('.xlsx')) {
-    alert('Please select an .xlsx file');
+    showToast('Please select an .xlsx file', 'error');
     return;
   }
   const fd = new FormData();
@@ -555,10 +778,10 @@ async function uploadFile(file) {
   try {
     const result = await api('POST', '/api/import', fd);
     hideImport();
-    alert(`Imported ${result.total_imported} initiatives (${result.spin_off_count} spin-off targets, ${result.all_initiatives_count} all initiatives, ${result.duplicates_updated} updated)`);
+    showToast(`Imported ${result.total_imported} initiatives (${result.spin_off_count} spin-off, ${result.duplicates_updated} updated)`, 'success');
     loadInitiatives();
   } catch (err) {
-    alert('Import failed: ' + err.message);
+    showToast('Import failed: ' + err.message, 'error');
   }
 }
 
@@ -566,24 +789,32 @@ async function uploadFile(file) {
 // Enrich & Score (single)
 // ---------------------------------------------------------------------------
 async function enrichOne(id) {
+  const btn = document.getElementById('btn-enrich-one');
+  if (btn) btnLoading(btn, true);
   try {
     const r = await api('POST', `/api/enrich/${id}`);
-    alert(`Added ${r.enrichments_added} enrichments`);
+    showToast(`Added ${r.enrichments_added} enrichments`, 'success');
     loadDetail(id);
     loadStats();
   } catch (err) {
-    alert('Enrich failed: ' + err.message);
+    showToast('Enrich failed: ' + err.message, 'error');
+  } finally {
+    if (btn) btnLoading(btn, false);
   }
 }
 
 async function scoreOne(id) {
+  const btn = document.getElementById('btn-score-one');
+  if (btn) btnLoading(btn, true);
   try {
     const r = await api('POST', `/api/score/${id}`);
-    alert(`Verdict: ${r.verdict} (${r.score})`);
+    showToast(`Verdict: ${r.verdict} (${r.score})`, 'success');
     loadDetail(id);
     loadInitiatives();
   } catch (err) {
-    alert('Score failed: ' + err.message);
+    showToast('Score failed: ' + err.message, 'error');
+  } finally {
+    if (btn) btnLoading(btn, false);
   }
 }
 
@@ -594,9 +825,13 @@ async function streamBatch(url, body) {
   const container = document.getElementById('progress-container');
   const label = document.getElementById('progress-label');
   const fill = document.getElementById('progress-fill');
+  const dbSelector = document.getElementById('db-selector');
   container.classList.add('active');
   fill.style.width = '0%';
   let gotComplete = false;
+
+  // Prevent DB switching while a batch operation is in-flight
+  if (dbSelector) dbSelector.disabled = true;
 
   try {
     const resp = await fetch(url, {
@@ -643,6 +878,8 @@ async function streamBatch(url, body) {
   } catch (err) {
     label.textContent = `Error: ${err.message}`;
     setTimeout(() => container.classList.remove('active'), 5000);
+  } finally {
+    if (dbSelector) dbSelector.disabled = false;
   }
 }
 
@@ -669,55 +906,6 @@ document.addEventListener('keydown', e => {
     }
   }
 });
-
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-function esc(s) {
-  if (!s) return '';
-  const div = document.createElement('div');
-  div.textContent = String(s);
-  return div.innerHTML;
-}
-
-function safeUrl(url) {
-  if (!url) return '#';
-  const s = String(url).trim();
-  if (/^(javascript|data|vbscript):/i.test(s)) return '#';
-  return s;
-}
-
-function gradeColorClass(grade) {
-  if (!grade) return '';
-  const c = grade.charAt(0).toUpperCase();
-  if (c === 'A') return 'grade-a';
-  if (c === 'B') return 'grade-b';
-  if (c === 'C') return 'grade-c';
-  return 'grade-d';
-}
-
-function gradeBadge(grade) {
-  if (!grade) return '<span class="text-faint">\u2014</span>';
-  return `<span class="grade-badge ${gradeColorClass(grade)}">${esc(grade)}</span>`;
-}
-
-const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: 'MON', skip: 'SKIP' };
-const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
-
-function signalCard(value, label) {
-  return value ? `<div class="card card--compact"><div class="signal-value">${esc(String(value))}</div><div class="card-label">${esc(label)}</div></div>` : '';
-}
-
-function listSection(title, items) {
-  if (!items?.length) return '';
-  return `<div class="detail-section"><h3>${esc(title)}</h3><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`;
-}
-
-const SIGNALS = [
-  ['member_count','Members'],['github_repo_count','Repos'],['github_contributors','Contributors'],
-  ['github_commits_90d','Commits (90d)'],['huggingface_model_hits','HF Models'],['openalex_hits','OpenAlex'],
-  ['semantic_scholar_hits','Semantic Scholar'],['linkedin_hits','LinkedIn'],['researchgate_hits','ResearchGate'],
-];
 
 // ---------------------------------------------------------------------------
 // Projects
@@ -749,7 +937,7 @@ function showProjectForm(initiativeId, projectId) {
 
 async function submitProject(initiativeId, projectId) {
   const name = document.getElementById('pf-name').value.trim();
-  if (!name) { alert('Name is required'); return; }
+  if (!name) { showToast('Name is required', 'error'); return; }
 
   const body = {
     name,
@@ -767,27 +955,28 @@ async function submitProject(initiativeId, projectId) {
     }
     loadDetail(initiativeId);
   } catch (err) {
-    alert('Failed: ' + err.message);
+    showToast('Failed: ' + err.message, 'error');
   }
 }
 
 async function deleteProject(projectId, initiativeId) {
-  if (!confirm('Delete this project and its scores?')) return;
+  const ok = await showConfirmModal('Delete this project and its scores?');
+  if (!ok) return;
   try {
     await api('DELETE', `/api/projects/${projectId}`);
     loadDetail(initiativeId);
   } catch (err) {
-    alert('Delete failed: ' + err.message);
+    showToast('Delete failed: ' + err.message, 'error');
   }
 }
 
 async function scoreProject(projectId) {
   try {
     const r = await api('POST', `/api/projects/${projectId}/score`);
-    alert(`Project verdict: ${r.verdict} (${r.score})`);
+    showToast(`Project verdict: ${r.verdict} (${r.score})`, 'success');
     if (state.selectedId) loadDetail(state.selectedId);
   } catch (err) {
-    alert('Score failed: ' + err.message);
+    showToast('Score failed: ' + err.message, 'error');
   }
 }
 
@@ -798,6 +987,7 @@ function _resetDetailPanel() {
   state.selectedId = null;
   state.currentDetail = null;
   document.getElementById('detail-content').style.display = 'none';
+  document.getElementById('detail-content').className = '';
   document.getElementById('detail-empty').style.display = 'flex';
 }
 
@@ -822,15 +1012,15 @@ async function switchDatabase(name) {
   } catch (err) {
     // Revert dropdown to the actual current DB
     document.getElementById('db-selector').value = state.currentDb;
-    alert('Switch failed: ' + err.message);
+    showToast('Switch failed: ' + err.message, 'error');
   }
 }
 
 async function showCreateDb() {
-  const name = prompt('New database name (letters, numbers, hyphens):');
+  const name = await showPromptModal('New Database', 'Database name', 'letters, numbers, hyphens');
   if (!name) return;
   if (!_COL_KEY_RE.test(name)) {
-    alert('Invalid name. Use only letters, numbers, hyphens, and underscores.');
+    showToast('Invalid name. Use only letters, numbers, hyphens, and underscores.', 'error');
     return;
   }
   try {
@@ -842,7 +1032,7 @@ async function showCreateDb() {
     await loadCustomColumns();
     await loadInitiatives();
   } catch (err) {
-    alert('Failed: ' + err.message);
+    showToast('Failed: ' + err.message, 'error');
   }
 }
 
@@ -854,13 +1044,13 @@ async function loadCustomColumns() {
 }
 
 async function addCustomColumn() {
-  const key = prompt('Column key (no spaces, e.g. "funding_stage"):');
+  const key = await showPromptModal('Add Column', 'Column key (no spaces)', 'e.g. funding_stage');
   if (!key) return;
   if (!_COL_KEY_RE.test(key)) {
-    alert('Invalid key. Use only letters, numbers, hyphens, and underscores.');
+    showToast('Invalid key. Use only letters, numbers, hyphens, and underscores.', 'error');
     return;
   }
-  const label = prompt('Display label (e.g. "Funding Stage"):');
+  const label = await showPromptModal('Add Column', 'Display label', 'e.g. Funding Stage');
   if (!label) return;
   try {
     await api('POST', '/api/custom-columns', { key, label, show_in_list: true, col_type: 'text' });
@@ -870,7 +1060,7 @@ async function addCustomColumn() {
     localStorage.removeItem(_colOrderStorageKey());
     renderList();
   } catch (err) {
-    alert('Failed: ' + err.message);
+    showToast('Failed: ' + err.message, 'error');
   }
 }
 
@@ -878,7 +1068,8 @@ async function removeCustomColumn(e, columnId) {
   e.preventDefault();
   const col = state.customColumns.find(c => c.id === columnId);
   if (!col) return;
-  if (!confirm(`Remove column "${col.label}"?`)) return;
+  const ok = await showConfirmModal(`Remove column "${col.label}"?`);
+  if (!ok) return;
   try {
     await api('DELETE', `/api/custom-columns/${columnId}`);
     await loadCustomColumns();
@@ -890,7 +1081,7 @@ async function removeCustomColumn(e, columnId) {
     }
     renderList();
   } catch (err) {
-    alert('Failed: ' + err.message);
+    showToast('Failed: ' + err.message, 'error');
   }
 }
 
@@ -906,12 +1097,12 @@ async function showPrompts() {
   try {
     const prompts = await api('GET', '/api/scoring-prompts');
     container.innerHTML = prompts.map(p => `
-      <div class="prompt-section" data-prompt-key="${esc(p.key)}">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="prompt-section" data-prompt-key="${escAttr(p.key)}">
+        <div class="prompt-section-header">
           <label class="card-label">${esc(p.label)}</label>
-          <button class="btn btn-sm" onclick="savePrompt('${esc(p.key)}')">Save</button>
+          <button class="btn btn-sm" onclick="savePrompt('${escAttr(p.key)}')">Save</button>
         </div>
-        <textarea class="prompt-textarea" id="prompt-${esc(p.key)}">${esc(p.content)}</textarea>
+        <textarea class="prompt-textarea" id="prompt-${escAttr(p.key)}">${esc(p.content)}</textarea>
       </div>
     `).join('');
   } catch (err) {
@@ -928,9 +1119,9 @@ async function savePrompt(key) {
   if (!textarea) return;
   try {
     await api('PUT', `/api/scoring-prompts/${key}`, { content: textarea.value });
-    alert(`Prompt "${key}" saved successfully.`);
+    showToast(`Prompt "${key}" saved`, 'success');
   } catch (err) {
-    alert('Save failed: ' + err.message);
+    showToast('Save failed: ' + err.message, 'error');
   }
 }
 
