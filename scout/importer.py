@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from scout.models import Initiative
 from scout.schemas import ImportResult
+from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
 
@@ -199,14 +200,8 @@ def _upsert(session: Session, data: dict, existing: dict[str, Initiative]) -> tu
                 if val is not None:
                     setattr(init, field, val)
         # Merge extra links
-        try:
-            old_links = json.loads(init.extra_links_json or "{}")
-        except (json.JSONDecodeError, TypeError):
-            old_links = {}
-        try:
-            new_links = json.loads(data.get("extra_links_json", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            new_links = {}
+        old_links = json_parse(init.extra_links_json)
+        new_links = json_parse(data.get("extra_links_json", "{}"))
         merged = {**old_links, **{k: v for k, v in new_links.items() if v}}
         init.extra_links_json = json.dumps(merged)
         return False, init

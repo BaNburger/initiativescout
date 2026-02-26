@@ -3,15 +3,16 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import select
 
 from scout import services
-from scout.db import DB_NAME_RE, create_database, current_db_name, get_session, init_db, list_databases, switch_db
+from scout.db import (
+    create_database, current_db_name, init_db, list_databases,
+    session_scope, switch_db, validate_db_name,
+)
 from scout.models import Initiative, Project
-from scout.scorer import LLMCallError
 
 log = logging.getLogger(__name__)
 
@@ -46,20 +47,8 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 
-@contextmanager
-def _session():
-    session = get_session()
-    try:
-        yield session
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
 def _get_or_error(session, model, entity_id, label="Entity"):
-    obj = session.execute(select(model).where(model.id == entity_id)).scalars().first()
+    obj = services.get_entity(session, model, entity_id)
     if not obj:
         return None, _error(f"{label} {entity_id} not found", "NOT_FOUND")
     return obj, None
@@ -67,6 +56,12 @@ def _get_or_error(session, model, entity_id, label="Entity"):
 
 def _error(message: str, error_code: str, retryable: bool = False) -> dict:
     return {"error": message, "error_code": error_code, "retryable": retryable}
+
+
+def _llm_error(exc: Exception) -> dict:
+    """Convert an LLM-related exception into a standard error dict."""
+    retryable = getattr(exc, "retryable", False)
+    return _error(f"Scoring failed: {exc}", "LLM_ERROR", retryable=retryable)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +172,7 @@ def list_initiatives(
         sort_dir: Sort direction: asc or desc.
         limit: Max results (default 50, max 500).
     """
-    with _session() as session:
+    with session_scope() as session:
         items, _ = services.query_initiatives(
             session, verdict=verdict, classification=classification,
             uni=uni, search=search, sort_by=sort_by, sort_dir=sort_dir,
@@ -196,7 +191,7 @@ def get_initiative(initiative_id: int) -> dict:
         data_gaps lists what's missing (e.g. "No GitHub data"). enrichments array shows fetched sources.
     NEXT: If enriched=false, call enrich_initiative(id). If verdict=null, call score_initiative_tool(id).
     """
-    with _session() as session:
+    with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         return err if err else services.initiative_detail(init)
 
@@ -228,7 +223,7 @@ def create_initiative(
         linkedin: LinkedIn URL for the initiative or founder.
         description: Short description of what the initiative does.
     """
-    with _session() as session:
+    with session_scope() as session:
         init = services.create_initiative(
             session, name=name, uni=uni, sector=sector, mode=mode,
             description=description, website=website, email=email,
@@ -249,7 +244,7 @@ def delete_initiative(initiative_id: int) -> dict:
     WHAT: Permanently removes an initiative and all associated data (cascading delete).
     WHEN: Use when an initiative is duplicate, out of scope, or no longer relevant.
     """
-    with _session() as session:
+    with session_scope() as session:
         if not services.delete_initiative(session, initiative_id):
             return _error(f"Initiative {initiative_id} not found", "NOT_FOUND")
         return {"ok": True, "deleted_initiative_id": initiative_id}
@@ -271,7 +266,7 @@ def get_work_queue(limit: int = 10) -> dict:
     Args:
         limit: Max items to return (1-100, default 10).
     """
-    with _session() as session:
+    with session_scope() as session:
         queue = services.get_work_queue(session, limit)
         stats = services.compute_stats(session)
         return {"queue": queue, "database_stats": stats}
@@ -293,7 +288,7 @@ def update_initiative(
         or fill in context (description, sector) before scoring.
     NEXT: If you added website/github_org, call enrich_initiative(id) to fetch fresh data.
     """
-    with _session() as session:
+    with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
@@ -325,7 +320,7 @@ async def enrich_initiative(initiative_id: int) -> dict:
         lists sources that couldn't run (e.g. no website URL set).
     NEXT: Call score_initiative_tool(id) to score using the enrichment data.
     """
-    with _session() as session:
+    with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
@@ -374,30 +369,19 @@ async def score_initiative_tool(initiative_id: int) -> dict:
     Args:
         initiative_id: The numeric ID of the initiative to score.
     """
-    with _session() as session:
+    with session_scope() as session:
         try:
             init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
             if err:
                 return err
             outreach = await services.run_scoring(session, init)
             session.commit()
-            return {
-                "initiative_id": init.id, "initiative_name": init.name,
-                "verdict": outreach.verdict, "score": outreach.score,
-                "classification": outreach.classification,
-                "reasoning": outreach.reasoning,
-                "contact_who": outreach.contact_who,
-                "contact_channel": outreach.contact_channel,
-                "engagement_hook": outreach.engagement_hook,
-                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-                "grade_opportunity": outreach.grade_opportunity,
-                "key_evidence": services.json_parse(outreach.key_evidence_json, []),
-                "data_gaps": services.json_parse(outreach.data_gaps_json, []),
-            }
-        except LLMCallError as exc:
-            return _error(f"Scoring failed: {exc}", "LLM_ERROR", retryable=exc.retryable)
+            result = services.score_response_dict(outreach, extended=True)
+            result["initiative_id"] = init.id
+            result["initiative_name"] = init.name
+            return result
         except Exception as exc:
-            return _error(f"Scoring failed: {exc}", "LLM_ERROR")
+            return _llm_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +397,7 @@ def get_stats() -> dict:
     WHEN: Use as the first call to understand the database state. If scored < total, use get_work_queue()
         to find initiatives needing work.
     """
-    with _session() as session:
+    with session_scope() as session:
         return services.compute_stats(session)
 
 
@@ -425,7 +409,8 @@ def get_stats() -> dict:
 @mcp.tool()
 def create_project(
     initiative_id: int, name: str,
-    description: str = "", website: str = "", github_url: str = "", team: str = "",
+    description: str | None = None, website: str | None = None,
+    github_url: str | None = None, team: str | None = None,
 ) -> dict:
     """Create a new project under an initiative.
 
@@ -433,17 +418,16 @@ def create_project(
     WHEN: Use when an initiative has distinct sub-projects that should be scored separately.
     NEXT: Call score_project_tool(project_id) to score the project.
     """
-    with _session() as session:
+    with session_scope() as session:
         _, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
-        proj = Project(
-            initiative_id=initiative_id, name=name, description=description,
+        proj = services.create_project(
+            session, initiative_id,
+            name=name, description=description,
             website=website, github_url=github_url, team=team,
         )
-        session.add(proj)
         session.commit()
-        session.refresh(proj)
         return services.project_summary(proj)
 
 
@@ -458,7 +442,7 @@ def update_project(
     WHAT: Modifies project profile data. Returns the updated project summary.
     WHEN: Use to add missing info (website, github_url, team) before scoring.
     """
-    with _session() as session:
+    with session_scope() as session:
         proj, err = _get_or_error(session, Project, project_id, "Project")
         if err:
             return err
@@ -476,7 +460,7 @@ def delete_project(project_id: int) -> dict:
 
     WHAT: Permanently removes a project and its scores. Does not affect the parent initiative.
     """
-    with _session() as session:
+    with session_scope() as session:
         proj, err = _get_or_error(session, Project, project_id, "Project")
         if err:
             return err
@@ -493,7 +477,7 @@ async def score_project_tool(project_id: int) -> dict:
     WHEN: Call after creating or updating a project. Requires ANTHROPIC_API_KEY.
     ERRORS: Returns {error, error_code: "LLM_ERROR", retryable} on failure.
     """
-    with _session() as session:
+    with session_scope() as session:
         try:
             proj, err = _get_or_error(session, Project, project_id, "Project")
             if err:
@@ -503,19 +487,14 @@ async def score_project_tool(project_id: int) -> dict:
                 return err
             outreach = await services.run_project_scoring(session, proj, init)
             session.commit()
-            return {
-                "project_id": proj.id, "project_name": proj.name,
-                "initiative_id": init.id, "initiative_name": init.name,
-                "verdict": outreach.verdict, "score": outreach.score,
-                "classification": outreach.classification,
-                "reasoning": outreach.reasoning,
-                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-                "grade_opportunity": outreach.grade_opportunity,
-            }
-        except LLMCallError as exc:
-            return _error(f"Scoring failed: {exc}", "LLM_ERROR", retryable=exc.retryable)
+            result = services.score_response_dict(outreach, extended=True)
+            result["project_id"] = proj.id
+            result["project_name"] = proj.name
+            result["initiative_id"] = init.id
+            result["initiative_name"] = init.name
+            return result
         except Exception as exc:
-            return _error(f"Scoring failed: {exc}", "LLM_ERROR")
+            return _llm_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +510,7 @@ def list_scoring_prompts() -> list[dict]:
     WHEN: Use to inspect or audit how the LLM evaluates each dimension before scoring.
     NEXT: Use update_scoring_prompt(key, content) to customize a dimension's evaluation criteria.
     """
-    with _session() as session:
+    with session_scope() as session:
         return services.get_scoring_prompts(session)
 
 
@@ -547,7 +526,7 @@ def update_scoring_prompt(key: str, content: str) -> dict:
         key: Dimension key — one of "team", "tech", or "opportunity".
         content: New system prompt text. Must include JSON response format instructions.
     """
-    with _session() as session:
+    with session_scope() as session:
         result = services.update_scoring_prompt(session, key, content)
         if result is None:
             return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
@@ -576,9 +555,10 @@ def select_scout_database(name: str) -> dict:
     WHAT: Changes the active database. All subsequent tool calls operate on this database.
     WHEN: Use to switch between different initiative datasets.
     """
-    name = name.strip()
-    if not name or not DB_NAME_RE.match(name):
-        return _error("Invalid database name (letters, numbers, hyphens, underscores only)", "VALIDATION_ERROR")
+    try:
+        name = validate_db_name(name)
+    except ValueError as exc:
+        return _error(str(exc), "VALIDATION_ERROR")
     switch_db(name)
     return {"current": current_db_name(), "message": f"Switched to database '{name}'"}
 
@@ -593,9 +573,10 @@ def create_scout_database(name: str) -> dict:
     Args:
         name: Database name (letters, numbers, hyphens, underscores only).
     """
-    name = name.strip()
-    if not name or not DB_NAME_RE.match(name):
-        return _error("Invalid database name (letters, numbers, hyphens, underscores only)", "VALIDATION_ERROR")
+    try:
+        name = validate_db_name(name)
+    except ValueError as exc:
+        return _error(str(exc), "VALIDATION_ERROR")
     try:
         create_database(name)
     except ValueError as exc:
@@ -610,7 +591,7 @@ def get_custom_columns() -> list[dict]:
     WHAT: Returns all user-defined columns with their types and display settings.
     WHEN: Use before create/update to see what columns already exist.
     """
-    with _session() as session:
+    with session_scope() as session:
         return services.get_custom_columns(session)
 
 
@@ -631,7 +612,7 @@ def create_custom_column(
         show_in_list: Whether to show in the initiative list view. Default true.
         sort_order: Display order (lower = first). Default 0.
     """
-    with _session() as session:
+    with session_scope() as session:
         result = services.create_custom_column(
             session, key=key, label=label, col_type=col_type,
             show_in_list=show_in_list, sort_order=sort_order,
@@ -659,7 +640,7 @@ def update_custom_column(
         show_in_list: Whether to show in the list view.
         sort_order: Display order (lower = first).
     """
-    with _session() as session:
+    with session_scope() as session:
         result = services.update_custom_column(
             session, column_id,
             label=label, col_type=col_type,
@@ -680,7 +661,7 @@ def delete_custom_column(column_id: int) -> dict:
     Args:
         column_id: The numeric ID of the custom column to delete.
     """
-    with _session() as session:
+    with session_scope() as session:
         if not services.delete_custom_column(session, column_id):
             return _error(f"Custom column {column_id} not found", "NOT_FOUND")
     return {"ok": True, "deleted_column_id": column_id}

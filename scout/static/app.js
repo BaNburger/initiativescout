@@ -6,7 +6,6 @@ const state = {
   selectedId: null,
   currentDetail: null,
   sort: { by: 'score', dir: 'desc' },
-  loading: false,
   currentDb: 'scout',
   customColumns: [],
   columnOrder: null, // null = default order; array of column keys when customised
@@ -25,6 +24,8 @@ function esc(s) {
 }
 
 function escAttr(s) { return esc(s || '').replace(/'/g, '&#39;'); }
+
+function humanize(s) { return (s || '').replace(/_/g, ' '); }
 
 function safeUrl(url) {
   if (!url) return '#';
@@ -49,6 +50,12 @@ function gradeBadge(grade) {
 
 const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: 'MON', skip: 'SKIP' };
 const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
+
+function renderPills(str, cssClass) {
+  if (!str) return '';
+  return str.split(';').map(s => s.trim()).filter(Boolean)
+    .map(t => `<span class="domain-pill ${cssClass}">${esc(humanize(t))}</span>`).join('');
+}
 
 function signalCard(value, label) {
   return value ? `<div class="card card--compact"><div class="signal-value">${esc(String(value))}</div><div class="card-label">${esc(label)}</div></div>` : '';
@@ -341,7 +348,6 @@ function sortBy(field) {
 // passed through esc()/escAttr(), which converts <, >, &, and quotes to their
 // HTML entity equivalents, preventing script injection.
 
-function escAttr(s) { return esc(s || '').replace(/'/g, '&#39;'); }
 function editAttr(id, field, value, type) {
   return ` data-edit-id="${id}" data-edit-field="${field}" data-edit-value="${escAttr(value)}"${type ? ` data-edit-type="${type}"` : ''}`;
 }
@@ -364,7 +370,7 @@ const CORE_COLUMNS = [
   { key: 'opp', label: 'Opp', sort: 'grade_opportunity', cssClass: 'col-opp',
     render: i => `<td class="col-opp">${gradeBadge(i.grade_opportunity)}</td>` },
   { key: 'class', label: 'Class', sort: null, cssClass: 'col-class',
-    render: i => `<td class="col-class"><span class="class-badge">${esc((i.classification || '').replace(/_/g, ' '))}</span></td>` },
+    render: i => `<td class="col-class"><span class="class-badge">${esc(humanize(i.classification))}</span></td>` },
 ];
 
 function getColumns() {
@@ -564,7 +570,7 @@ function renderDetail(d) {
   if (d.verdict) {
     html += `
     <div class="detail-verdict ${esc(v)}">
-      <div class="verdict-label">${esc(vLabel)} \u2014 ${d.score?.toFixed(1) || '?'}/5 \u2014 ${esc(d.classification?.replace(/_/g, ' ') || '')}</div>
+      <div class="verdict-label">${esc(vLabel)} \u2014 ${d.score?.toFixed(1) || '?'}/5 \u2014 ${esc(humanize(d.classification))}</div>
       <div class="reasoning">${esc(d.reasoning || '')}</div>
     </div>`;
   }
@@ -600,24 +606,14 @@ function renderDetail(d) {
   const hasDomains = d.technology_domains || d.market_domains || d.categories;
   if (hasDomains) {
     html += `<div class="detail-section"><h3>Domains</h3><div>`;
-    if (d.technology_domains) {
-      d.technology_domains.split(';').map(s => s.trim()).filter(Boolean).forEach(t => {
-        html += `<span class="domain-pill tech">${esc(t.replace(/_/g, ' '))}</span>`;
-      });
-    }
-    if (d.market_domains) {
-      d.market_domains.split(';').map(s => s.trim()).filter(Boolean).forEach(m => {
-        html += `<span class="domain-pill market">${esc(m.replace(/_/g, ' '))}</span>`;
-      });
-    }
-    if (d.categories) {
-      html += `<span class="domain-pill cat">${esc(d.categories)}</span>`;
-    }
+    html += renderPills(d.technology_domains, 'tech');
+    html += renderPills(d.market_domains, 'market');
+    if (d.categories) html += `<span class="domain-pill cat">${esc(d.categories)}</span>`;
     html += `</div></div>`;
   }
 
   // Pre-computed scores
-  if (d.outreach_now_score || d.venture_upside_score) {
+  if (d.outreach_now_score != null || d.venture_upside_score != null) {
     html += `<div class="detail-section"><h3>Pipeline Scores</h3>`;
     if (d.outreach_now_score != null) {
       const pct = Math.min(d.outreach_now_score / 5 * 100, 100);
@@ -639,8 +635,8 @@ function renderDetail(d) {
     html += `<div class="detail-section"><h3>Due Diligence</h3><ul>`;
     if (d.dd_is_investable) html += `<li class="text-green">Investable</li>`;
     if (d.dd_references_count) html += `<li>References: ${esc(String(d.dd_references_count))}</li>`;
-    if (d.dd_key_roles) html += `<li>Key roles: ${esc(d.dd_key_roles.replace(/_/g, ' '))}</li>`;
-    if (d.member_roles) html += `<li>Member roles: ${esc(d.member_roles.replace(/_/g, ' '))}</li>`;
+    if (d.dd_key_roles) html += `<li>Key roles: ${esc(humanize(d.dd_key_roles))}</li>`;
+    if (d.member_roles) html += `<li>Member roles: ${esc(humanize(d.member_roles))}</li>`;
     html += `</ul></div>`;
   }
 
@@ -750,7 +746,7 @@ document.getElementById('import-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('import-overlay')) hideImport();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { hideImport(); hidePrompts(); }
+  if (e.key === 'Escape') { hideImport(); hidePrompts(); hideMcpSetup(); }
 });
 
 const importBox = document.getElementById('import-box');
@@ -795,7 +791,7 @@ async function enrichOne(id) {
     const r = await api('POST', `/api/enrich/${id}`);
     showToast(`Added ${r.enrichments_added} enrichments`, 'success');
     loadDetail(id);
-    loadStats();
+    loadInitiatives();
   } catch (err) {
     showToast('Enrich failed: ' + err.message, 'error');
   } finally {
@@ -1128,6 +1124,170 @@ async function savePrompt(key) {
 document.getElementById('prompt-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('prompt-overlay')) hidePrompts();
 });
+
+// ---------------------------------------------------------------------------
+// MCP Setup popover
+// ---------------------------------------------------------------------------
+const MCP_TOOLS = {
+  'mcp-claude-desktop': {
+    label: 'Claude Desktop',
+    configPath: {
+      mac: '~/Library/Application Support/Claude/claude_desktop_config.json',
+      win: '%APPDATA%\\Claude\\claude_desktop_config.json',
+    },
+    steps: function(cfg) {
+      return [
+        { title: 'Open the config file', detail: 'On macOS: <code>' + esc(this.configPath.mac) + '</code><br>On Windows: <code>' + esc(this.configPath.win) + '</code>' },
+        { title: 'Add Scout to mcpServers', detail: 'Merge this into your config (keep existing servers):', code: cfg },
+        { title: 'Restart Claude Desktop', detail: 'Quit and reopen Claude Desktop for changes to take effect.' },
+      ];
+    },
+  },
+  'mcp-claude-code': {
+    label: 'Claude Code',
+    steps: function() {
+      return [
+        { title: 'Run one command in your terminal', detail: 'This registers Scout globally for all projects:', code: 'claude mcp add -s user scout -- scout-mcp' },
+        { title: 'Or use the project config', detail: 'The repo includes a <code>.mcp.json</code> file that auto-configures Scout when you open this project in Claude Code. No action needed.' },
+      ];
+    },
+  },
+  'mcp-cursor': {
+    label: 'Cursor',
+    configPath: '~/.cursor/mcp.json',
+    steps: function(cfg) {
+      return [
+        { title: 'Open the config file', detail: '<code>' + esc(this.configPath) + '</code>' },
+        { title: 'Add Scout to mcpServers', detail: 'Merge this into your config:', code: cfg },
+        { title: 'Restart Cursor', detail: 'Reload the window or restart Cursor.' },
+      ];
+    },
+  },
+  'mcp-windsurf': {
+    label: 'Windsurf',
+    configPath: '~/.codeium/windsurf/mcp_config.json',
+    steps: function(cfg) {
+      return [
+        { title: 'Open the config file', detail: '<code>' + esc(this.configPath) + '</code>' },
+        { title: 'Add Scout to mcpServers', detail: 'Merge this into your config:', code: cfg },
+        { title: 'Restart Windsurf', detail: 'Reload the window or restart Windsurf.' },
+      ];
+    },
+  },
+};
+
+function _mcpConfigSnippet() {
+  return JSON.stringify({ mcpServers: { scout: { command: 'scout-mcp' } } }, null, 2);
+}
+
+var _mcpOverlay = null;
+
+function showMcpSetup() {
+  if (_mcpOverlay) _mcpOverlay.remove();
+
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  var box = document.createElement('div');
+  box.className = 'mcp-setup-box';
+
+  // Header
+  var header = document.createElement('div');
+  header.className = 'prompt-header';
+  var h2 = document.createElement('h2');
+  h2.textContent = 'MCP Setup';
+  var closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-sm';
+  closeBtn.textContent = 'Close';
+  header.appendChild(h2);
+  header.appendChild(closeBtn);
+  box.appendChild(header);
+
+  // Description
+  var desc = document.createElement('p');
+  desc.className = 'prompt-description';
+  desc.textContent = 'Connect Scout to your AI assistant. Pick your tool, copy the config, and paste it into the right file.';
+  box.appendChild(desc);
+
+  // Tabs
+  var tabs = document.createElement('div');
+  tabs.className = 'mcp-tabs';
+  var tabKeys = ['mcp-claude-desktop', 'mcp-claude-code', 'mcp-cursor', 'mcp-windsurf'];
+  tabKeys.forEach(function(key) {
+    var tab = document.createElement('button');
+    tab.className = 'mcp-tab' + (key === 'mcp-claude-desktop' ? ' active' : '');
+    tab.textContent = MCP_TOOLS[key].label;
+    tab.addEventListener('click', function() { switchMcpTab(tab, key); });
+    tabs.appendChild(tab);
+  });
+  box.appendChild(tabs);
+
+  // Tab content
+  var tabContent = document.createElement('div');
+  tabContent.id = 'mcp-tab-content';
+  box.appendChild(tabContent);
+
+  // Footer
+  var footer = document.createElement('div');
+  footer.className = 'mcp-footer';
+  var footerP = document.createElement('p');
+  footerP.appendChild(document.createTextNode('Or run '));
+  var code = document.createElement('code');
+  code.textContent = 'scout-setup all';
+  footerP.appendChild(code);
+  footerP.appendChild(document.createTextNode(' from your terminal to configure all tools at once.'));
+  footer.appendChild(footerP);
+  box.appendChild(footer);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  _mcpOverlay = overlay;
+
+  function cleanup() { overlay.remove(); _mcpOverlay = null; }
+  closeBtn.onclick = cleanup;
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(); });
+
+  // Initialize first tab
+  switchMcpTab(tabs.querySelector('.mcp-tab'), 'mcp-claude-desktop');
+}
+
+function hideMcpSetup() {
+  if (_mcpOverlay) { _mcpOverlay.remove(); _mcpOverlay = null; }
+}
+
+function switchMcpTab(btn, toolKey) {
+  document.querySelectorAll('.mcp-tab').forEach(function(t) { t.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  var tool = MCP_TOOLS[toolKey];
+  var cfg = _mcpConfigSnippet();
+  var steps = tool.steps(cfg);
+  var html = '';
+  steps.forEach(function(s, i) {
+    html += '<div class="mcp-step">';
+    html += '<div class="mcp-step-title"><span class="mcp-step-num">' + (i + 1) + '</span>' + esc(s.title) + '</div>';
+    html += '<div class="mcp-step-detail">' + s.detail + '</div>';
+    if (s.code) {
+      var id = 'mcp-code-' + i;
+      html += '<div class="mcp-code-block" id="' + id + '">' + esc(s.code);
+      html += '<button class="mcp-copy-btn" onclick="copyMcpCode(\'' + id + '\')">Copy</button></div>';
+    }
+    html += '</div>';
+  });
+  document.getElementById('mcp-tab-content').innerHTML = html;
+}
+
+function copyMcpCode(blockId) {
+  var block = document.getElementById(blockId);
+  if (!block) return;
+  var text = block.textContent.replace('Copy', '').trim();
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = block.querySelector('.mcp-copy-btn');
+    if (btn) {
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Init

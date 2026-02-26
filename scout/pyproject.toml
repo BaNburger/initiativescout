@@ -30,3 +30,4 @@ package-dir = {"scout" = "."}
 [project.scripts]
 scout = "scout.app:main"
 scout-mcp = "scout.mcp_server:main"
+scout-setup = "scout.setup_mcp:main"

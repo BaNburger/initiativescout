@@ -16,7 +16,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from scout import services
-from scout.db import DB_NAME_RE, create_database, current_db_name, get_session, init_db, list_databases, switch_db
+from scout.db import (
+    create_database, current_db_name, get_session, init_db, list_databases,
+    session_generator, switch_db, validate_db_name,
+)
 from scout.importer import import_xlsx
 from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.schemas import (
@@ -74,18 +77,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 def db_session() -> Generator[Session, None, None]:
-    session = get_session()
-    try:
-        yield session
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    yield from session_generator()
 
 
 def _get_or_404(session: Session, model, entity_id: int, label: str = "Entity"):
-    obj = session.execute(select(model).where(model.id == entity_id)).scalars().first()
+    obj = services.get_entity(session, model, entity_id)
     if not obj:
         raise HTTPException(404, f"{label} not found")
     return obj
@@ -261,7 +257,7 @@ async def score_one(initiative_id: int, session: Session = Depends(db_session)):
         session.commit()
     except Exception as exc:
         raise HTTPException(500, f"Scoring failed: {exc}") from exc
-    return {f: getattr(outreach, f) for f in services.SCORE_RESPONSE_FIELDS}
+    return services.score_response_dict(outreach)
 
 
 # ---------------------------------------------------------------------------
@@ -280,14 +276,13 @@ async def list_projects(initiative_id: int, session: Session = Depends(db_sessio
           tags=["Projects"], summary="Create a new project under an initiative")
 async def create_project(initiative_id: int, body: ProjectCreate, session: Session = Depends(db_session)):
     _get_or_404(session, Initiative, initiative_id, "Initiative")
-    proj = Project(
-        initiative_id=initiative_id, name=body.name, description=body.description,
+    proj = services.create_project(
+        session, initiative_id,
+        name=body.name, description=body.description,
         website=body.website, github_url=body.github_url, team=body.team,
-        extra_links_json=json.dumps(body.extra_links),
+        extra_links=body.extra_links,
     )
-    session.add(proj)
     session.commit()
-    session.refresh(proj)
     return services.project_summary(proj)
 
 
@@ -320,7 +315,7 @@ async def score_project_endpoint(project_id: int, session: Session = Depends(db_
         session.commit()
     except Exception as exc:
         raise HTTPException(500, f"Scoring failed: {exc}") from exc
-    return {f: getattr(outreach, f) for f in services.SCORE_RESPONSE_FIELDS}
+    return services.score_response_dict(outreach)
 
 
 # ---------------------------------------------------------------------------
@@ -334,18 +329,20 @@ async def list_databases_route():
 
 @app.post("/api/databases/select", tags=["Databases"], summary="Switch to a different database")
 async def select_database(body: dict[str, Any]):
-    name = (body.get("name") or "").strip()
-    if not name or not DB_NAME_RE.match(name):
-        raise HTTPException(400, "Invalid database name (letters, numbers, hyphens, underscores)")
+    try:
+        name = validate_db_name(body.get("name") or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     switch_db(name)
     return {"current": current_db_name()}
 
 
 @app.post("/api/databases/create", tags=["Databases"], summary="Create a new empty database")
 async def create_database_route(body: dict[str, Any]):
-    name = (body.get("name") or "").strip()
-    if not name or not DB_NAME_RE.match(name):
-        raise HTTPException(400, "Invalid database name (letters, numbers, hyphens, underscores)")
+    try:
+        name = validate_db_name(body.get("name") or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     try:
         create_database(name)
     except ValueError as exc:

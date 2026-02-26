@@ -147,7 +147,7 @@ class CustomColumnCreate(BaseModel):
     key: str
     label: str
     col_type: str = "text"
-    show_in_list: bool = False
+    show_in_list: bool = True
     sort_order: int = 0
 
     @field_validator("key")

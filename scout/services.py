@@ -11,8 +11,21 @@ from sqlalchemy.orm import Session
 from scout.enricher import enrich_github, enrich_team_page, enrich_website
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
 from scout.scorer import LLMClient, score_initiative, score_project
+from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shared entity lookup
+# ---------------------------------------------------------------------------
+
+
+def get_entity(session: Session, model, entity_id: int):
+    """Fetch an entity by primary key. Returns the object or None."""
+    return session.execute(
+        select(model).where(model.id == entity_id)
+    ).scalars().first()
+
 
 # ---------------------------------------------------------------------------
 # Shared field tuples
@@ -55,14 +68,24 @@ PROJECT_SCORE_KEYS = (
 # ---------------------------------------------------------------------------
 
 
-_MISSING = object()
+def score_response_dict(outreach: OutreachScore, extended: bool = False) -> dict[str, Any]:
+    """Build a dict from an OutreachScore object.
 
-
-def json_parse(value: str | None, default: Any = _MISSING) -> Any:
-    try:
-        return json.loads(value or "")
-    except (json.JSONDecodeError, TypeError):
-        return {} if default is _MISSING else default
+    Args:
+        outreach: The score object.
+        extended: If True, include reasoning, contact info, evidence, and data gaps.
+    """
+    result = {f: getattr(outreach, f) for f in SCORE_RESPONSE_FIELDS}
+    if extended:
+        result.update({
+            "reasoning": outreach.reasoning,
+            "contact_who": outreach.contact_who,
+            "contact_channel": outreach.contact_channel,
+            "engagement_hook": outreach.engagement_hook,
+            "key_evidence": json_parse(outreach.key_evidence_json, []),
+            "data_gaps": json_parse(outreach.data_gaps_json, []),
+        })
+    return result
 
 
 def latest_score_fields(scores: list[OutreachScore]) -> dict[str, Any]:
@@ -75,23 +98,48 @@ def latest_score_fields(scores: list[OutreachScore]) -> dict[str, Any]:
     return result
 
 
+# Base initiative fields read directly from the Initiative ORM object.
+_SUMMARY_BASE_FIELDS = (
+    "id", "name", "uni", "sector", "mode", "description",
+    "website", "email", "relevance", "sheet_source",
+)
+_SUMMARY_EXTRA_FIELDS = (
+    "technology_domains", "categories", "member_count",
+    "outreach_now_score", "venture_upside_score",
+)
+
+
+def _build_initiative_dict(
+    init: Initiative,
+    enriched: bool,
+    enriched_at_iso: str | None,
+    score_fields: dict[str, Any],
+) -> dict:
+    """Assemble the standard initiative summary dict from pre-computed parts.
+
+    This is the single source of truth for the initiative list-view shape,
+    used by both ``initiative_summary`` (ORM-based) and ``query_initiatives``
+    (SQL-based).
+    """
+    result: dict[str, Any] = {f: getattr(init, f) for f in _SUMMARY_BASE_FIELDS}
+    result["enriched"] = enriched
+    result["enriched_at"] = enriched_at_iso
+    result.update(score_fields)
+    for f in _SUMMARY_EXTRA_FIELDS:
+        result[f] = getattr(init, f)
+    result["custom_fields"] = json_parse(init.custom_fields_json, {})
+    return result
+
+
 def initiative_summary(init: Initiative) -> dict:
     enriched = bool(init.enrichments)
     enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
-    return {
-        "id": init.id, "name": init.name, "uni": init.uni, "sector": init.sector,
-        "mode": init.mode, "description": init.description, "website": init.website,
-        "email": init.email, "relevance": init.relevance, "sheet_source": init.sheet_source,
-        "enriched": enriched,
-        "enriched_at": enriched_at.isoformat() if enriched_at else None,
-        **latest_score_fields(init.scores),
-        "technology_domains": init.technology_domains,
-        "categories": init.categories,
-        "member_count": init.member_count,
-        "outreach_now_score": init.outreach_now_score,
-        "venture_upside_score": init.venture_upside_score,
-        "custom_fields": json_parse(init.custom_fields_json, {}),
-    }
+    return _build_initiative_dict(
+        init,
+        enriched=enriched,
+        enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
+        score_fields=latest_score_fields(init.scores),
+    )
 
 
 def initiative_detail(init: Initiative) -> dict:
@@ -268,33 +316,19 @@ def query_initiatives(
     items = []
     for row in rows:
         init = row[0]
-        items.append({
-            "id": init.id, "name": init.name, "uni": init.uni, "sector": init.sector,
-            "mode": init.mode, "description": init.description, "website": init.website,
-            "email": init.email, "relevance": init.relevance, "sheet_source": init.sheet_source,
-            "enriched": row.enrich_count > 0,
-            "enriched_at": row.enrich_latest.isoformat() if row.enrich_latest else None,
-            "verdict": row.ls_verdict, "score": row.ls_score,
-            "classification": row.ls_classification,
-            "reasoning": row.ls_reasoning,
-            "contact_who": row.ls_contact_who,
-            "contact_channel": row.ls_contact_channel,
-            "engagement_hook": row.ls_engagement_hook,
-            "key_evidence": json_parse(row.ls_key_evidence_json, []),
-            "data_gaps": json_parse(row.ls_data_gaps_json, []),
-            "grade_team": row.ls_grade_team,
-            "grade_team_num": row.ls_grade_team_num,
-            "grade_tech": row.ls_grade_tech,
-            "grade_tech_num": row.ls_grade_tech_num,
-            "grade_opportunity": row.ls_grade_opportunity,
-            "grade_opportunity_num": row.ls_grade_opportunity_num,
-            "technology_domains": init.technology_domains,
-            "categories": init.categories,
-            "member_count": init.member_count,
-            "outreach_now_score": init.outreach_now_score,
-            "venture_upside_score": init.venture_upside_score,
-            "custom_fields": json_parse(init.custom_fields_json, {}),
-        })
+        # Build score fields from the SQL row (ls_ prefix columns)
+        score_fields: dict[str, Any] = {}
+        for f in SCORE_FIELDS:
+            score_fields[f] = getattr(row, f"ls_{f}", None)
+        score_fields["key_evidence"] = json_parse(row.ls_key_evidence_json, [])
+        score_fields["data_gaps"] = json_parse(row.ls_data_gaps_json, [])
+
+        items.append(_build_initiative_dict(
+            init,
+            enriched=row.enrich_count > 0,
+            enriched_at_iso=row.enrich_latest.isoformat() if row.enrich_latest else None,
+            score_fields=score_fields,
+        ))
 
     return items, total
 
@@ -312,6 +346,9 @@ def apply_updates(obj, updates: dict[str, Any], fields: tuple[str, ...]) -> None
             setattr(obj, field, val)
 
 
+_PROJECT_FIELDS = ("name", "description", "website", "github_url", "team")
+
+
 def create_initiative(session: Session, **kwargs: Any) -> Initiative:
     """Create a new initiative. Accepts any UPDATABLE_FIELDS as keyword args."""
     data = {k: v for k, v in kwargs.items() if k in UPDATABLE_FIELDS and v is not None}
@@ -321,9 +358,21 @@ def create_initiative(session: Session, **kwargs: Any) -> Initiative:
     return init
 
 
+def create_project(session: Session, initiative_id: int, extra_links: dict | None = None, **kwargs: Any) -> Project:
+    """Create a new project under an initiative."""
+    data = {k: (v or "") for k, v in kwargs.items() if k in _PROJECT_FIELDS}
+    data["initiative_id"] = initiative_id
+    if extra_links is not None:
+        data["extra_links_json"] = json.dumps(extra_links)
+    proj = Project(**data)
+    session.add(proj)
+    session.flush()
+    return proj
+
+
 def delete_initiative(session: Session, initiative_id: int) -> bool:
     """Delete an initiative (cascade handles enrichments, scores, projects). Returns True if found."""
-    init = session.execute(select(Initiative).where(Initiative.id == initiative_id)).scalars().first()
+    init = get_entity(session, Initiative, initiative_id)
     if not init:
         return False
     session.delete(init)
@@ -423,26 +472,22 @@ def create_custom_column(
     return _column_dict(col)
 
 
+_CUSTOM_COLUMN_FIELDS = ("label", "col_type", "show_in_list", "sort_order")
+
+
 def update_custom_column(session: Session, column_id: int, **kwargs: Any) -> dict | None:
     """Update a custom column. Returns None if not found."""
-    col = session.execute(
-        select(CustomColumn).where(CustomColumn.id == column_id)
-    ).scalars().first()
+    col = get_entity(session, CustomColumn, column_id)
     if not col:
         return None
-    for field in ("label", "col_type", "show_in_list", "sort_order"):
-        val = kwargs.get(field)
-        if val is not None:
-            setattr(col, field, val)
+    apply_updates(col, kwargs, _CUSTOM_COLUMN_FIELDS)
     session.commit()
     return _column_dict(col)
 
 
 def delete_custom_column(session: Session, column_id: int) -> bool:
     """Delete a custom column. Returns False if not found."""
-    col = session.execute(
-        select(CustomColumn).where(CustomColumn.id == column_id)
-    ).scalars().first()
+    col = get_entity(session, CustomColumn, column_id)
     if not col:
         return False
     session.delete(col)
@@ -473,12 +518,16 @@ async def run_enrichment(session: Session, init: Initiative) -> list[Enrichment]
     return new_enrichments
 
 
+def _ensure_client(client: LLMClient | None) -> LLMClient:
+    """Return the given client or create a default one."""
+    return client if client is not None else LLMClient()
+
+
 async def run_scoring(
     session: Session, init: Initiative, client: LLMClient | None = None,
 ) -> OutreachScore:
     """Score an initiative, replacing existing initiative-level scores (caller must commit)."""
-    if client is None:
-        client = LLMClient()
+    client = _ensure_client(client)
     enrichments = session.execute(
         select(Enrichment).where(Enrichment.initiative_id == init.id)
     ).scalars().all()
@@ -496,8 +545,7 @@ async def run_project_scoring(
     session: Session, proj: Project, init: Initiative, client: LLMClient | None = None,
 ) -> OutreachScore:
     """Score a project, replacing existing project scores (caller must commit)."""
-    if client is None:
-        client = LLMClient()
+    client = _ensure_client(client)
     outreach = await score_project(proj, init, client)
     session.execute(delete(OutreachScore).where(OutreachScore.project_id == proj.id))
     session.add(outreach)

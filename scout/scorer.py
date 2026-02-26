@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from scout.models import Enrichment, Initiative, OutreachScore, Project
+from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
 
@@ -244,131 +245,126 @@ class LLMClient:
 # ---------------------------------------------------------------------------
 
 
-def build_team_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
-    """Assemble team-relevant data for the Team dimension LLM call."""
-    sections: list[str] = [
-        f"INITIATIVE: {init.name}",
-        f"UNIVERSITY: {init.uni}",
-    ]
-    if init.description:
-        sections.append(f"DESCRIPTION: {init.description}")
-    if init.team_size:
-        sections.append(f"TEAM SIZE: {init.team_size}")
-    if init.member_count:
-        sections.append(f"MEMBER COUNT: {init.member_count}")
-    if init.member_examples:
-        sections.append(f"MEMBER EXAMPLES: {init.member_examples}")
-    if init.member_roles:
-        sections.append(f"MEMBER ROLES: {init.member_roles}")
-    if init.linkedin:
-        sections.append(f"LINKEDIN: {init.linkedin}")
-    if init.linkedin_hits:
-        sections.append(f"LINKEDIN HITS: {init.linkedin_hits}")
-    if init.dd_key_roles:
-        sections.append(f"KEY ROLES (DD): {init.dd_key_roles}")
-    if init.dd_references_count:
-        sections.append(f"REFERENCES COUNT: {init.dd_references_count}")
-    if init.competitions:
-        sections.append(f"COMPETITIONS: {init.competitions}")
-    if init.sponsors:
-        sections.append(f"SPONSORS: {init.sponsors}")
+def _build_dossier(
+    obj,
+    fields: list[tuple[str, str]],
+    enrichments: list[Enrichment] | None = None,
+    source_filter: dict[str, int] | None = None,
+    header: list[str] | None = None,
+) -> str:
+    """Build a dossier string from an object's attributes and enrichment data.
 
-    # Include team_page enrichment
-    for e in enrichments:
-        if e.source_type == "team_page":
-            sections.append(f"\n--- TEAM PAGE DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
-            sections.append(e.summary or e.raw_text[:5000])
-        elif e.source_type == "website":
-            sections.append(f"\n--- WEBSITE DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
-            sections.append(e.summary or e.raw_text[:3000])
+    Args:
+        obj: ORM object (Initiative or Project) to read attributes from.
+        fields: List of (label, attr_name) pairs. For bool attrs, the label is
+            used as-is when True (e.g. ``("GITHUB CI/CD: Present", "github_ci_present")``).
+        enrichments: Optional enrichment records to include.
+        source_filter: If given, only include enrichments whose source_type is a key,
+            with the value being the max text length. ``None`` means include all.
+        header: Initial header lines (e.g. ``["INITIATIVE: Foo", "UNIVERSITY: TUM"]``).
+    """
+    sections: list[str] = list(header or [])
+    for label, attr in fields:
+        val = getattr(obj, attr, None)
+        if val:
+            if isinstance(val, bool):
+                sections.append(label)
+            else:
+                sections.append(f"{label}: {val}")
+
+    if enrichments is not None:
+        for e in enrichments:
+            if source_filter is not None and e.source_type not in source_filter:
+                continue
+            max_len = (source_filter or {}).get(e.source_type, 5000)
+            sections.append(f"\n--- {e.source_type.upper()} DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
+            sections.append(e.summary or e.raw_text[:max_len])
 
     return "\n".join(sections)
+
+
+def _initiative_header(init: Initiative) -> list[str]:
+    return [f"INITIATIVE: {init.name}", f"UNIVERSITY: {init.uni}"]
+
+
+# Dimension-specific field specs: (label, attribute_name)
+_TEAM_FIELDS: list[tuple[str, str]] = [
+    ("DESCRIPTION", "description"),
+    ("TEAM SIZE", "team_size"),
+    ("MEMBER COUNT", "member_count"),
+    ("MEMBER EXAMPLES", "member_examples"),
+    ("MEMBER ROLES", "member_roles"),
+    ("LINKEDIN", "linkedin"),
+    ("LINKEDIN HITS", "linkedin_hits"),
+    ("KEY ROLES (DD)", "dd_key_roles"),
+    ("REFERENCES COUNT", "dd_references_count"),
+    ("COMPETITIONS", "competitions"),
+    ("SPONSORS", "sponsors"),
+]
+
+_TECH_FIELDS: list[tuple[str, str]] = [
+    ("DESCRIPTION", "description"),
+    ("TECHNOLOGY DOMAINS", "technology_domains"),
+    ("GITHUB ORG", "github_org"),
+    ("KEY REPOS", "key_repos"),
+    ("GITHUB REPOS", "github_repo_count"),
+    ("GITHUB CONTRIBUTORS", "github_contributors"),
+    ("GITHUB COMMITS (90d)", "github_commits_90d"),
+    ("GITHUB CI/CD: Present", "github_ci_present"),
+    ("HUGGINGFACE MODEL HITS", "huggingface_model_hits"),
+    ("OPENALEX HITS", "openalex_hits"),
+    ("SEMANTIC SCHOLAR HITS", "semantic_scholar_hits"),
+    ("RESEARCHGATE HITS", "researchgate_hits"),
+]
+
+_OPPORTUNITY_FIELDS: list[tuple[str, str]] = [
+    ("SECTOR", "sector"),
+    ("MODE", "mode"),
+    ("DESCRIPTION", "description"),
+    ("MANUAL RELEVANCE RATING", "relevance"),
+    ("EMAIL", "email"),
+    ("LINKEDIN", "linkedin"),
+    ("WEBSITE", "website"),
+    ("TEAM SIZE", "team_size"),
+    ("TECHNOLOGY DOMAINS", "technology_domains"),
+    ("MARKET DOMAINS", "market_domains"),
+    ("CATEGORIES", "categories"),
+    ("SPONSORS & PARTNERS", "sponsors"),
+    ("COMPETITIONS & EVENTS", "competitions"),
+    ("DUE DILIGENCE: Flagged as investable", "dd_is_investable"),
+    ("MEMBER COUNT", "member_count"),
+    ("GITHUB REPOS", "github_repo_count"),
+]
+
+
+def build_team_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
+    """Assemble team-relevant data for the Team dimension LLM call."""
+    return _build_dossier(
+        init, _TEAM_FIELDS,
+        enrichments=enrichments,
+        source_filter={"team_page": 5000, "website": 3000},
+        header=_initiative_header(init),
+    )
 
 
 def build_tech_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
     """Assemble tech-relevant data for the Tech dimension LLM call."""
-    sections: list[str] = [
-        f"INITIATIVE: {init.name}",
-        f"UNIVERSITY: {init.uni}",
-    ]
-    if init.description:
-        sections.append(f"DESCRIPTION: {init.description}")
-    if init.technology_domains:
-        sections.append(f"TECHNOLOGY DOMAINS: {init.technology_domains}")
-    if init.github_org:
-        sections.append(f"GITHUB ORG: {init.github_org}")
-    if init.key_repos:
-        sections.append(f"KEY REPOS: {init.key_repos}")
-    if init.github_repo_count:
-        sections.append(f"GITHUB REPOS: {init.github_repo_count}")
-    if init.github_contributors:
-        sections.append(f"GITHUB CONTRIBUTORS: {init.github_contributors}")
-    if init.github_commits_90d:
-        sections.append(f"GITHUB COMMITS (90d): {init.github_commits_90d}")
-    if init.github_ci_present:
-        sections.append("GITHUB CI/CD: Present")
-    if init.huggingface_model_hits:
-        sections.append(f"HUGGINGFACE MODEL HITS: {init.huggingface_model_hits}")
-    if init.openalex_hits:
-        sections.append(f"OPENALEX HITS: {init.openalex_hits}")
-    if init.semantic_scholar_hits:
-        sections.append(f"SEMANTIC SCHOLAR HITS: {init.semantic_scholar_hits}")
-    if init.researchgate_hits:
-        sections.append(f"RESEARCHGATE HITS: {init.researchgate_hits}")
-
-    # Include github enrichment
-    for e in enrichments:
-        if e.source_type == "github":
-            sections.append(f"\n--- GITHUB DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
-            sections.append(e.summary or e.raw_text[:5000])
-
-    return "\n".join(sections)
+    return _build_dossier(
+        init, _TECH_FIELDS,
+        enrichments=enrichments,
+        source_filter={"github": 5000},
+        header=_initiative_header(init),
+    )
 
 
 def build_full_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
     """Assemble full dossier for the Opportunity dimension (needs big picture)."""
-    sections: list[str] = [
-        f"INITIATIVE: {init.name}",
-        f"UNIVERSITY: {init.uni}",
-    ]
-    if init.sector:
-        sections.append(f"SECTOR: {init.sector}")
-    if init.mode:
-        sections.append(f"MODE: {init.mode}")
-    if init.description:
-        sections.append(f"DESCRIPTION: {init.description}")
-    if init.relevance:
-        sections.append(f"MANUAL RELEVANCE RATING: {init.relevance}")
-    if init.email:
-        sections.append(f"EMAIL: {init.email}")
-    if init.linkedin:
-        sections.append(f"LINKEDIN: {init.linkedin}")
-    if init.website:
-        sections.append(f"WEBSITE: {init.website}")
-    if init.team_size:
-        sections.append(f"TEAM SIZE: {init.team_size}")
-    if init.technology_domains:
-        sections.append(f"TECHNOLOGY DOMAINS: {init.technology_domains}")
-    if init.market_domains:
-        sections.append(f"MARKET DOMAINS: {init.market_domains}")
-    if init.categories:
-        sections.append(f"CATEGORIES: {init.categories}")
-    if init.sponsors:
-        sections.append(f"SPONSORS & PARTNERS: {init.sponsors}")
-    if init.competitions:
-        sections.append(f"COMPETITIONS & EVENTS: {init.competitions}")
-    if init.dd_is_investable:
-        sections.append("DUE DILIGENCE: Flagged as investable")
-    if init.member_count:
-        sections.append(f"MEMBER COUNT: {init.member_count}")
-    if init.github_repo_count:
-        sections.append(f"GITHUB REPOS: {init.github_repo_count}")
-
-    for e in enrichments:
-        sections.append(f"\n--- {e.source_type.upper()} DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
-        sections.append(e.summary or e.raw_text[:5000])
-
-    return "\n".join(sections)
+    return _build_dossier(
+        init, _OPPORTUNITY_FIELDS,
+        enrichments=enrichments,
+        source_filter=None,  # include all enrichment sources
+        header=_initiative_header(init),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -549,32 +545,35 @@ Respond with ONLY valid JSON:
 """
 
 
+_PROJECT_DOSSIER_FIELDS: list[tuple[str, str]] = [
+    ("DESCRIPTION", "description"),
+    ("WEBSITE", "website"),
+    ("GITHUB", "github_url"),
+    ("TEAM", "team"),
+]
+
+
 def build_project_dossier(project: Project, initiative: Initiative) -> str:
     """Assemble project + parent initiative context into a dossier."""
-    sections: list[str] = [
+    header = [
         f"PROJECT: {project.name}",
         f"PARENT INITIATIVE: {initiative.name}",
         f"UNIVERSITY: {initiative.uni}",
     ]
-    for val, label in [
-        (initiative.sector, "SECTOR"), (project.description, "DESCRIPTION"),
-        (project.website, "WEBSITE"), (project.github_url, "GITHUB"), (project.team, "TEAM"),
-    ]:
-        if val:
-            sections.append(f"{label}: {val}")
+    if initiative.sector:
+        header.append(f"SECTOR: {initiative.sector}")
+
+    sections: list[str] = [_build_dossier(project, _PROJECT_DOSSIER_FIELDS, header=header)]
 
     if initiative.description and initiative.description != project.description:
         sections.append(f"\nPARENT INITIATIVE DESCRIPTION: {initiative.description}")
     if initiative.sponsors:
         sections.append(f"SPONSORS & PARTNERS: {initiative.sponsors}")
 
-    try:
-        extra = json.loads(project.extra_links_json or "{}")
-        for key, val in extra.items():
-            if val:
-                sections.append(f"{key.upper()}: {val}")
-    except (json.JSONDecodeError, TypeError):
-        pass
+    extra = json_parse(project.extra_links_json)
+    for key, val in extra.items():
+        if val:
+            sections.append(f"{key.upper()}: {val}")
 
     return "\n".join(sections)
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 import threading
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Generator
 
 from sqlalchemy import create_engine, inspect as sa_inspect, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -10,6 +12,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from scout.models import Base
 
 DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def validate_db_name(name: str) -> str:
+    """Strip and validate a database name. Raises ValueError if invalid."""
+    name = name.strip()
+    if not name or not DB_NAME_RE.match(name):
+        raise ValueError("Invalid database name (letters, numbers, hyphens, underscores only)")
+    return name
 
 _lock = threading.Lock()
 _engine = None
@@ -56,6 +66,43 @@ def get_session() -> Session:
             raise RuntimeError("init_db() has not been called")
         factory = _SessionLocal
     return factory()  # type: ignore[misc]
+
+
+@contextmanager
+def session_scope() -> Generator[Session, None, None]:
+    """Context manager providing a transactional session scope.
+
+    Usage (MCP server, scripts, etc.)::
+
+        with session_scope() as session:
+            ...
+    """
+    session = get_session()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def session_generator() -> Generator[Session, None, None]:
+    """Generator-based session suitable for FastAPI ``Depends()``.
+
+    Usage::
+
+        def db_session() -> Generator[Session, None, None]:
+            yield from session_generator()
+    """
+    session = get_session()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def current_db_name() -> str:
