@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -16,6 +16,7 @@ class Initiative(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     uni: Mapped[str] = mapped_column(String(50), default="")
+    faculty: Mapped[str] = mapped_column(String(200), default="")
     sector: Mapped[str] = mapped_column(String(200), default="")
     mode: Mapped[str] = mapped_column(String(50), default="")
     description: Mapped[str] = mapped_column(Text, default="")
@@ -65,6 +66,10 @@ class Initiative(Base):
     linkedin_hits: Mapped[int] = mapped_column(Integer, default=0)
     researchgate_hits: Mapped[int] = mapped_column(Integer, default=0)
 
+    __table_args__ = (
+        Index("ix_initiative_uni", "uni"),
+    )
+
     enrichments: Mapped[list[Enrichment]] = relationship("Enrichment", back_populates="initiative", cascade="all, delete-orphan")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="initiative", cascade="all, delete-orphan")
     projects: Mapped[list[Project]] = relationship("Project", back_populates="initiative", cascade="all, delete-orphan")
@@ -79,6 +84,10 @@ class Enrichment(Base):
     raw_text: Mapped[str] = mapped_column(Text, default="")
     summary: Mapped[str] = mapped_column(Text, default="")
     fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_enrichment_initiative", "initiative_id"),
+    )
 
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="enrichments")
 
@@ -124,6 +133,10 @@ class OutreachScore(Base):
     grade_opportunity_num: Mapped[float] = mapped_column(Float, default=5.0)
     llm_model: Mapped[str] = mapped_column(String(100), default="")
     scored_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_score_initiative_scored", "initiative_id", "scored_at"),
+    )
 
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="scores")
     project: Mapped[Project | None] = relationship("Project", back_populates="scores")

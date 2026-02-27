@@ -188,7 +188,7 @@ def _upsert(session: Session, data: dict, existing: dict[str, Initiative]) -> tu
         # Update text fields if the new data has more info
         for field in ("sector", "mode", "description", "website", "email", "team_page",
                       "team_size", "linkedin", "github_org", "key_repos", "sponsors",
-                      "competitions", "relevance"):
+                      "competitions", "relevance", "faculty"):
             new_val = data.get(field, "")
             old_val = getattr(init, field, "") or ""
             if new_val and (not old_val or (data["sheet_source"] == "spin_off_targets" and field != "relevance")):
@@ -252,6 +252,14 @@ def import_xlsx(file_path: str | Path, session: Session) -> ImportResult:
             updated_count += 1
 
     session.commit()
+
+    # Rebuild FTS index after bulk import
+    try:
+        from scout.services import rebuild_fts
+        rebuild_fts(session)
+        session.commit()
+    except Exception:
+        log.warning("FTS rebuild after import failed (non-fatal)", exc_info=True)
 
     return ImportResult(
         total_imported=new_count + updated_count,

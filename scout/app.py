@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any, Generator
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from scout import services
@@ -138,18 +138,23 @@ async def list_initiatives(
     verdict: str | None = Query(None, description="Comma-separated: reach_out_now, reach_out_soon, monitor, skip, unscored"),
     classification: str | None = Query(None, description="Comma-separated: deep_tech, student_venture, applied_research, student_club, dormant"),
     uni: str | None = Query(None, description="Comma-separated: TUM, LMU, HM"),
+    faculty: str | None = Query(None, description="Comma-separated faculty/department filter"),
     search: str | None = Query(None, description="Free-text search across name, description, and sector"),
     sort_by: str = Query("score", description="Sort field: score, name, uni, verdict, grade_team, grade_tech, grade_opportunity"),
     sort_dir: str = Query("desc", description="asc or desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(200, ge=1, le=500),
+    fields: str | None = Query(None, description="Comma-separated field names for compact mode (e.g. 'id,name,verdict,score')"),
     session: Session = Depends(db_session),
 ):
+    fields_set = {f.strip() for f in fields.split(",") if f.strip()} if fields else None
     items, total = services.query_initiatives(
         session, verdict=verdict, classification=classification,
-        uni=uni, search=search, sort_by=sort_by, sort_dir=sort_dir,
-        page=page, per_page=per_page,
+        uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
+        page=page, per_page=per_page, fields=fields_set,
     )
+    if fields_set:
+        return JSONResponse({"items": items, "total": total})
     return {"items": items, "total": total}
 
 
@@ -169,6 +174,11 @@ async def update_initiative(initiative_id: int, body: InitiativeUpdate, session:
         existing.update(body.custom_fields)
         existing = {k: v for k, v in existing.items() if v is not None}
         init.custom_fields_json = json.dumps(existing)
+    session.flush()
+    try:
+        services.sync_fts_update(session, init)
+    except Exception:
+        log.warning("FTS sync failed for initiative %s", initiative_id, exc_info=True)
     session.commit()
     return services.initiative_detail(init)
 
@@ -426,6 +436,110 @@ async def get_stats(session: Session = Depends(db_session)):
     return services.compute_stats(session)
 
 
+@app.get("/api/aggregations", tags=["Stats"],
+         summary="Analytical aggregations: score distributions, top-N per verdict, grade breakdowns")
+async def get_aggregations(session: Session = Depends(db_session)):
+    return services.compute_aggregations(session)
+
+
+# ---------------------------------------------------------------------------
+# Routes: Embeddings & Similarity
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/embed", tags=["Enrichment"],
+          summary="Build/rebuild dense embeddings for all initiatives (requires model2vec)")
+async def embed_all(session: Session = Depends(db_session)):
+    try:
+        from scout.embedder import embed_all as _embed_all
+        count = _embed_all(session)
+        return {"ok": True, "embedded": count}
+    except ImportError:
+        raise HTTPException(501, "model2vec not installed. Run: pip install model2vec")
+
+
+@app.get("/api/similar/{initiative_id}", tags=["Initiatives"],
+         summary="Find initiatives semantically similar to a given one")
+async def find_similar_endpoint(
+    initiative_id: int,
+    limit: int = Query(10, ge=1, le=100),
+    session: Session = Depends(db_session),
+):
+    _get_or_404(session, Initiative, initiative_id, "Initiative")
+    try:
+        from scout.embedder import find_similar
+        results = find_similar(initiative_id=initiative_id, top_k=limit)
+    except ImportError:
+        raise HTTPException(501, "model2vec not installed. Run: pip install model2vec")
+    if not results:
+        return {"results": [], "hint": "No embeddings found. Run POST /api/embed first."}
+    # Enrich results with names
+    ids = [r[0] for r in results]
+    inits = session.execute(
+        select(Initiative.id, Initiative.name, Initiative.uni)
+        .where(Initiative.id.in_(ids))
+    ).all()
+    name_map = {r.id: (r.name, r.uni) for r in inits}
+    return {"results": [
+        {"id": rid, "name": name_map.get(rid, ("?", "?"))[0],
+         "uni": name_map.get(rid, ("?", "?"))[1], "similarity": score}
+        for rid, score in results
+    ]}
+
+
+@app.get("/api/search/semantic", tags=["Initiatives"],
+         summary="Semantic text search across initiatives using dense embeddings")
+async def semantic_search(
+    q: str = Query(..., description="Search query text"),
+    limit: int = Query(10, ge=1, le=100),
+    uni: str | None = Query(None, description="Pre-filter by uni"),
+    verdict: str | None = Query(None, description="Pre-filter by verdict"),
+    session: Session = Depends(db_session),
+):
+    try:
+        from scout.embedder import find_similar
+    except ImportError:
+        raise HTTPException(501, "model2vec not installed. Run: pip install model2vec")
+
+    # Optional SQL pre-filter to build ID mask
+    id_mask = None
+    if uni or verdict:
+        q_filter = select(Initiative.id)
+        if uni:
+            us = {u.strip().upper() for u in uni.split(",")}
+            q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
+        if verdict:
+            from scout.services import _latest_score_subquery
+            from sqlalchemy import and_
+            ls = _latest_score_subquery()
+            vs = {v.strip().lower() for v in verdict.split(",")}
+            q_filter = q_filter.join(
+                ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
+            ).where(ls.c.verdict.in_(vs))
+        rows = session.execute(q_filter).scalars().all()
+        id_mask = set(rows)
+        if not id_mask:
+            return {"results": []}
+
+    results = find_similar(query_text=q, top_k=limit, id_mask=id_mask)
+    if not results:
+        return {"results": [], "hint": "No embeddings found. Run POST /api/embed first."}
+
+    ids = [r[0] for r in results]
+    inits = session.execute(
+        select(Initiative.id, Initiative.name, Initiative.uni, Initiative.description)
+        .where(Initiative.id.in_(ids))
+    ).all()
+    info_map = {r.id: r for r in inits}
+    return {"results": [
+        {"id": rid, "name": getattr(info_map.get(rid), "name", "?"),
+         "uni": getattr(info_map.get(rid), "uni", "?"),
+         "description": (getattr(info_map.get(rid), "description", "") or "")[:200],
+         "similarity": score}
+        for rid, score in results
+    ]}
+
+
 # ---------------------------------------------------------------------------
 # Routes: Reset
 # ---------------------------------------------------------------------------
@@ -437,6 +551,10 @@ async def reset_db(session: Session = Depends(db_session)):
     session.execute(delete(Enrichment))
     session.execute(delete(Project))
     session.execute(delete(Initiative))
+    try:
+        session.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
+    except Exception:
+        log.debug("FTS deleteall skipped (table may not exist)")
     session.commit()
     return {"ok": True}
 

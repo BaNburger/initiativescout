@@ -12,6 +12,8 @@ from scout.db import (
     create_database, current_db_name, init_db, list_databases,
     session_scope, switch_db, validate_db_name,
 )
+from sqlalchemy import func, select
+
 from scout.models import Initiative, Project
 
 log = logging.getLogger(__name__)
@@ -35,6 +37,10 @@ mcp = FastMCP(
         "QUICK START: get_stats() → get_work_queue() → follow recommended_action for each item. "
         "AUTONOMOUS: get_work_queue() → enrich_initiative(id) → score_initiative_tool(id) → repeat until queue empty. "
         "NEW DATA: create_initiative(name, uni, website) → enrich_initiative(id) → score_initiative_tool(id). "
+        "ANALYTICS: get_stats() → get_aggregations() for score distributions and top-N by verdict. "
+        "SIMILARITY: embed_all_tool() → find_similar_initiatives(query='...') for semantic search. "
+        "COMPACT: list_initiatives(fields='id,name,verdict,score') to reduce token usage for large lists. "
+        "SEARCH: list_initiatives(search='...') uses FTS5 ranked search across name, description, sector, domains, faculty. "
         "ERRORS: All errors return {error, error_code, retryable}. Retry if retryable=true."
     ),
     lifespan=scout_lifespan,
@@ -98,15 +104,18 @@ def scout_overview() -> str:
         "workflow": [
             "0. list_scout_databases() — see available databases. select_scout_database(name) to switch.",
             "1. get_stats() — see total, enriched, scored counts.",
-            "2. get_work_queue() — get next initiatives needing enrichment or scoring.",
-            "3. create_initiative(name, uni, ...) — add new initiatives to track.",
-            "4. enrich_initiative(id) — fetch fresh web/GitHub data.",
-            "5. score_initiative_tool(id) — score 3 dimensions in parallel.",
-            "6. list_initiatives(verdict, ...) — browse and filter results.",
-            "7. get_initiative(id) — full details with enrichments and scores.",
-            "8. update_initiative(id, ...) — correct or add information.",
-            "9. list_scoring_prompts() / update_scoring_prompt() — customize dimension prompts.",
-            "10. delete_initiative(id) — remove duplicates or irrelevant entries.",
+            "2. get_aggregations() — score distributions by uni/faculty, top-N per verdict, grade breakdowns.",
+            "3. get_work_queue() — get next initiatives needing enrichment or scoring.",
+            "4. create_initiative(name, uni, ...) — add new initiatives to track.",
+            "5. enrich_initiative(id) — fetch fresh web/GitHub data.",
+            "6. score_initiative_tool(id) — score 3 dimensions in parallel.",
+            "7. list_initiatives(verdict, ..., fields='id,name,verdict,score') — browse/filter/compact mode.",
+            "8. get_initiative(id) — full details with enrichments and scores.",
+            "9. embed_all_tool() — build dense embeddings for similarity search.",
+            "10. find_similar_initiatives(query='...') — semantic similarity search.",
+            "11. update_initiative(id, ...) — correct or add information.",
+            "12. list_scoring_prompts() / update_scoring_prompt() — customize dimension prompts.",
+            "13. delete_initiative(id) — remove duplicates or irrelevant entries.",
         ],
         "autonomous_workflow": {
             "description": "For AI agents processing initiatives autonomously.",
@@ -119,10 +128,19 @@ def scout_overview() -> str:
             ],
             "new_data_flow": "create_initiative(name, uni, website) → enrich_initiative(id) → score_initiative_tool(id)",
         },
+        "search_modes": {
+            "keyword": "list_initiatives(search='...') — FTS5-ranked full-text search across name, description, sector, domains, faculty.",
+            "semantic": "find_similar_initiatives(query='...') — Dense embedding similarity via model2vec. Run embed_all_tool() first.",
+            "similar": "find_similar_initiatives(initiative_id=N) — Find initiatives most similar to a given one.",
+            "hybrid": "find_similar_initiatives(query='...', uni='TUM', verdict='reach_out_now') — SQL pre-filter + semantic ranking.",
+            "compact": "list_initiatives(fields='id,name,verdict,score') — Return only requested fields to save tokens.",
+        },
         "performance_expectations": {
             "enrichment": "2-5 seconds per initiative (web scraping).",
             "scoring": "5-15 seconds per initiative (3 parallel LLM calls).",
-            "listing": "Instant (SQL query).",
+            "listing": "Instant (SQL query with FTS5).",
+            "embedding": "~1 second for 200 initiatives (model2vec, local).",
+            "similarity": "Instant (numpy dot product on pre-computed vectors).",
         },
         "error_handling": {
             "format": "Errors return {error, error_code, retryable}.",
@@ -131,6 +149,7 @@ def scout_overview() -> str:
                 "LLM_ERROR": "LLM API call failed or returned bad output. Check retryable flag.",
                 "ALREADY_EXISTS": "Duplicate entity (database or custom column key).",
                 "VALIDATION_ERROR": "Invalid input (e.g. bad database name format).",
+                "DEPENDENCY_MISSING": "Optional dependency not installed (e.g. model2vec for embeddings).",
             },
         },
         "verdicts": {
@@ -152,14 +171,17 @@ def scout_overview() -> str:
 @mcp.tool()
 def list_initiatives(
     verdict: str | None = None, classification: str | None = None,
-    uni: str | None = None, search: str | None = None,
+    uni: str | None = None, faculty: str | None = None,
+    search: str | None = None,
     sort_by: str = "score", sort_dir: str = "desc", limit: int = 50,
+    fields: str | None = None,
 ) -> list[dict]:
     """List and filter student initiatives.
 
     WHAT: Returns initiative summaries with scores, classifications, and verdicts.
     WHEN: Use to browse, search, or filter the database. For autonomous processing, use get_work_queue() instead.
-    RESPONSE: Each item includes id, name, uni, verdict, score, classification, enriched status, and grade breakdown.
+    RESPONSE: Each item includes id, name, uni, faculty, verdict, score, classification, enriched status, and grade breakdown.
+    COMPACT: Use fields="id,name,verdict,score" to return only those keys (saves tokens for large lists).
 
     Args:
         verdict: Filter by outreach verdict. Comma-separated from:
@@ -167,16 +189,20 @@ def list_initiatives(
         classification: Filter by type. Comma-separated from:
                         deep_tech, student_venture, applied_research, student_club, dormant.
         uni: Filter by university. Comma-separated, e.g. "TUM,LMU".
-        search: Free-text search across name, description, and sector.
-        sort_by: Sort field: score, name, uni, verdict, grade_team, grade_tech, grade_opportunity.
+        faculty: Filter by faculty/department. Comma-separated.
+        search: Free-text search across name, description, sector, and more (FTS5-ranked).
+        sort_by: Sort field: score, name, uni, faculty, verdict, grade_team, grade_tech, grade_opportunity.
         sort_dir: Sort direction: asc or desc.
         limit: Max results (default 50, max 500).
+        fields: Comma-separated field names for compact mode, e.g. "id,name,verdict,score".
+                Only returns the requested fields from each item (must be valid summary fields).
     """
+    fields_set = {f.strip() for f in fields.split(",") if f.strip()} if fields else None
     with session_scope() as session:
         items, _ = services.query_initiatives(
             session, verdict=verdict, classification=classification,
-            uni=uni, search=search, sort_by=sort_by, sort_dir=sort_dir,
-            page=1, per_page=max(1, min(limit, 500)),
+            uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
+            page=1, per_page=max(1, min(limit, 500)), fields=fields_set,
         )
         return items
 
@@ -199,7 +225,7 @@ def get_initiative(initiative_id: int) -> dict:
 @mcp.tool()
 def create_initiative(
     name: str, uni: str,
-    sector: str | None = None, mode: str | None = None,
+    faculty: str | None = None, sector: str | None = None, mode: str | None = None,
     description: str | None = None, website: str | None = None,
     email: str | None = None, relevance: str | None = None,
     team_page: str | None = None, team_size: str | None = None,
@@ -225,7 +251,7 @@ def create_initiative(
     """
     with session_scope() as session:
         init = services.create_initiative(
-            session, name=name, uni=uni, sector=sector, mode=mode,
+            session, name=name, uni=uni, faculty=faculty, sector=sector, mode=mode,
             description=description, website=website, email=email,
             relevance=relevance, team_page=team_page, team_size=team_size,
             linkedin=linkedin, github_org=github_org, key_repos=key_repos,
@@ -247,6 +273,7 @@ def delete_initiative(initiative_id: int) -> dict:
     with session_scope() as session:
         if not services.delete_initiative(session, initiative_id):
             return _error(f"Initiative {initiative_id} not found", "NOT_FOUND")
+        session.commit()
         return {"ok": True, "deleted_initiative_id": initiative_id}
 
 
@@ -275,7 +302,8 @@ def get_work_queue(limit: int = 10) -> dict:
 @mcp.tool()
 def update_initiative(
     initiative_id: int,
-    name: str | None = None, uni: str | None = None, sector: str | None = None,
+    name: str | None = None, uni: str | None = None, faculty: str | None = None,
+    sector: str | None = None,
     mode: str | None = None, description: str | None = None, website: str | None = None,
     email: str | None = None, relevance: str | None = None, team_page: str | None = None,
     team_size: str | None = None, linkedin: str | None = None, github_org: str | None = None,
@@ -293,13 +321,18 @@ def update_initiative(
         if err:
             return err
         updates = {k: v for k, v in {
-            "name": name, "uni": uni, "sector": sector, "mode": mode,
+            "name": name, "uni": uni, "faculty": faculty, "sector": sector, "mode": mode,
             "description": description, "website": website, "email": email,
             "relevance": relevance, "team_page": team_page, "team_size": team_size,
             "linkedin": linkedin, "github_org": github_org, "key_repos": key_repos,
             "sponsors": sponsors, "competitions": competitions,
         }.items() if v is not None}
         services.apply_updates(init, updates, services.UPDATABLE_FIELDS)
+        session.flush()
+        try:
+            services.sync_fts_update(session, init)
+        except Exception:
+            log.warning("FTS sync failed for initiative %s", initiative_id, exc_info=True)
         session.commit()
         return services.initiative_detail(init)
 
@@ -385,8 +418,121 @@ async def score_initiative_tool(initiative_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tools: Similarity & Embeddings
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def find_similar_initiatives(
+    query: str | None = None, initiative_id: int | None = None,
+    uni: str | None = None, verdict: str | None = None,
+    limit: int = 10,
+) -> dict:
+    """Find initiatives similar to a query or another initiative using semantic embeddings.
+
+    WHAT: Semantic similarity search using dense embeddings (model2vec). Returns ranked results
+        with similarity scores. Supports hybrid mode: SQL pre-filters + semantic ranking.
+    WHEN: Use to discover related initiatives, find thematic clusters, or answer
+        "show me initiatives similar to X".
+    PREREQ: Run embed_all() first to build embeddings. Returns empty if no embeddings exist.
+    NEXT: get_initiative(id) to inspect top results.
+
+    Args:
+        query: Free-text search query (e.g. "robotics research lab"). Either query or initiative_id required.
+        initiative_id: Find initiatives similar to this one. Either query or initiative_id required.
+        uni: Pre-filter by university before ranking (comma-separated).
+        verdict: Pre-filter by verdict before ranking (comma-separated).
+        limit: Max results (default 10, max 100).
+    """
+    try:
+        from scout.embedder import find_similar
+    except ImportError:
+        return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
+
+    with session_scope() as session:
+        # Build optional ID mask from SQL filters
+        id_mask = None
+        if uni or verdict:
+            from sqlalchemy import and_
+            q_filter = select(Initiative.id)
+            if uni:
+                us = {u.strip().upper() for u in uni.split(",")}
+                q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
+            if verdict:
+                ls = services._latest_score_subquery()
+                vs = {v.strip().lower() for v in verdict.split(",")}
+                q_filter = q_filter.join(
+                    ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
+                ).where(ls.c.verdict.in_(vs))
+            rows = session.execute(q_filter).scalars().all()
+            id_mask = set(rows)
+            if not id_mask:
+                return {"results": [], "hint": "No initiatives match the pre-filters."}
+
+        try:
+            results = find_similar(
+                query_text=query, initiative_id=initiative_id,
+                top_k=max(1, min(limit, 100)), id_mask=id_mask,
+            )
+        except ImportError:
+            return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
+
+        if not results:
+            return {"results": [], "hint": "No embeddings found. Run embed_all() first."}
+
+        # Enrich with names
+        ids = [r[0] for r in results]
+        inits = session.execute(
+            select(Initiative.id, Initiative.name, Initiative.uni)
+            .where(Initiative.id.in_(ids))
+        ).all()
+        name_map = {r.id: (r.name, r.uni) for r in inits}
+
+        return {"results": [
+            {"id": rid, "name": name_map.get(rid, ("?", "?"))[0],
+             "uni": name_map.get(rid, ("?", "?"))[1], "similarity": score}
+            for rid, score in results
+        ]}
+
+
+@mcp.tool()
+def embed_all_tool() -> dict:
+    """Build or rebuild dense embeddings for all initiatives.
+
+    WHAT: Encodes all initiatives into dense vectors using model2vec (local, ~15MB model).
+        Embeddings are stored as .npy files alongside the database. Takes ~1 second for 200 initiatives.
+    WHEN: Run once after importing data, or after significant enrichment changes.
+        Re-run is safe (overwrites previous embeddings).
+    NEXT: Use find_similar_initiatives() for semantic search.
+    """
+    try:
+        from scout.embedder import embed_all
+    except ImportError:
+        return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
+
+    with session_scope() as session:
+        try:
+            count = embed_all(session)
+        except ImportError:
+            return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
+        return {"ok": True, "embedded": count, "hint": "Use find_similar_initiatives() for semantic search."}
+
+
+# ---------------------------------------------------------------------------
 # Tools: Stats
 # ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_aggregations() -> dict:
+    """Get analytical aggregations for zoom-out analysis.
+
+    WHAT: Score distributions by uni/faculty, top-10 per verdict, grade distributions, unprocessed counts.
+    WHEN: Use to zoom out before drilling in. Call after get_stats() for a deeper analytical overview.
+    NEXT: list_initiatives() with filters to investigate interesting segments.
+    """
+    with session_scope() as session:
+        return services.compute_aggregations(session)
 
 
 @mcp.tool()

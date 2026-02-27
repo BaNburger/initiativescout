@@ -57,6 +57,20 @@ def _migrate_existing_db(engine) -> None:
             conn.execute(text(
                 "ALTER TABLE initiatives ADD COLUMN custom_fields_json TEXT DEFAULT '{}'"
             ))
+    if "faculty" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE initiatives ADD COLUMN faculty VARCHAR(200) DEFAULT ''"
+            ))
+    # Ensure performance indexes exist (idempotent)
+    with engine.begin() as conn:
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS ix_initiative_uni ON initiatives(uni)",
+            "CREATE INDEX IF NOT EXISTS ix_enrichment_initiative ON enrichments(initiative_id)",
+            "CREATE INDEX IF NOT EXISTS ix_score_initiative_scored ON outreach_scores(initiative_id, scored_at)",
+        ):
+            conn.execute(text(stmt))
+    _ensure_fts_table(engine)
     _seed_scoring_prompts(engine)
 
 
@@ -130,6 +144,22 @@ def create_database(name: str) -> None:
     if db_path.exists():
         raise ValueError(f"Database '{name}' already exists")
     init_db(db_path)
+
+
+def _ensure_fts_table(engine) -> None:
+    """Create and populate the FTS5 full-text search table if it doesn't exist."""
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS initiative_fts USING fts5(
+                name, description, sector, technology_domains,
+                categories, market_domains, faculty,
+                content='initiatives', content_rowid='id'
+            )
+        """))
+        # Only rebuild if FTS table is empty (first creation or after reset)
+        count = conn.execute(text("SELECT COUNT(*) FROM initiative_fts")).scalar()
+        if count == 0:
+            conn.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
 
 
 def _seed_scoring_prompts(engine) -> None:

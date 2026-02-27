@@ -20,6 +20,7 @@ class InitiativeOut(_GradesMixin):
     id: int
     name: str
     uni: str
+    faculty: str = ""
     sector: str
     mode: str
     description: str
@@ -89,6 +90,7 @@ class ProjectUpdate(BaseModel):
 class InitiativeUpdate(BaseModel):
     name: str | None = None
     uni: str | None = None
+    faculty: str | None = None
     sector: str | None = None
     mode: str | None = None
     description: str | None = None

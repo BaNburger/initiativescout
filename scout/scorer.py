@@ -212,6 +212,8 @@ class LLMClient:
                     system=system,
                     messages=[{"role": "user", "content": user}],
                 )
+                if not response.content:
+                    raise LLMCallError("LLM returned empty response", retryable=True)
                 text = response.content[0].text.strip()
                 m = re.search(r'```(?:json)?\s*(\{.*\})\s*```', text, re.DOTALL)
                 if m:
@@ -226,6 +228,8 @@ class LLMClient:
                         {"role": "user", "content": user},
                     ],
                 )
+                if not response.choices:
+                    raise LLMCallError("LLM returned empty response", retryable=True)
                 text = response.choices[0].message.content or "{}"
         except LLMCallError:
             raise

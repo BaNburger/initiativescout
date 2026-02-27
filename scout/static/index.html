@@ -58,6 +58,9 @@
     <option value="LMU">LMU</option>
     <option value="HM">HM</option>
   </select>
+  <select class="filter-select" id="filter-faculty" onchange="applyFilters()">
+    <option value="">All Faculties</option>
+  </select>
   <input class="search-input" id="filter-search" type="text" placeholder="Search..." oninput="applyFilters()">
   <button class="btn-clear-filters" id="btn-clear-filters" onclick="clearFilters()">Clear filters</button>
 </div>

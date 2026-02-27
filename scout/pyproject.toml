@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=1.50.0"]
+embeddings = ["model2vec>=0.4.0"]
 
 [tool.setuptools]
 packages = ["scout"]

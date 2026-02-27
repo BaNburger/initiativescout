@@ -289,6 +289,13 @@ textarea.inline-input { resize: vertical; min-height: 60px; }
   .detail-panel { flex: 1; }
   .stats-bar { flex-wrap: wrap; gap: 10px; }
 }
+/* Similar initiatives list */
+.similar-list { list-style: none; padding: 0; }
+.similar-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
+.similar-item:hover { background: var(--surface-2); }
+.similar-name { color: var(--ink); font-weight: 500; }
+.similar-meta { color: var(--ink-dim); font-size: 12px; }
+
 @media (max-width: 600px) {
   .list-panel { flex: 0 0 60%; }
   .header { padding: 10px 12px; }

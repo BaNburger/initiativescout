@@ -1,11 +1,12 @@
 """Shared business logic for Scout API and MCP server."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
 
-from sqlalchemy import and_, case, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from scout.enricher import enrich_github, enrich_team_page, enrich_website
@@ -52,7 +53,7 @@ DETAIL_FIELDS = (
 )
 
 UPDATABLE_FIELDS = (
-    "name", "uni", "sector", "mode", "description", "website", "email",
+    "name", "uni", "faculty", "sector", "mode", "description", "website", "email",
     "relevance", "team_page", "team_size", "linkedin", "github_org",
     "key_repos", "sponsors", "competitions",
 )
@@ -62,6 +63,18 @@ PROJECT_SCORE_KEYS = (
     "grade_team", "grade_team_num", "grade_tech", "grade_tech_num",
     "grade_opportunity", "grade_opportunity_num",
 )
+
+# Fields allowed in compact list mode (the `fields` parameter).
+COMPACT_FIELDS = {
+    "id", "name", "uni", "faculty", "sector", "mode", "description",
+    "website", "email", "relevance", "sheet_source",
+    "enriched", "enriched_at",
+    "verdict", "score", "classification",
+    "grade_team", "grade_tech", "grade_opportunity",
+    "technology_domains", "categories", "member_count",
+    "outreach_now_score", "venture_upside_score",
+    "custom_fields",
+}
 
 # ---------------------------------------------------------------------------
 # Serialization helpers
@@ -100,7 +113,7 @@ def latest_score_fields(scores: list[OutreachScore]) -> dict[str, Any]:
 
 # Base initiative fields read directly from the Initiative ORM object.
 _SUMMARY_BASE_FIELDS = (
-    "id", "name", "uni", "sector", "mode", "description",
+    "id", "name", "uni", "faculty", "sector", "mode", "description",
     "website", "email", "relevance", "sheet_source",
 )
 _SUMMARY_EXTRA_FIELDS = (
@@ -167,6 +180,65 @@ def project_summary(proj: Project) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# FTS5 full-text search helpers
+# ---------------------------------------------------------------------------
+
+
+def sync_fts_insert(session: Session, init: Initiative) -> None:
+    """Insert a single initiative into the FTS index."""
+    session.execute(text("""
+        INSERT INTO initiative_fts(rowid, name, description, sector,
+            technology_domains, categories, market_domains, faculty)
+        VALUES (:id, :name, :description, :sector,
+            :technology_domains, :categories, :market_domains, :faculty)
+    """), {
+        "id": init.id, "name": init.name or "", "description": init.description or "",
+        "sector": init.sector or "", "technology_domains": init.technology_domains or "",
+        "categories": init.categories or "", "market_domains": init.market_domains or "",
+        "faculty": init.faculty or "",
+    })
+
+
+def sync_fts_delete(session: Session, initiative_id: int) -> None:
+    """Remove a single initiative from the FTS index."""
+    session.execute(text(
+        "INSERT INTO initiative_fts(initiative_fts, rowid, name, description, sector, "
+        "technology_domains, categories, market_domains, faculty) "
+        "SELECT 'delete', id, COALESCE(name,''), COALESCE(description,''), "
+        "COALESCE(sector,''), COALESCE(technology_domains,''), "
+        "COALESCE(categories,''), COALESCE(market_domains,''), "
+        "COALESCE(faculty,'') FROM initiatives WHERE id = :id"
+    ), {"id": initiative_id})
+
+
+def sync_fts_update(session: Session, init: Initiative) -> None:
+    """Update FTS index for a single initiative (delete + re-insert)."""
+    sync_fts_delete(session, init.id)
+    sync_fts_insert(session, init)
+
+
+def rebuild_fts(session: Session) -> None:
+    """Full rebuild of the FTS index from the initiatives table."""
+    session.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
+
+
+def _fts_search(session: Session, query: str) -> list[int] | None:
+    """Run FTS5 MATCH search, return ordered IDs by BM25 rank. None on error."""
+    try:
+        # Strip control characters and escape FTS5 special chars
+        safe_q = "".join(c for c in query if c >= " " or c == "\t")
+        safe_q = safe_q.replace('"', '""')
+        rows = session.execute(text(
+            'SELECT rowid FROM initiative_fts WHERE initiative_fts MATCH :q '
+            'ORDER BY rank LIMIT 500'
+        ), {"q": f'"{safe_q}"'}).all()
+        return [r[0] for r in rows]
+    except Exception:
+        log.debug("FTS5 search failed for query %r, falling back to LIKE", query)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # SQL-based list query
 # ---------------------------------------------------------------------------
 
@@ -210,11 +282,13 @@ def query_initiatives(
     verdict: str | None = None,
     classification: str | None = None,
     uni: str | None = None,
+    faculty: str | None = None,
     search: str | None = None,
     sort_by: str = "score",
     sort_dir: str = "desc",
     page: int = 1,
     per_page: int = 200,
+    fields: set[str] | None = None,
 ) -> tuple[list[dict], int]:
     """Return (items, total) with filtering, sorting, and pagination in SQL."""
     ls = _latest_score_subquery()
@@ -276,13 +350,25 @@ def query_initiatives(
         us = {u.strip().upper() for u in uni.split(",")}
         base = base.where(func.upper(Initiative.uni).in_(us))
 
+    if faculty:
+        fs = {f.strip().lower() for f in faculty.split(",")}
+        base = base.where(func.lower(Initiative.faculty).in_(fs))
+
     if search:
-        q = f"%{search.lower()}%"
-        base = base.where(or_(
-            func.lower(Initiative.name).like(q),
-            func.lower(Initiative.description).like(q),
-            func.lower(Initiative.sector).like(q),
-        ))
+        fts_ids = _fts_search(session, search)
+        if fts_ids is not None:
+            if not fts_ids:
+                return [], 0  # FTS found nothing
+            base = base.where(Initiative.id.in_(fts_ids))
+        else:
+            # LIKE fallback if FTS5 table missing or query fails
+            escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            q = f"%{escaped}%"
+            base = base.where(or_(
+                func.lower(Initiative.name).like(q, escape="\\"),
+                func.lower(Initiative.description).like(q, escape="\\"),
+                func.lower(Initiative.sector).like(q, escape="\\"),
+            ))
 
     # -- Count total before pagination --
     total = session.execute(select(func.count()).select_from(base.subquery())).scalar() or 0
@@ -299,6 +385,7 @@ def query_initiatives(
         "score": func.coalesce(ls.c.score, -1),
         "name": func.lower(Initiative.name),
         "uni": func.lower(Initiative.uni),
+        "faculty": func.lower(Initiative.faculty),
         "verdict": verdict_order,
         "grade_team": func.coalesce(ls.c.grade_team_num, 99),
         "grade_tech": func.coalesce(ls.c.grade_tech_num, 99),
@@ -330,6 +417,10 @@ def query_initiatives(
             score_fields=score_fields,
         ))
 
+    if fields:
+        allowed = fields & COMPACT_FIELDS
+        items = [{k: v for k, v in item.items() if k in allowed} for item in items]
+
     return items, total
 
 
@@ -355,6 +446,10 @@ def create_initiative(session: Session, **kwargs: Any) -> Initiative:
     init = Initiative(**data)
     session.add(init)
     session.flush()  # assign ID
+    try:
+        sync_fts_insert(session, init)
+    except Exception:
+        log.debug("FTS sync failed on create for %s", init.name)
     return init
 
 
@@ -375,8 +470,11 @@ def delete_initiative(session: Session, initiative_id: int) -> bool:
     init = get_entity(session, Initiative, initiative_id)
     if not init:
         return False
+    try:
+        sync_fts_delete(session, initiative_id)
+    except Exception:
+        log.debug("FTS sync failed on delete for id %d", initiative_id)
     session.delete(init)
-    session.commit()
     return True
 
 
@@ -501,20 +599,29 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
 
 
 async def run_enrichment(session: Session, init: Initiative) -> list[Enrichment]:
-    """Run all enrichers; only delete old enrichments if at least one succeeds.
+    """Run all enrichers in parallel; only delete old enrichments if at least one succeeds.
     Returns new enrichments (caller must commit)."""
+    enrichers = (enrich_website, enrich_team_page, enrich_github)
+    results = await asyncio.gather(*(fn(init) for fn in enrichers), return_exceptions=True)
     new_enrichments: list[Enrichment] = []
-    for enrich_fn in (enrich_website, enrich_team_page, enrich_github):
-        try:
-            result = await enrich_fn(init)
-            if result:
-                new_enrichments.append(result)
-        except Exception as exc:
-            log.warning("Enrichment failed (%s) for %s: %s", enrich_fn.__name__, init.name, exc)
+    for fn, result in zip(enrichers, results):
+        if isinstance(result, Exception):
+            log.warning("Enrichment failed (%s) for %s: %s", fn.__name__, init.name, result)
+        elif result:
+            new_enrichments.append(result)
     if new_enrichments:
         session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
         for e in new_enrichments:
             session.add(e)
+        # Re-embed if embeddings exist (optional dependency)
+        session.flush()  # make new enrichments visible for re-embedding
+        try:
+            from scout.embedder import re_embed_one
+            re_embed_one(session, init)
+        except ImportError:
+            pass
+        except Exception:
+            log.debug("Re-embed failed for %s (non-fatal)", init.name)
     return new_enrichments
 
 
@@ -583,6 +690,74 @@ def compute_stats(session: Session) -> dict:
         "total": total, "enriched": enriched, "scored": scored,
         "by_verdict": by_verdict, "by_classification": by_classification,
         "by_uni": by_uni,
+    }
+
+
+def compute_aggregations(session: Session) -> dict:
+    """Analytical aggregations: score distributions, top-N per verdict, grade breakdowns."""
+    ls = _latest_score_subquery()
+    latest = select(
+        ls.c.initiative_id, ls.c.verdict, ls.c.score, ls.c.classification,
+        ls.c.grade_team, ls.c.grade_team_num,
+        ls.c.grade_tech, ls.c.grade_tech_num,
+        ls.c.grade_opportunity, ls.c.grade_opportunity_num,
+    ).where(ls.c.rn == 1).subquery()
+
+    # Average score by uni
+    score_by_uni = dict(session.execute(
+        select(Initiative.uni, func.round(func.avg(latest.c.score), 2))
+        .join(latest, Initiative.id == latest.c.initiative_id)
+        .where(Initiative.uni != "")
+        .group_by(Initiative.uni)
+    ).all())
+
+    # Average score by faculty
+    score_by_faculty = dict(session.execute(
+        select(Initiative.faculty, func.round(func.avg(latest.c.score), 2))
+        .join(latest, Initiative.id == latest.c.initiative_id)
+        .where(Initiative.faculty != "")
+        .group_by(Initiative.faculty)
+    ).all())
+
+    # Top 10 per verdict
+    top_by_verdict = {}
+    for v in ("reach_out_now", "reach_out_soon", "monitor"):
+        rows = session.execute(
+            select(Initiative.id, Initiative.name, Initiative.uni, latest.c.score)
+            .join(latest, Initiative.id == latest.c.initiative_id)
+            .where(latest.c.verdict == v)
+            .order_by(latest.c.score.desc())
+            .limit(10)
+        ).all()
+        top_by_verdict[v] = [
+            {"id": r[0], "name": r[1], "uni": r[2], "score": r[3]} for r in rows
+        ]
+
+    # Grade distributions
+    grade_dist = {}
+    for dim in ("team", "tech", "opportunity"):
+        col = getattr(latest.c, f"grade_{dim}")
+        rows = session.execute(
+            select(col, func.count()).where(col.isnot(None)).group_by(col)
+        ).all()
+        grade_dist[dim] = dict(rows)
+
+    # Unprocessed counts
+    total = session.execute(select(func.count(Initiative.id))).scalar() or 0
+    enriched = session.execute(
+        select(func.count(func.distinct(Enrichment.initiative_id)))
+    ).scalar() or 0
+    scored = session.execute(select(func.count()).select_from(latest)).scalar() or 0
+
+    return {
+        "score_by_uni": score_by_uni,
+        "score_by_faculty": score_by_faculty,
+        "top_by_verdict": top_by_verdict,
+        "grade_distributions": grade_dist,
+        "unprocessed": {
+            "not_enriched": total - enriched,
+            "not_scored": total - scored,
+        },
     }
 
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from lxml import html as lxml_html
+from lxml import etree, html as lxml_html
 
 from scout.models import Enrichment, Initiative
 
@@ -157,7 +158,7 @@ def _extract_text(raw_html: str) -> str:
     """Extract readable text from HTML using lxml."""
     try:
         tree = lxml_html.fromstring(raw_html)
-    except Exception:
+    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
         return ""
     title = " ".join(tree.xpath("//title//text()")).strip()
     meta = " ".join(tree.xpath("//meta[@name='description']/@content")).strip()
@@ -193,25 +194,25 @@ async def _github_get(path: str, headers: dict[str, str]) -> tuple[int, dict | l
             if resp.status_code >= 400:
                 return resp.status_code, None
             return resp.status_code, resp.json()
-    except Exception:
+    except Exception as exc:
+        log.debug("GitHub API request failed for %s: %s", path, exc)
         return 0, None
 
 
 async def _collect_repo_metrics(org: str, repo: str, headers: dict[str, str]) -> dict:
     metrics: dict = {"contributors": 0, "commits_90d": 0, "ci_present": False}
-
     since = (datetime.now(UTC) - timedelta(days=90)).isoformat()
 
-    status, contributors = await _github_get(f"/repos/{org}/{repo}/contributors?per_page=100", headers)
-    if status == 200 and isinstance(contributors, list):
+    (s1, contributors), (s2, commits), (s3, workflows) = await asyncio.gather(
+        _github_get(f"/repos/{org}/{repo}/contributors?per_page=100", headers),
+        _github_get(f"/repos/{org}/{repo}/commits?per_page=100&since={since}", headers),
+        _github_get(f"/repos/{org}/{repo}/contents/.github/workflows", headers),
+    )
+    if s1 == 200 and isinstance(contributors, list):
         metrics["contributors"] = len(contributors)
-
-    status, commits = await _github_get(f"/repos/{org}/{repo}/commits?per_page=100&since={since}", headers)
-    if status == 200 and isinstance(commits, list):
+    if s2 == 200 and isinstance(commits, list):
         metrics["commits_90d"] = len(commits)
-
-    status, workflows = await _github_get(f"/repos/{org}/{repo}/contents/.github/workflows", headers)
-    if status == 200 and isinstance(workflows, list) and workflows:
+    if s3 == 200 and isinstance(workflows, list) and workflows:
         metrics["ci_present"] = True
 
     return metrics

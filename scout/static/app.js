@@ -258,15 +258,17 @@ function btnLoading(btn, loading) {
 async function loadInitiatives() {
   showListSkeleton();
   const f = getFilters();
-  let url = `/api/initiatives?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500`;
+  const compact = 'id,name,uni,faculty,verdict,score,classification,grade_team,grade_tech,grade_opportunity,enriched,custom_fields';
+  let url = `/api/initiatives?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500&fields=${compact}`;
   if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
   if (f.classification) url += `&classification=${encodeURIComponent(f.classification)}`;
   if (f.uni) url += `&uni=${encodeURIComponent(f.uni)}`;
+  if (f.faculty) url += `&faculty=${encodeURIComponent(f.faculty)}`;
   if (f.search) url += `&search=${encodeURIComponent(f.search)}`;
   const data = await api('GET', url);
   state.initiatives = data.items;
   renderList();
-  loadStats();
+  populateFacultyFilter();
 }
 
 async function loadStats() {
@@ -300,6 +302,7 @@ function getFilters() {
     verdict: document.getElementById('filter-verdict').value,
     classification: document.getElementById('filter-class').value,
     uni: document.getElementById('filter-uni').value,
+    faculty: document.getElementById('filter-faculty').value,
     search: document.getElementById('filter-search').value,
   };
 }
@@ -313,10 +316,11 @@ function applyFilters() {
 
 function updateFilterIndicators() {
   const f = getFilters();
-  const hasAny = f.verdict || f.classification || f.uni || f.search;
+  const hasAny = f.verdict || f.classification || f.uni || f.faculty || f.search;
   document.getElementById('filter-verdict').classList.toggle('filter-active', !!f.verdict);
   document.getElementById('filter-class').classList.toggle('filter-active', !!f.classification);
   document.getElementById('filter-uni').classList.toggle('filter-active', !!f.uni);
+  document.getElementById('filter-faculty').classList.toggle('filter-active', !!f.faculty);
   document.getElementById('filter-search').classList.toggle('filter-active', !!f.search);
   document.getElementById('btn-clear-filters').classList.toggle('visible', !!hasAny);
 }
@@ -325,9 +329,18 @@ function clearFilters() {
   document.getElementById('filter-verdict').value = '';
   document.getElementById('filter-class').value = '';
   document.getElementById('filter-uni').value = '';
+  document.getElementById('filter-faculty').value = '';
   document.getElementById('filter-search').value = '';
   updateFilterIndicators();
   loadInitiatives();
+}
+
+function populateFacultyFilter() {
+  const faculties = [...new Set(state.initiatives.map(i => i.faculty).filter(Boolean))].sort();
+  const sel = document.getElementById('filter-faculty');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All Faculties</option>' +
+    faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
 }
 
 function sortBy(field) {
@@ -425,6 +438,7 @@ function inlineEdit(el, id, field, currentValue, type) {
   async function save() {
     if (done) return;
     done = true;
+    input.disabled = true;
     const newVal = input.value.trim();
     // Prevent saving empty required fields
     if (field === 'name' && !newVal) { el.innerHTML = original; return; }
@@ -437,9 +451,15 @@ function inlineEdit(el, id, field, currentValue, type) {
       } else {
         body = { [field]: newVal };
       }
-      await api('PUT', `/api/initiatives/${id}`, body);
-      loadInitiatives();
-      if (state.selectedId === id) loadDetail(id);
+      const updated = await api('PUT', `/api/initiatives/${id}`, body);
+      // Update local state from PUT response instead of re-fetching
+      const idx = state.initiatives.findIndex(i => i.id === id);
+      if (idx !== -1) Object.assign(state.initiatives[idx], updated);
+      renderList();
+      if (state.selectedId === id) {
+        state.currentDetail = updated;
+        renderDetail(updated);
+      }
     } catch (err) {
       el.innerHTML = original;
       showToast('Save failed: ' + err.message, 'error');
@@ -727,6 +747,7 @@ function renderDetail(d) {
     <div class="detail-actions">
       <button class="btn btn-sm" id="btn-enrich-one" onclick="enrichOne(${parseInt(d.id)})">Enrich</button>
       <button class="btn btn-sm btn-primary" id="btn-score-one" onclick="scoreOne(${parseInt(d.id)})">Score</button>
+      <button class="btn btn-sm" id="btn-find-similar" onclick="findSimilar(${parseInt(d.id)})">Find Similar</button>
     </div>`;
 
   el.innerHTML = html;
@@ -776,6 +797,7 @@ async function uploadFile(file) {
     hideImport();
     showToast(`Imported ${result.total_imported} initiatives (${result.spin_off_count} spin-off, ${result.duplicates_updated} updated)`, 'success');
     loadInitiatives();
+    loadStats();
   } catch (err) {
     showToast('Import failed: ' + err.message, 'error');
   }
@@ -792,6 +814,7 @@ async function enrichOne(id) {
     showToast(`Added ${r.enrichments_added} enrichments`, 'success');
     loadDetail(id);
     loadInitiatives();
+    loadStats();
   } catch (err) {
     showToast('Enrich failed: ' + err.message, 'error');
   } finally {
@@ -807,8 +830,49 @@ async function scoreOne(id) {
     showToast(`Verdict: ${r.verdict} (${r.score})`, 'success');
     loadDetail(id);
     loadInitiatives();
+    loadStats();
   } catch (err) {
     showToast('Score failed: ' + err.message, 'error');
+  } finally {
+    if (btn) btnLoading(btn, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Find Similar
+// ---------------------------------------------------------------------------
+async function findSimilar(id) {
+  const btn = document.getElementById('btn-find-similar');
+  if (btn) btnLoading(btn, true);
+  try {
+    const data = await api('GET', `/api/similar/${id}?limit=10`);
+    if (!data.results || data.results.length === 0) {
+      showToast(data.hint || 'No similar initiatives found. Run embeddings first.', 'info');
+      return;
+    }
+    // Show results in a section below the detail actions
+    const el = document.getElementById('detail-content');
+    const existing = document.getElementById('similar-results');
+    if (existing) existing.remove();
+    const section = document.createElement('div');
+    section.id = 'similar-results';
+    section.className = 'detail-section';
+    let html = '<h3>Similar Initiatives</h3><ul class="similar-list">';
+    data.results.forEach(r => {
+      html += `<li class="similar-item" onclick="loadDetail(${parseInt(r.id)})">`;
+      html += `<span class="similar-name">${esc(r.name)}</span>`;
+      html += `<span class="similar-meta">${esc(r.uni)} &mdash; ${(r.similarity * 100).toFixed(0)}% match</span>`;
+      html += `</li>`;
+    });
+    html += '</ul>';
+    section.innerHTML = html;
+    el.appendChild(section);
+  } catch (err) {
+    if (err.message.includes('501')) {
+      showToast('Embeddings not available. Install model2vec and run POST /api/embed', 'error');
+    } else {
+      showToast('Find similar failed: ' + err.message, 'error');
+    }
   } finally {
     if (btn) btnLoading(btn, false);
   }
@@ -861,8 +925,9 @@ async function streamBatch(url, body) {
             label.textContent = `Done! ${JSON.stringify(event.stats)}`;
             setTimeout(() => container.classList.remove('active'), 3000);
             loadInitiatives();
+            loadStats();
           }
-        } catch {}
+        } catch (e) { console.warn('SSE parse error:', e, line); }
       }
     }
     // Stream ended without a complete event — clean up
@@ -870,6 +935,7 @@ async function streamBatch(url, body) {
       label.textContent = 'Stream ended unexpectedly';
       setTimeout(() => container.classList.remove('active'), 3000);
       loadInitiatives();
+      loadStats();
     }
   } catch (err) {
     label.textContent = `Error: ${err.message}`;
@@ -1005,6 +1071,7 @@ async function switchDatabase(name) {
     loadColumnOrder();
     await loadCustomColumns();
     await loadInitiatives();
+    loadStats();
   } catch (err) {
     // Revert dropdown to the actual current DB
     document.getElementById('db-selector').value = state.currentDb;
@@ -1027,6 +1094,7 @@ async function showCreateDb() {
     await loadDatabases();
     await loadCustomColumns();
     await loadInitiatives();
+    loadStats();
   } catch (err) {
     showToast('Failed: ' + err.message, 'error');
   }
@@ -1296,5 +1364,6 @@ async function initApp() {
   await loadDatabases();
   await loadCustomColumns();
   await loadInitiatives();
+  loadStats();
 }
 initApp();
