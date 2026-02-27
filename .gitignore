@@ -1,24 +1,36 @@
-# Python cache and test artifacts
+# macOS
+.DS_Store
+
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.playwright-mcp
-.claude
-*.png
+*.egg-info/
+build/
+dist/
 
-# Virtual env
+# Virtual environments
 .venv/
 node_modules/
 
-# Build/install metadata
-*.egg-info/
+# Testing
+.pytest_cache/
 .benchmarks/
 
-# Scout runtime data
-scout/data/scout.db
-scout/data/scout.db-journal
+# IDE / tools
+.claude
+.playwright-mcp
 
-# Retired CLI artifacts and excels
+# Scout runtime data (databases created at runtime)
+scout/data/
+
+# Environment secrets
+.env
+
+# LibreOffice lock files
+.~lock.*
+
+# Screenshots (development only)
+*.png
+
+# Retired CLI artifacts
 archive/
-#ouput/csv/
-#output/spreadsheets/

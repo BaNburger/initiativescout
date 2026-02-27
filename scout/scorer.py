@@ -346,7 +346,10 @@ def build_team_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
     return _build_dossier(
         init, _TEAM_FIELDS,
         enrichments=enrichments,
-        source_filter={"team_page": 5000, "website": 3000},
+        source_filter={
+            "team_page": 5000, "website": 3000,
+            "linkedin": 3000, "instagram": 2000, "facebook": 2000,
+        },
         header=_initiative_header(init),
     )
 
@@ -356,7 +359,11 @@ def build_tech_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
     return _build_dossier(
         init, _TECH_FIELDS,
         enrichments=enrichments,
-        source_filter={"github": 5000},
+        source_filter={
+            "github": 5000,
+            "huggingface": 3000, "researchgate": 3000,
+            "openalex": 3000, "semantic_scholar": 3000,
+        },
         header=_initiative_header(init),
     )
 

@@ -9,7 +9,9 @@ from typing import Any
 from sqlalchemy import and_, case, delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
-from scout.enricher import enrich_github, enrich_team_page, enrich_website
+from scout.enricher import (
+    discover_urls, enrich_extra_links, enrich_github, enrich_team_page, enrich_website,
+)
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
 from scout.scorer import LLMClient, score_initiative, score_project
 from scout.utils import json_parse
@@ -602,17 +604,39 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def run_enrichment(session: Session, init: Initiative) -> list[Enrichment]:
+async def run_enrichment(
+    session: Session, init: Initiative, crawler: object | None = None,
+) -> list[Enrichment]:
     """Run all enrichers in parallel; only delete old enrichments if at least one succeeds.
-    Returns new enrichments (caller must commit)."""
-    enrichers = (enrich_website, enrich_team_page, enrich_github)
-    results = await asyncio.gather(*(fn(init) for fn in enrichers), return_exceptions=True)
+
+    Args:
+        crawler: Optional AsyncWebCrawler instance for Crawl4AI.
+                 Pass ``None`` to use the httpx+lxml fallback.
+
+    Returns new enrichments (caller must commit).
+    """
+    # Standard enrichers (website, team_page use crawler; github uses REST API)
+    results = await asyncio.gather(
+        enrich_website(init, crawler),
+        enrich_team_page(init, crawler),
+        enrich_github(init),
+        return_exceptions=True,
+    )
     new_enrichments: list[Enrichment] = []
-    for fn, result in zip(enrichers, results):
+    labels = ("enrich_website", "enrich_team_page", "enrich_github")
+    for label, result in zip(labels, results):
         if isinstance(result, Exception):
-            log.warning("Enrichment failed (%s) for %s: %s", fn.__name__, init.name, result)
+            log.warning("Enrichment failed (%s) for %s: %s", label, init.name, result)
         elif result:
             new_enrichments.append(result)
+
+    # Extra links enrichment (crawl all URLs in extra_links_json)
+    try:
+        extras = await enrich_extra_links(init, crawler)
+        new_enrichments.extend(extras)
+    except Exception as exc:
+        log.warning("Extra links enrichment failed for %s: %s", init.name, exc)
+
     if new_enrichments:
         session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
         for e in new_enrichments:
@@ -627,6 +651,26 @@ async def run_enrichment(session: Session, init: Initiative) -> list[Enrichment]
         except Exception:
             log.debug("Re-embed failed for %s (non-fatal)", init.name)
     return new_enrichments
+
+
+async def run_discovery(session: Session, init: Initiative) -> dict:
+    """Run DuckDuckGo URL discovery and merge into extra_links_json.
+
+    Does NOT trigger enrichment — caller should call run_enrichment() after.
+    Caller must commit.
+    """
+    discovered = await discover_urls(init)
+
+    if discovered:
+        existing = json_parse(init.extra_links_json)
+        existing.update(discovered)
+        init.extra_links_json = json.dumps(existing)
+        session.flush()
+
+    return {
+        "discovered_urls": discovered,
+        "urls_found": len(discovered),
+    }
 
 
 def _ensure_client(client: LLMClient | None) -> LLMClient:

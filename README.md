@@ -51,10 +51,12 @@ pip install -e '.[embeddings]'
 ## Quickstart
 
 ```bash
-scout            # web UI on http://127.0.0.1:8001
-scout-mcp        # MCP server over stdio (for Claude Desktop / MCP clients)
-scout-setup all  # auto-configure MCP for Claude Desktop, Cursor, Windsurf
-scout --version  # print version
+scout                 # web UI on http://127.0.0.1:8001
+scout --port 9000     # use a different port
+scout --host 0.0.0.0  # accept connections from the network
+scout-mcp             # MCP server over stdio (for Claude Desktop / MCP clients)
+scout-setup all       # auto-configure MCP for Claude Desktop, Cursor, Windsurf
+scout --version       # print version
 ```
 
 Open the browser and import an `.xlsx` spreadsheet (see `output/spreadsheet/`).
@@ -238,6 +240,16 @@ initiativescout/
 │       └── app.js            #   Frontend logic
 ├── output/spreadsheet/       # Source spreadsheets for import
 └── .gitignore
+```
+
+## Troubleshooting
+
+**Port already in use**
+
+If you see `Port 8001 is already in use`, another process is occupying the default port. Pick a different one:
+
+```bash
+scout --port 9000
 ```
 
 ## Environment Variables

@@ -233,15 +233,71 @@ def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
 
 @app.post("/api/enrich/batch", tags=["Enrichment"], summary="Enrich multiple initiatives (SSE progress stream)")
 async def enrich_batch(body: dict[str, Any] | None = None):
-    return _batch_stream((body or {}).get("initiative_ids"), services.run_enrichment, "enriched")
+    from scout.enricher import open_crawler
+
+    def _make_stream(initiative_ids):
+        """SSE stream with a shared Crawl4AI crawler for the entire batch."""
+        async def stream():
+            session = None
+            try:
+                session = get_session()
+                query = select(Initiative.id, Initiative.name)
+                if initiative_ids:
+                    query = query.where(Initiative.id.in_(initiative_ids))
+                rows = session.execute(query).all()
+                total = len(rows)
+                ok = failed = 0
+
+                async with open_crawler() as crawler:
+                    for idx, (init_id, init_name) in enumerate(rows):
+                        yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_name})}\n\n"
+                        try:
+                            init = session.execute(select(Initiative).where(Initiative.id == init_id)).scalars().first()
+                            if init is None:
+                                failed += 1
+                                continue
+                            await services.run_enrichment(session, init, crawler=crawler)
+                            session.commit()
+                            ok += 1
+                        except Exception as exc:
+                            log.warning("Batch enrichment failed for %s: %s", init_name, exc)
+                            failed += 1
+                            session.rollback()
+                        await asyncio.sleep(0.1)
+
+                yield f"data: {json.dumps({'type': 'complete', 'stats': {'enriched': ok, 'failed': failed}})}\n\n"
+            except Exception:
+                if session is not None:
+                    session.rollback()
+                raise
+            finally:
+                if session is not None:
+                    session.close()
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    return _make_stream((body or {}).get("initiative_ids"))
 
 
 @app.post("/api/enrich/{initiative_id}", tags=["Enrichment"], summary="Enrich a single initiative from web and GitHub")
 async def enrich_one(initiative_id: int, session: Session = Depends(db_session)):
+    from scout.enricher import open_crawler
     init = _get_or_404(session, Initiative, initiative_id, "Initiative")
-    added = await services.run_enrichment(session, init)
+    async with open_crawler() as crawler:
+        added = await services.run_enrichment(session, init, crawler=crawler)
     session.commit()
     return {"enrichments_added": len(added)}
+
+
+@app.post("/api/discover/{initiative_id}", tags=["Enrichment"], summary="Discover new URLs via DuckDuckGo search")
+async def discover_one(initiative_id: int, session: Session = Depends(db_session)):
+    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    try:
+        result = await services.run_discovery(session, init)
+        session.commit()
+    except ImportError:
+        raise HTTPException(501, "duckduckgo-search not installed. Install: pip install 'scout[crawl]'")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -570,14 +626,27 @@ async def reset_db(session: Session = Depends(db_session)):
 
 def main():
     import sys
+    import argparse
+    import socket
 
-    if "--version" in sys.argv or "-V" in sys.argv:
+    parser = argparse.ArgumentParser(prog="scout")
+    parser.add_argument("-V", "--version", action="store_true", help="print version")
+    parser.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8001, help="bind port (default: 8001)")
+    args = parser.parse_args()
+
+    if args.version:
         from scout import __version__
         print(f"scout {__version__}")
         return
 
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex((args.host, args.port)) == 0:
+            print(f"Port {args.port} is already in use. Try: scout --port <number>")
+            sys.exit(1)
+
     import uvicorn
-    uvicorn.run("scout.app:app", host="127.0.0.1", port=8001, reload=True)
+    uvicorn.run("scout.app:app", host=args.host, port=args.port, reload=True)
 
 
 if __name__ == "__main__":

@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
 from lxml import etree, html as lxml_html
 
 from scout.models import Enrichment, Initiative
+from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
 
@@ -18,27 +21,98 @@ _MAX_TEXT = 15_000
 
 GITHUB_API = "https://api.github.com"
 
+# ---------------------------------------------------------------------------
+# Optional dependency detection
+# ---------------------------------------------------------------------------
+
+_CRAWL4AI_AVAILABLE = False
+try:
+    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig  # noqa: F401
+    _CRAWL4AI_AVAILABLE = True
+except ImportError:
+    AsyncWebCrawler = None  # type: ignore[assignment,misc]
+
+_DDGS_AVAILABLE = False
+try:
+    from duckduckgo_search import AsyncDDGS  # noqa: F401
+    from duckduckgo_search.exceptions import RatelimitException  # noqa: F401
+    _DDGS_AVAILABLE = True
+except ImportError:
+    AsyncDDGS = None  # type: ignore[assignment,misc]
+    RatelimitException = Exception  # type: ignore[assignment,misc]
+
 
 # ---------------------------------------------------------------------------
-# Page enrichment (shared by website + team page)
+# Crawl4AI page fetcher
+# ---------------------------------------------------------------------------
+
+
+async def _crawl4ai_fetch(url: str, crawler: object) -> str | None:
+    """Fetch a page using Crawl4AI, return markdown text."""
+    try:
+        config = CrawlerRunConfig(page_timeout=30000)
+        result = await crawler.arun(url=url, config=config)  # type: ignore[union-attr]
+        if not result.success:
+            log.warning("Crawl4AI failed for %s: %s", url, getattr(result, "error_message", "unknown"))
+            return None
+        md = result.markdown
+        text = (getattr(md, "fit_markdown", None) or getattr(md, "raw_markdown", None) or "").strip()
+        return text[:_MAX_TEXT] if text else None
+    except Exception as exc:
+        log.warning("Crawl4AI exception for %s: %s", url, exc)
+        return None
+
+
+@asynccontextmanager
+async def open_crawler():
+    """Async context manager yielding an AsyncWebCrawler if crawl4ai is installed, else None.
+
+    Usage::
+
+        async with open_crawler() as crawler:
+            # crawler is AsyncWebCrawler | None
+            await _enrich_page(init, url, "website", crawler)
+    """
+    if not _CRAWL4AI_AVAILABLE:
+        yield None
+        return
+    browser_config = BrowserConfig(headless=True, verbose=False)
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        yield crawler
+
+
+# ---------------------------------------------------------------------------
+# Page enrichment (shared by website, team page, extra links)
 # ---------------------------------------------------------------------------
 
 
 async def _enrich_page(
     initiative: Initiative, url: str, source_type: str,
+    crawler: object | None = None,
 ) -> Enrichment | None:
-    """Fetch a page, extract text, return an Enrichment."""
+    """Fetch a page, extract text, return an Enrichment.
+
+    Uses Crawl4AI when a crawler is provided, otherwise falls back to httpx+lxml.
+    """
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    try:
-        raw_html = await _fetch_url(url)
-    except Exception as exc:
-        log.warning("Failed to fetch %s: %s", url, exc)
-        return None
+    text = None
 
-    text = _extract_text(raw_html)
-    if not text.strip():
+    # Try Crawl4AI first
+    if _CRAWL4AI_AVAILABLE and crawler is not None:
+        text = await _crawl4ai_fetch(url, crawler)
+
+    # Fallback to httpx + lxml
+    if text is None:
+        try:
+            raw_html = await _fetch_url(url)
+        except Exception as exc:
+            log.warning("Failed to fetch %s: %s", url, exc)
+            return None
+        text = _extract_text(raw_html)
+
+    if not text or not text.strip():
         return None
 
     summary = _summarize_text(text, url)
@@ -51,22 +125,74 @@ async def _enrich_page(
     )
 
 
-async def enrich_website(initiative: Initiative) -> Enrichment | None:
+async def enrich_website(
+    initiative: Initiative, crawler: object | None = None,
+) -> Enrichment | None:
     """Fetch initiative website, extract text content."""
     url = (initiative.website or "").strip()
-    return await _enrich_page(initiative, url, "website") if url else None
+    return await _enrich_page(initiative, url, "website", crawler) if url else None
 
 
-async def enrich_team_page(initiative: Initiative) -> Enrichment | None:
+async def enrich_team_page(
+    initiative: Initiative, crawler: object | None = None,
+) -> Enrichment | None:
     """Fetch team page if different from main website."""
     url = (initiative.team_page or "").strip()
     if not url or url == (initiative.website or "").strip():
         return None
-    return await _enrich_page(initiative, url, "team_page")
+    return await _enrich_page(initiative, url, "team_page", crawler)
 
 
 # ---------------------------------------------------------------------------
-# GitHub enrichment
+# Extra links enrichment
+# ---------------------------------------------------------------------------
+
+# Keys that overlap with standard enrichers or aren't crawlable
+_SKIP_LINK_KEYS = {
+    "website", "website_urls", "team_page",
+    "github", "github_urls", "github_org",
+    "directory_source_urls", "other_social_urls",
+}
+
+
+async def enrich_extra_links(
+    initiative: Initiative, crawler: object | None = None,
+) -> list[Enrichment]:
+    """Crawl all URLs in extra_links_json, return enrichments.
+
+    Source type is derived from the dict key with ``_urls``/``_url`` suffix stripped.
+    Keys that overlap with standard enrichers are skipped.
+    """
+    extra = json_parse(initiative.extra_links_json)
+    if not extra:
+        return []
+
+    tasks: list[tuple[str, asyncio.Task]] = []
+    for key, url in extra.items():
+        if key in _SKIP_LINK_KEYS or not url or not isinstance(url, str):
+            continue
+        url = url.strip()
+        if not url:
+            continue
+        # Normalize source_type: strip _urls/_url suffix
+        source_type = key.removesuffix("_urls").removesuffix("_url")
+        tasks.append((key, _enrich_page(initiative, url, source_type, crawler)))
+
+    if not tasks:
+        return []
+
+    results = await asyncio.gather(*(t for _, t in tasks), return_exceptions=True)
+    enrichments: list[Enrichment] = []
+    for (key, _), result in zip(tasks, results):
+        if isinstance(result, Exception):
+            log.warning("Extra link enrichment failed for key=%s: %s", key, result)
+        elif result is not None:
+            enrichments.append(result)
+    return enrichments
+
+
+# ---------------------------------------------------------------------------
+# GitHub enrichment (unchanged — uses REST API, not web crawling)
 # ---------------------------------------------------------------------------
 
 
@@ -139,7 +265,140 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers
+# DuckDuckGo rate limiter
+# ---------------------------------------------------------------------------
+
+
+class _DDGRateLimiter:
+    """Global rate limiter for DuckDuckGo searches.
+
+    Enforces a minimum delay between calls and exponential backoff
+    on rate limit errors.
+    """
+
+    def __init__(self, min_delay: float = 12.0, max_delay: float = 120.0):
+        self._lock = asyncio.Lock()
+        self._min_delay = min_delay
+        self._current_delay = min_delay
+        self._max_delay = max_delay
+        self._last_call: float = 0.0
+
+    async def acquire(self) -> None:
+        """Wait until the minimum delay has elapsed since the last call."""
+        async with self._lock:
+            now = time.monotonic()
+            wait = self._current_delay - (now - self._last_call)
+            if wait > 0:
+                log.debug("DDG rate limiter: waiting %.1fs", wait)
+                await asyncio.sleep(wait)
+            self._last_call = time.monotonic()
+
+    def backoff(self) -> None:
+        """Double the current delay (up to max) after a rate limit error."""
+        self._current_delay = min(self._current_delay * 2, self._max_delay)
+        log.warning("DDG rate limited, backing off to %.0fs between requests", self._current_delay)
+
+    def reset(self) -> None:
+        """Reset delay to baseline after a successful call."""
+        self._current_delay = self._min_delay
+
+
+_ddg_limiter = _DDGRateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# DuckDuckGo URL discovery
+# ---------------------------------------------------------------------------
+
+# Map platform domains to extra_links_json keys
+_PLATFORM_PATTERNS: dict[str, str] = {
+    "linkedin": "linkedin.com",
+    "github": "github.com",
+    "huggingface": "huggingface.co",
+    "instagram": "instagram.com",
+    "x_twitter": "x.com",
+    "facebook": "facebook.com",
+    "youtube": "youtube.com",
+    "researchgate": "researchgate.net",
+    "crunchbase": "crunchbase.com",
+    "tiktok": "tiktok.com",
+    "discord": "discord.gg",
+}
+
+
+async def _ddg_search(query: str, max_results: int = 10) -> list[dict]:
+    """Run a single DuckDuckGo search with rate limiting and retry."""
+    await _ddg_limiter.acquire()
+    try:
+        async with AsyncDDGS() as ddgs:
+            results = [r async for r in ddgs.atext(query, max_results=max_results)]
+        _ddg_limiter.reset()
+        return results
+    except RatelimitException:
+        _ddg_limiter.backoff()
+        # One retry after backoff
+        await _ddg_limiter.acquire()
+        try:
+            async with AsyncDDGS() as ddgs:
+                results = [r async for r in ddgs.atext(query, max_results=max_results)]
+            _ddg_limiter.reset()
+            return results
+        except RatelimitException:
+            _ddg_limiter.backoff()
+            log.warning("DDG rate limited after retry for query=%r, skipping", query)
+            return []
+
+
+async def discover_urls(initiative: Initiative) -> dict[str, str]:
+    """Use DuckDuckGo to discover platform URLs for an initiative.
+
+    Returns a dict of ``{source_key: url}`` for newly discovered URLs
+    not already in extra_links_json.  Does NOT modify the initiative object.
+
+    Raises ImportError if duckduckgo-search is not installed.
+    """
+    if not _DDGS_AVAILABLE:
+        raise ImportError("duckduckgo-search not installed. Install: pip install 'scout[crawl]'")
+
+    name = (initiative.name or "").strip()
+    uni = (initiative.uni or "").strip()
+    if not name:
+        return {}
+
+    query = f'"{name}" {uni}' if uni else f'"{name}"'
+
+    try:
+        results = await _ddg_search(query)
+    except Exception as exc:
+        log.warning("DDG search failed for %s: %s", name, exc)
+        return {}
+
+    # Extract platform URLs not already known
+    existing = json_parse(initiative.extra_links_json)
+    # Also consider fields directly on the initiative as "known"
+    known_domains: set[str] = set()
+    for url_field in ("website", "team_page", "linkedin", "github_org"):
+        val = (getattr(initiative, url_field, "") or "").strip()
+        if val:
+            known_domains.add(val.lower())
+
+    discovered: dict[str, str] = {}
+    for result in results:
+        href = result.get("href", "")
+        if not href:
+            continue
+        for key, domain in _PLATFORM_PATTERNS.items():
+            if domain in href.lower() and key not in existing and key not in discovered:
+                # Skip if this URL is already known via a direct field
+                if not any(domain in kd for kd in known_domains):
+                    discovered[key] = href
+                break
+
+    return discovered
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers (fallback when Crawl4AI not available)
 # ---------------------------------------------------------------------------
 
 

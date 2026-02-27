@@ -14,6 +14,7 @@ from scout.db import (
     session_scope, switch_db, validate_db_name,
 )
 from scout.models import Initiative, Project
+from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,9 @@ mcp = FastMCP(
         "Scout is an outreach intelligence tool for Munich student initiatives. "
         "QUICK START: get_stats() → get_work_queue() → follow recommended_action for each item. "
         "AUTONOMOUS: get_work_queue() → enrich_initiative(id) → score_initiative_tool(id) → repeat until queue empty. "
-        "NEW DATA: create_initiative(name, uni, website) → enrich_initiative(id) → score_initiative_tool(id). "
+        "DEEP MODE: discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id). "
+        "Discovery uses DuckDuckGo to find LinkedIn, GitHub, HuggingFace URLs not in the spreadsheet. Rate-limited (~12s/call). "
+        "NEW DATA: create_initiative(name, uni, website) → discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id). "
         "ANALYTICS: get_stats() → get_aggregations() for score distributions and top-N by verdict. "
         "SIMILARITY: embed_all_tool() → find_similar_initiatives(query='...') for semantic search. "
         "COMPACT: list_initiatives(fields='id,name,verdict,score') to reduce token usage for large lists. "
@@ -86,7 +89,7 @@ def scout_overview() -> str:
         ),
         "data_model": {
             "initiative": "Student initiative at a Munich university (TUM, LMU, HM). Has profile, enrichments, scores, and projects.",
-            "enrichment": "Web-scraped data from the initiative's website, team page, or GitHub org.",
+            "enrichment": "Web-scraped data from website, team page, GitHub, and extra links (LinkedIn, HuggingFace, etc.).",
             "project": "A sub-project within an initiative. Can be scored independently.",
             "outreach_score": "LLM-generated verdict, score (1-5), classification, reasoning, and engagement recommendations.",
             "custom_column": "User-defined field for tracking additional per-initiative data.",
@@ -106,8 +109,9 @@ def scout_overview() -> str:
             "2. get_aggregations() — score distributions by uni/faculty, top-N per verdict, grade breakdowns.",
             "3. get_work_queue() — get next initiatives needing enrichment or scoring.",
             "4. create_initiative(name, uni, ...) — add new initiatives to track.",
-            "5. enrich_initiative(id) — fetch fresh web/GitHub data.",
-            "6. score_initiative_tool(id) — score 3 dimensions in parallel.",
+            "5. discover_initiative(id) — find new URLs via DuckDuckGo (rate-limited, run once per initiative).",
+            "6. enrich_initiative(id) — fetch fresh data from all known URLs + GitHub.",
+            "7. score_initiative_tool(id) — score 3 dimensions in parallel.",
             "7. list_initiatives(verdict, ..., fields='id,name,verdict,score') — browse/filter/compact mode.",
             "8. get_initiative(id) — full details with enrichments and scores.",
             "9. embed_all_tool() — build dense embeddings for similarity search.",
@@ -125,7 +129,7 @@ def scout_overview() -> str:
                 "4. Repeat get_work_queue() until queue is empty.",
                 "5. list_initiatives(verdict='reach_out_now') — review top results.",
             ],
-            "new_data_flow": "create_initiative(name, uni, website) → enrich_initiative(id) → score_initiative_tool(id)",
+            "new_data_flow": "create_initiative(name, uni, website) → discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id)",
         },
         "search_modes": {
             "keyword": "list_initiatives(search='...') — FTS5-ranked full-text search across name, description, sector, domains, faculty.",
@@ -135,7 +139,8 @@ def scout_overview() -> str:
             "compact": "list_initiatives(fields='id,name,verdict,score') — Return only requested fields to save tokens.",
         },
         "performance_expectations": {
-            "enrichment": "2-5 seconds per initiative (web scraping).",
+            "enrichment": "2-10 seconds per initiative (web scraping + extra links; faster without Crawl4AI).",
+            "discovery": "12+ seconds per initiative (DuckDuckGo rate limit). Run once per initiative.",
             "scoring": "5-15 seconds per initiative (3 parallel LLM calls).",
             "listing": "Instant (SQL query with FTS5).",
             "embedding": "~1 second for 200 initiatives (model2vec, local).",
@@ -343,24 +348,36 @@ def update_initiative(
 
 @mcp.tool()
 async def enrich_initiative(initiative_id: int) -> dict:
-    """Fetch fresh enrichment data from the initiative's website, team page, and GitHub.
+    """Fetch fresh enrichment data from website, team page, GitHub, and all extra links.
 
-    WHAT: Scrapes the initiative's website, team page, and GitHub org for text content.
-        Takes 2-5 seconds per source. Replaces old enrichments if at least one succeeds.
+    WHAT: Scrapes the initiative's website, team page, GitHub org, and any extra URLs
+        stored in extra_links (LinkedIn, HuggingFace, Instagram, etc.).
+        Uses Crawl4AI for JS rendering when installed, otherwise falls back to httpx.
+        Takes 2-10 seconds. Replaces old enrichments if at least one succeeds.
     WHEN: Call BEFORE score_initiative_tool(). Enrichment data is what the scorer reads.
+        For best results, call discover_initiative(id) first to find extra URLs.
     RESPONSE: sources_succeeded lists which sources returned data. sources_not_configured
         lists sources that couldn't run (e.g. no website URL set).
     NEXT: Call score_initiative_tool(id) to score using the enrichment data.
     """
+    from scout.enricher import open_crawler
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
             return err
-        new = await services.run_enrichment(session, init)
+        async with open_crawler() as crawler:
+            new = await services.run_enrichment(session, init, crawler=crawler)
         session.commit()
 
         succeeded = [e.source_type for e in new]
+        # Build the set of expected sources
         possible = {"website", "team_page", "github"}
+        extra = json_parse(init.extra_links_json)
+        if extra:
+            possible.update(
+                k.removesuffix("_urls").removesuffix("_url")
+                for k in extra if extra[k]
+            )
         not_configured = []
         if not (init.website or "").strip():
             not_configured.append("website")
@@ -368,7 +385,7 @@ async def enrich_initiative(initiative_id: int) -> dict:
             not_configured.append("team_page")
         if not (init.github_org or "").strip():
             not_configured.append("github")
-        failed = list(possible - set(succeeded) - set(not_configured))
+        failed = sorted(possible - set(succeeded) - set(not_configured))
 
         result = {
             "initiative_id": init.id, "initiative_name": init.name,
@@ -380,9 +397,46 @@ async def enrich_initiative(initiative_id: int) -> dict:
         if not_configured:
             result["hint"] = (
                 f"Set {', '.join(not_configured)} on the initiative via update_initiative() "
-                "to enable more enrichment sources."
+                "to enable more enrichment sources. Or run discover_initiative(id) to find URLs."
             )
         return result
+
+
+@mcp.tool()
+async def discover_initiative(initiative_id: int) -> dict:
+    """Discover new URLs for an initiative via DuckDuckGo search.
+
+    WHAT: Searches DuckDuckGo for the initiative name + university, discovers
+        platform URLs (LinkedIn, GitHub, HuggingFace, Crunchbase, etc.) not already
+        in the profile. Stores discovered URLs in extra_links.
+        Rate-limited at ~12 seconds between calls to avoid DuckDuckGo blocks.
+    WHEN: Call BEFORE enrich_initiative() when extra_links is empty or sparse.
+        Only needs to run once per initiative — discovered URLs persist.
+    NEXT: Call enrich_initiative(id) to crawl the newly discovered URLs.
+    ERRORS: Returns DEPENDENCY_MISSING if duckduckgo-search is not installed.
+
+    Args:
+        initiative_id: The numeric ID of the initiative.
+    """
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        if err:
+            return err
+        try:
+            result = await services.run_discovery(session, init)
+            session.commit()
+            result["initiative_id"] = init.id
+            result["initiative_name"] = init.name
+            if result["urls_found"] > 0:
+                result["hint"] = "Call enrich_initiative(id) to crawl the discovered URLs."
+            else:
+                result["hint"] = "No new URLs discovered. Try enriching with existing data."
+            return result
+        except ImportError:
+            return _error(
+                "duckduckgo-search not installed. Install: pip install 'scout[crawl]'",
+                "DEPENDENCY_MISSING",
+            )
 
 
 @mcp.tool()
