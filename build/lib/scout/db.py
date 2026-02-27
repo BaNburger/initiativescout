@@ -38,16 +38,17 @@ def init_db(db_path: str | Path | None = None) -> None:
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{db_path}"
+        # Build new engine and factory in local vars first
         new_engine = create_engine(url, connect_args={"check_same_thread": False})
         Base.metadata.create_all(new_engine)
         new_factory = sessionmaker(bind=new_engine, autoflush=False, expire_on_commit=False)
         _migrate_existing_db(new_engine)
+        # Only publish globals after migration succeeds
         _engine = new_engine
         _SessionLocal = new_factory
         _current_db_path = db_path
-    # Dispose old engine outside the lock so get_session() isn't blocked
-    if old_engine is not None:
-        old_engine.dispose()
+        if old_engine is not None and old_engine is not new_engine:
+            old_engine.dispose()
 
 
 def _migrate_existing_db(engine) -> None:

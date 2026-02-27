@@ -6,13 +6,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import and_, func, select
 
 from scout import services
 from scout.db import (
     create_database, current_db_name, init_db, list_databases,
     session_scope, switch_db, validate_db_name,
 )
+from sqlalchemy import func, select
+
 from scout.models import Initiative, Project
 
 log = logging.getLogger(__name__)
@@ -331,7 +332,7 @@ def update_initiative(
         try:
             services.sync_fts_update(session, init)
         except Exception:
-            log.debug("FTS sync failed for initiative %s", initiative_id)
+            log.warning("FTS sync failed for initiative %s", initiative_id, exc_info=True)
         session.commit()
         return services.initiative_detail(init)
 
@@ -452,6 +453,7 @@ def find_similar_initiatives(
         # Build optional ID mask from SQL filters
         id_mask = None
         if uni or verdict:
+            from sqlalchemy import and_
             q_filter = select(Initiative.id)
             if uni:
                 us = {u.strip().upper() for u in uni.split(",")}
@@ -467,10 +469,13 @@ def find_similar_initiatives(
             if not id_mask:
                 return {"results": [], "hint": "No initiatives match the pre-filters."}
 
-        results = find_similar(
-            query_text=query, initiative_id=initiative_id,
-            top_k=max(1, min(limit, 100)), id_mask=id_mask,
-        )
+        try:
+            results = find_similar(
+                query_text=query, initiative_id=initiative_id,
+                top_k=max(1, min(limit, 100)), id_mask=id_mask,
+            )
+        except ImportError:
+            return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
 
         if not results:
             return {"results": [], "hint": "No embeddings found. Run embed_all() first."}
@@ -506,7 +511,10 @@ def embed_all_tool() -> dict:
         return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
 
     with session_scope() as session:
-        count = embed_all(session)
+        try:
+            count = embed_all(session)
+        except ImportError:
+            return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
         return {"ok": True, "embedded": count, "hint": "Use find_similar_initiatives() for semantic search."}
 
 

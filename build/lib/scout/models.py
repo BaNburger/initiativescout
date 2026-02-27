@@ -161,4 +161,4 @@ class ScoringPrompt(Base):
     key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     label: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

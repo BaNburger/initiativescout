@@ -26,7 +26,9 @@ embeddings = ["model2vec>=0.4.0"]
 
 [tool.setuptools]
 packages = ["scout"]
-package-dir = {"scout" = "."}
+
+[tool.setuptools.package-data]
+scout = ["static/**/*"]
 
 [project.scripts]
 scout = "scout.app:main"

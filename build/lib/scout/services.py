@@ -217,9 +217,14 @@ def sync_fts_update(session: Session, init: Initiative) -> None:
     Uses a savepoint so that a failed re-insert rolls back the delete,
     preventing a half-deleted FTS entry from being committed.
     """
-    with session.begin_nested():
+    nested = session.begin_nested()
+    try:
         sync_fts_delete(session, init.id)
         sync_fts_insert(session, init)
+        nested.commit()
+    except Exception:
+        nested.rollback()
+        raise
 
 
 def rebuild_fts(session: Session) -> None:

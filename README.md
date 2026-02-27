@@ -2,25 +2,62 @@
 
 Web app and MCP server for discovering, enriching, and scoring Munich student initiatives for outreach. Import spreadsheet data, enrich with live web/GitHub signals, and get LLM-powered verdicts on which initiatives to contact.
 
-## Quickstart
+## Installation
+
+Requires **Python 3.11+**.
+
+### Recommended: pipx (isolated install)
 
 ```bash
-cd scout
-pip install -e .
-scout            # web UI on http://127.0.0.1:8001
-scout-mcp        # MCP server over stdio (for Claude Desktop / MCP clients)
-scout-setup all  # auto-configure MCP for Claude Desktop, Cursor, Windsurf
+pipx install git+https://github.com/BaNburger/initiativescout.git
 ```
 
-Open the browser and import an `.xlsx` spreadsheet (see `output/spreadsheet/`).
+This installs `scout`, `scout-mcp`, and `scout-setup` commands in an isolated environment.
 
-**Optional: semantic search** — install the embeddings extra for "Find Similar" functionality:
+**With semantic search** ("Find Similar" via [model2vec](https://github.com/MinishLab/model2vec), ~15MB, no PyTorch):
 
 ```bash
+pipx install 'scout[embeddings] @ git+https://github.com/BaNburger/initiativescout.git'
+```
+
+### Alternative: pip
+
+```bash
+pip install git+https://github.com/BaNburger/initiativescout.git
+```
+
+### Update
+
+```bash
+pipx upgrade scout          # pipx
+pip install --upgrade git+https://github.com/BaNburger/initiativescout.git  # pip
+```
+
+### Uninstall
+
+```bash
+pipx uninstall scout        # pipx
+pip uninstall scout         # pip
+```
+
+### Development install (contributors)
+
+```bash
+git clone https://github.com/BaNburger/initiativescout.git
+cd initiativescout
 pip install -e '.[embeddings]'
 ```
 
-This adds [model2vec](https://github.com/MinishLab/model2vec) (~15MB model, numpy-only, no PyTorch).
+## Quickstart
+
+```bash
+scout            # web UI on http://127.0.0.1:8001
+scout-mcp        # MCP server over stdio (for Claude Desktop / MCP clients)
+scout-setup all  # auto-configure MCP for Claude Desktop, Cursor, Windsurf
+scout --version  # print version
+```
+
+Open the browser and import an `.xlsx` spreadsheet (see `output/spreadsheet/`).
 
 ## How It Works
 
@@ -181,25 +218,25 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 ## Project Structure
 
 ```
-UnicornInitiative/
-├── scout/                   # FastAPI web app + MCP server
-│   ├── app.py               #   Routes & API endpoints
-│   ├── mcp_server.py        #   MCP server (Claude Desktop integration)
-│   ├── services.py          #   Shared business logic (queries, FTS, aggregations)
-│   ├── models.py            #   SQLAlchemy ORM models
-│   ├── schemas.py           #   Pydantic request/response schemas
-│   ├── db.py                #   Multi-DB SQLite management + FTS5 setup
-│   ├── importer.py          #   XLSX parser (Spin-Off, All Initiatives, Overview)
-│   ├── enricher.py          #   Website, team page, GitHub enrichment
-│   ├── scorer.py            #   3-dimension LLM scoring + deterministic aggregation
-│   ├── embedder.py          #   Dense embeddings (model2vec) + similarity search
-│   ├── static/
-│   │   ├── index.html       #   Page structure
-│   │   ├── style.css        #   Styles
-│   │   └── app.js           #   Frontend logic
-│   └── pyproject.toml       #   Package config & dependencies
-├── output/spreadsheet/      # Source spreadsheets for import
-├── archive/                 # Retired CLI tool (initiative-tracker)
+initiativescout/
+├── pyproject.toml            # Package config & dependencies
+├── scout/                    # FastAPI web app + MCP server
+│   ├── __init__.py           #   Version definition
+│   ├── app.py                #   Routes & API endpoints
+│   ├── mcp_server.py         #   MCP server (Claude Desktop integration)
+│   ├── services.py           #   Shared business logic (queries, FTS, aggregations)
+│   ├── models.py             #   SQLAlchemy ORM models
+│   ├── schemas.py            #   Pydantic request/response schemas
+│   ├── db.py                 #   Multi-DB SQLite management + FTS5 setup
+│   ├── importer.py           #   XLSX parser (Spin-Off, All Initiatives, Overview)
+│   ├── enricher.py           #   Website, team page, GitHub enrichment
+│   ├── scorer.py             #   3-dimension LLM scoring + deterministic aggregation
+│   ├── embedder.py           #   Dense embeddings (model2vec) + similarity search
+│   └── static/
+│       ├── index.html        #   Page structure
+│       ├── style.css         #   Styles
+│       └── app.js            #   Frontend logic
+├── output/spreadsheet/       # Source spreadsheets for import
 └── .gitignore
 ```
 

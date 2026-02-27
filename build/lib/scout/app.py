@@ -178,7 +178,7 @@ async def update_initiative(initiative_id: int, body: InitiativeUpdate, session:
     try:
         services.sync_fts_update(session, init)
     except Exception:
-        log.debug("FTS sync failed for initiative %s", initiative_id)
+        log.warning("FTS sync failed for initiative %s", initiative_id, exc_info=True)
     session.commit()
     return services.initiative_detail(init)
 
