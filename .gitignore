@@ -32,5 +32,8 @@ scout/data/
 # Screenshots (development only)
 *.png
 
+# Output data (spreadsheets, CSVs, exports)
+output/
+
 # Retired CLI artifacts
 archive/
