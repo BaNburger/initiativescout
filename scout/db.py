@@ -32,18 +32,23 @@ DATA_DIR = Path(__file__).parent / "data"
 def init_db(db_path: str | Path | None = None) -> None:
     global _engine, _SessionLocal, _current_db_path
     with _lock:
-        if _engine is not None:
-            _engine.dispose()
+        old_engine = _engine
         if db_path is None:
             db_path = DATA_DIR / "scout.db"
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{db_path}"
-        _engine = create_engine(url, connect_args={"check_same_thread": False})
-        Base.metadata.create_all(_engine)
-        _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
+        # Build new engine and factory in local vars first
+        new_engine = create_engine(url, connect_args={"check_same_thread": False})
+        Base.metadata.create_all(new_engine)
+        new_factory = sessionmaker(bind=new_engine, autoflush=False, expire_on_commit=False)
+        _migrate_existing_db(new_engine)
+        # Only publish globals after migration succeeds
+        _engine = new_engine
+        _SessionLocal = new_factory
         _current_db_path = db_path
-        _migrate_existing_db(_engine)
+        if old_engine is not None and old_engine is not new_engine:
+            old_engine.dispose()
 
 
 def _migrate_existing_db(engine) -> None:
@@ -68,6 +73,7 @@ def _migrate_existing_db(engine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_initiative_uni ON initiatives(uni)",
             "CREATE INDEX IF NOT EXISTS ix_enrichment_initiative ON enrichments(initiative_id)",
             "CREATE INDEX IF NOT EXISTS ix_score_initiative_scored ON outreach_scores(initiative_id, scored_at)",
+            "CREATE INDEX IF NOT EXISTS ix_score_project_id ON outreach_scores(project_id)",
         ):
             conn.execute(text(stmt))
     _ensure_fts_table(engine)

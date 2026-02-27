@@ -9,6 +9,8 @@ const state = {
   currentDb: 'scout',
   customColumns: [],
   columnOrder: null, // null = default order; array of column keys when customised
+  cursor: { row: 0, col: 0 },
+  mode: 'grid', // 'grid' | 'detail'
 };
 
 const _COL_KEY_RE = /^[a-zA-Z0-9_-]+$/;
@@ -283,15 +285,25 @@ async function loadStats() {
   document.getElementById('btn-score-all').disabled = stats.total === 0;
 }
 
+let _loadDetailInFlight = false;
 async function loadDetail(id) {
+  if (_loadDetailInFlight) return;
+  _loadDetailInFlight = true;
   showDetailSkeleton();
-  const data = await api('GET', `/api/initiatives/${id}`);
-  state.selectedId = id;
-  state.currentDetail = data;
-  renderDetail(data);
-  document.querySelectorAll('.list-table tbody tr').forEach(tr => {
-    tr.classList.toggle('selected', parseInt(tr.dataset.id) === id);
-  });
+  try {
+    const data = await api('GET', `/api/initiatives/${id}`);
+    state.mode = 'detail';
+    state.selectedId = id;
+    state.currentDetail = data;
+    renderDetail(data);
+    document.querySelectorAll('.list-table tbody tr').forEach(tr => {
+      tr.classList.toggle('selected', parseInt(tr.dataset.id) === id);
+    });
+  } catch (err) {
+    showToast('Failed to load detail: ' + err.message, 'error');
+  } finally {
+    _loadDetailInFlight = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -404,7 +416,7 @@ function getColumns() {
 }
 
 function inlineEdit(el, id, field, currentValue, type) {
-  if (el.querySelector('.inline-input, .inline-select')) return;
+  if (el.querySelector('.inline-input, .inline-select') || el.dataset.saving) return;
   const original = el.innerHTML;
   let input;
 
@@ -443,6 +455,7 @@ function inlineEdit(el, id, field, currentValue, type) {
     // Prevent saving empty required fields
     if (field === 'name' && !newVal) { el.innerHTML = original; return; }
     if (newVal === (currentValue || '').trim()) { el.innerHTML = original; return; }
+    el.dataset.saving = 'true';
     try {
       let body;
       if (field.startsWith('custom:')) {
@@ -463,6 +476,8 @@ function inlineEdit(el, id, field, currentValue, type) {
     } catch (err) {
       el.innerHTML = original;
       showToast('Save failed: ' + err.message, 'error');
+    } finally {
+      delete el.dataset.saving;
     }
   }
   function cancel() { done = true; el.innerHTML = original; }
@@ -559,6 +574,7 @@ function renderList() {
   }).join('');
 
   initColumnDnD();
+  updateCursor();
 }
 
 // ---------------------------------------------------------------------------
@@ -766,9 +782,7 @@ function hideImport() {
 document.getElementById('import-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('import-overlay')) hideImport();
 });
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { hideImport(); hidePrompts(); hideMcpSetup(); }
-});
+// Escape handler for overlays is part of the unified keyboard handler below
 
 const importBox = document.getElementById('import-box');
 importBox.addEventListener('dragover', e => { e.preventDefault(); importBox.classList.add('dragover'); });
@@ -949,25 +963,177 @@ function enrichBatch() { streamBatch('/api/enrich/batch', null); }
 function scoreBatch() { streamBatch('/api/score/batch', null); }
 
 // ---------------------------------------------------------------------------
-// Keyboard navigation
+// Keyboard cursor (CSS-only, no re-render)
+// ---------------------------------------------------------------------------
+function updateCursor() {
+  document.querySelectorAll('.cell-active').forEach(el => el.classList.remove('cell-active'));
+  document.querySelectorAll('.row-active').forEach(el => el.classList.remove('row-active'));
+  const rows = document.querySelectorAll('#list-body tr');
+  if (!rows.length) return;
+  state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
+  const row = rows[state.cursor.row];
+  row.classList.add('row-active');
+  const cells = row.querySelectorAll('td');
+  state.cursor.col = Math.max(0, Math.min(state.cursor.col, cells.length - 1));
+  if (cells[state.cursor.col]) cells[state.cursor.col].classList.add('cell-active');
+  row.scrollIntoView({ block: 'nearest' });
+}
+
+// ---------------------------------------------------------------------------
+// Unified keyboard handler
 // ---------------------------------------------------------------------------
 document.addEventListener('keydown', e => {
-  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    const items = state.initiatives;
-    if (items.length === 0) return;
-    const idx = items.findIndex(i => i.id === state.selectedId);
-    let next;
-    if (e.key === 'ArrowDown') next = Math.min(idx + 1, items.length - 1);
-    else next = Math.max(idx - 1, 0);
-    if (next >= 0 && next < items.length) {
-      loadDetail(items[next].id);
-      const row = document.querySelector(`tr[data-id="${items[next].id}"]`);
-      if (row) row.scrollIntoView({ block: 'nearest' });
+  const tag = document.activeElement.tagName;
+  const inInput = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+
+  // Escape always works — close overlays or switch to grid
+  if (e.key === 'Escape') {
+    if (inInput) { document.activeElement.blur(); return; }
+    const importOpen = !document.getElementById('import-overlay').classList.contains('hidden');
+    const promptOpen = !document.getElementById('prompt-overlay').classList.contains('hidden');
+    const mcpOpen = !!_mcpOverlay;
+    const hotkeyOpen = !!_hotkeyOverlay;
+    if (importOpen || promptOpen || mcpOpen || hotkeyOpen) {
+      hideImport(); hidePrompts(); hideMcpSetup();
+      if (_hotkeyOverlay) { _hotkeyOverlay.remove(); _hotkeyOverlay = null; }
+    } else {
+      state.mode = 'grid';
+      updateCursor();
+    }
+    return;
+  }
+
+  // Skip all other hotkeys when typing in inputs
+  if (inInput) return;
+
+  // Global hotkeys (both modes)
+  if (e.key === '/') { e.preventDefault(); document.getElementById('filter-search').focus(); return; }
+  if (e.key === '?') { e.preventDefault(); showHotkeyHelp(); return; }
+
+  const items = state.initiatives;
+  if (items.length === 0) return;
+
+  if (state.mode === 'grid') {
+    const rows = document.querySelectorAll('#list-body tr');
+    if (!rows.length) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      state.cursor.row = Math.min(state.cursor.row + 1, rows.length - 1);
+      updateCursor();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      state.cursor.row = Math.max(state.cursor.row - 1, 0);
+      updateCursor();
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const cells = rows[state.cursor.row]?.querySelectorAll('td');
+      if (cells) state.cursor.col = Math.min(state.cursor.col + 1, cells.length - 1);
+      updateCursor();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      state.cursor.col = Math.max(state.cursor.col - 1, 0);
+      updateCursor();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const id = items[state.cursor.row]?.id;
+      if (id != null) loadDetail(id);
+    } else if (e.key === 'e') {
+      const id = items[state.cursor.row]?.id;
+      if (id != null) enrichOne(id);
+    } else if (e.key === 's') {
+      const id = items[state.cursor.row]?.id;
+      if (id != null) scoreOne(id);
+    } else if (e.key === 'i') {
+      showImport();
+    }
+  } else if (state.mode === 'detail') {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const idx = items.findIndex(i => i.id === state.selectedId);
+      let next;
+      if (e.key === 'ArrowDown') next = Math.min(idx + 1, items.length - 1);
+      else next = Math.max(idx - 1, 0);
+      if (next >= 0 && next < items.length) {
+        state.cursor.row = next;
+        loadDetail(items[next].id);
+        updateCursor();
+      }
+    } else if (e.key === '\\') {
+      e.preventDefault();
+      state.mode = 'grid';
+      updateCursor();
+    } else if (e.key === 'e' && state.selectedId) {
+      enrichOne(state.selectedId);
+    } else if (e.key === 's' && state.selectedId) {
+      scoreOne(state.selectedId);
+    } else if (e.key === 'f' && state.selectedId) {
+      findSimilar(state.selectedId);
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Hotkey help overlay
+// ---------------------------------------------------------------------------
+var _hotkeyOverlay = null;
+function showHotkeyHelp() {
+  if (_hotkeyOverlay) { _hotkeyOverlay.remove(); _hotkeyOverlay = null; }
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  var box = document.createElement('div');
+  box.className = 'modal-box';
+  box.style.maxWidth = '500px';
+  var h3 = document.createElement('h3');
+  h3.textContent = 'Keyboard Shortcuts';
+  box.appendChild(h3);
+  var grid = document.createElement('div');
+  grid.className = 'hotkey-help';
+  var bindings = [
+    ['Grid mode', ''],
+    ['\u2190 \u2191 \u2192 \u2193', 'Move cursor through cells'],
+    ['Enter', 'Open detail for selected row'],
+    ['e', 'Enrich selected initiative'],
+    ['s', 'Score selected initiative'],
+    ['i', 'Open import'],
+    ['Detail mode', ''],
+    ['\u2191 \u2193', 'Browse prev/next initiative'],
+    ['\\', 'Return to grid'],
+    ['e', 'Enrich current initiative'],
+    ['s', 'Score current initiative'],
+    ['f', 'Find similar'],
+    ['Global', ''],
+    ['/', 'Focus search'],
+    ['Esc', 'Close overlay / return to grid'],
+    ['?', 'Show this help'],
+  ];
+  bindings.forEach(function(b) {
+    if (!b[1]) {
+      var heading = document.createElement('div');
+      heading.className = 'hotkey-section-label';
+      heading.textContent = b[0];
+      grid.appendChild(heading);
+      grid.appendChild(document.createElement('div'));
+    } else {
+      var key = document.createElement('kbd');
+      key.className = 'hotkey-key';
+      key.textContent = b[0];
+      var desc = document.createElement('span');
+      desc.textContent = b[1];
+      grid.appendChild(key);
+      grid.appendChild(desc);
+    }
+  });
+  box.appendChild(grid);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  _hotkeyOverlay = overlay;
+  function cleanup() { overlay.remove(); _hotkeyOverlay = null; }
+  overlay.addEventListener('click', function(ev) { if (ev.target === overlay) cleanup(); });
+  overlay.addEventListener('keydown', function(ev) { if (ev.key === 'Escape') cleanup(); });
+  overlay.tabIndex = -1;
+  overlay.focus();
+}
 
 // ---------------------------------------------------------------------------
 // Projects
@@ -1048,6 +1214,8 @@ async function scoreProject(projectId) {
 function _resetDetailPanel() {
   state.selectedId = null;
   state.currentDetail = null;
+  state.mode = 'grid';
+  state.cursor = { row: 0, col: 0 };
   document.getElementById('detail-content').style.display = 'none';
   document.getElementById('detail-content').className = '';
   document.getElementById('detail-empty').style.display = 'flex';
@@ -1347,7 +1515,12 @@ function switchMcpTab(btn, toolKey) {
 function copyMcpCode(blockId) {
   var block = document.getElementById(blockId);
   if (!block) return;
-  var text = block.textContent.replace('Copy', '').trim();
+  // Collect only text nodes to exclude the button text
+  var text = '';
+  block.childNodes.forEach(function(node) {
+    if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
+  });
+  text = text.trim();
   navigator.clipboard.writeText(text).then(function() {
     var btn = block.querySelector('.mcp-copy-btn');
     if (btn) {

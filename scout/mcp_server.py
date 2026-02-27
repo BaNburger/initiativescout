@@ -676,6 +676,7 @@ def update_scoring_prompt(key: str, content: str) -> dict:
         result = services.update_scoring_prompt(session, key, content)
         if result is None:
             return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
+        session.commit()
         return result
 
 
@@ -765,6 +766,7 @@ def create_custom_column(
         )
         if result is None:
             return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
+        session.commit()
         return result
 
 
@@ -794,6 +796,7 @@ def update_custom_column(
         )
         if result is None:
             return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+        session.commit()
         return result
 
 
@@ -810,7 +813,8 @@ def delete_custom_column(column_id: int) -> dict:
     with session_scope() as session:
         if not services.delete_custom_column(session, column_id):
             return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-    return {"ok": True, "deleted_column_id": column_id}
+        session.commit()
+        return {"ok": True, "deleted_column_id": column_id}
 
 
 # ---------------------------------------------------------------------------

@@ -379,6 +379,7 @@ async def create_custom_column(body: CustomColumnCreate, session: Session = Depe
     )
     if result is None:
         raise HTTPException(409, f"Column key '{body.key}' already exists")
+    session.commit()
     return result
 
 
@@ -393,6 +394,7 @@ async def update_custom_column(column_id: int, body: CustomColumnUpdate,
     )
     if result is None:
         raise HTTPException(404, "Custom column not found")
+    session.commit()
     return result
 
 
@@ -401,6 +403,7 @@ async def update_custom_column(column_id: int, body: CustomColumnUpdate,
 async def delete_custom_column(column_id: int, session: Session = Depends(db_session)):
     if not services.delete_custom_column(session, column_id):
         raise HTTPException(404, "Custom column not found")
+    session.commit()
     return {"ok": True}
 
 
@@ -422,6 +425,7 @@ async def update_scoring_prompt(key: str, body: ScoringPromptUpdate,
     result = services.update_scoring_prompt(session, key, body.content)
     if result is None:
         raise HTTPException(404, f"Scoring prompt '{key}' not found")
+    session.commit()
     return result
 
 

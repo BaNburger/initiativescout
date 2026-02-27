@@ -136,6 +136,7 @@ class OutreachScore(Base):
 
     __table_args__ = (
         Index("ix_score_initiative_scored", "initiative_id", "scored_at"),
+        Index("ix_score_project_id", "project_id"),
     )
 
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="scores")

@@ -9,6 +9,7 @@ cd scout
 pip install -e .
 scout            # web UI on http://127.0.0.1:8001
 scout-mcp        # MCP server over stdio (for Claude Desktop / MCP clients)
+scout-setup all  # auto-configure MCP for Claude Desktop, Cursor, Windsurf
 ```
 
 Open the browser and import an `.xlsx` spreadsheet (see `output/spreadsheet/`).
@@ -26,9 +27,36 @@ This adds [model2vec](https://github.com/MinishLab/model2vec) (~15MB model, nump
 1. **Import** — Upload the enriched XLSX. Supports three sheet types: Spin-Off Targets, All Initiatives, and the Initiatives overview sheet. Deduplicates by name+uni.
 2. **Enrich** — Fetches live data from initiative websites, team pages, and GitHub orgs.
 3. **Score** — Three parallel LLM calls evaluate Team, Tech, and Opportunity dimensions. Verdict and score are computed deterministically from the average grade.
-4. **Browse** — Filter, sort, and inspect initiatives in the UI. Keyboard navigation with arrow keys. Inline editing via double-click.
+4. **Browse** — Filter, sort, and inspect initiatives in the UI. Full keyboard navigation (spreadsheet-style grid cursor + detail browsing). Inline editing via double-click.
 5. **Search** — FTS5 full-text search with BM25 ranking across name, description, sector, domains, and faculty.
 6. **Similarity** — Dense embeddings via model2vec enable semantic "Find Similar" search.
+
+## Keyboard Shortcuts
+
+The UI has two navigation modes — press `?` at any time to see the help overlay.
+
+**Grid mode** (table focused):
+
+| Key | Action |
+|-----|--------|
+| Arrow keys | Move cursor cell-by-cell |
+| `Enter` | Open detail for selected row |
+| `e` | Enrich selected initiative |
+| `s` | Score selected initiative |
+| `i` | Open import |
+| `/` | Focus search |
+| `?` | Show keyboard shortcut help |
+
+**Detail mode** (detail panel focused):
+
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` | Browse prev/next initiative |
+| `\` | Return to grid |
+| `e` | Enrich current initiative |
+| `s` | Score current initiative |
+| `f` | Find similar |
+| `Esc` | Close overlay / return to grid |
 
 ## Search Modes
 
@@ -112,7 +140,7 @@ Default prompts are seeded on first run and can be freely modified per database.
 
 ## MCP Server
 
-The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's functionality as tools for Claude Desktop and other MCP clients.
+The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's functionality as tools for Claude Desktop and other MCP clients. Use `scout-setup all` to auto-configure all supported tools, or click "MCP Setup" in the web UI for step-by-step instructions.
 
 **Autonomous workflow:** `get_stats()` → `get_work_queue()` → follow `recommended_action` for each item → repeat until queue is empty.
 

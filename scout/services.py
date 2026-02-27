@@ -212,9 +212,19 @@ def sync_fts_delete(session: Session, initiative_id: int) -> None:
 
 
 def sync_fts_update(session: Session, init: Initiative) -> None:
-    """Update FTS index for a single initiative (delete + re-insert)."""
-    sync_fts_delete(session, init.id)
-    sync_fts_insert(session, init)
+    """Update FTS index for a single initiative (delete + re-insert).
+
+    Uses a savepoint so that a failed re-insert rolls back the delete,
+    preventing a half-deleted FTS entry from being committed.
+    """
+    nested = session.begin_nested()
+    try:
+        sync_fts_delete(session, init.id)
+        sync_fts_insert(session, init)
+        nested.commit()
+    except Exception:
+        nested.rollback()
+        raise
 
 
 def rebuild_fts(session: Session) -> None:
@@ -565,8 +575,7 @@ def create_custom_column(
         show_in_list=show_in_list, sort_order=sort_order,
     )
     session.add(col)
-    session.commit()
-    session.refresh(col)
+    session.flush()
     return _column_dict(col)
 
 
@@ -579,7 +588,7 @@ def update_custom_column(session: Session, column_id: int, **kwargs: Any) -> dic
     if not col:
         return None
     apply_updates(col, kwargs, _CUSTOM_COLUMN_FIELDS)
-    session.commit()
+    session.flush()
     return _column_dict(col)
 
 
@@ -589,7 +598,7 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
     if not col:
         return False
     session.delete(col)
-    session.commit()
+    session.flush()
     return True
 
 
@@ -800,6 +809,6 @@ def update_scoring_prompt(session: Session, key: str, content: str) -> dict | No
     if not prompt:
         return None
     prompt.content = content
-    session.commit()
+    session.flush()
     return {"key": prompt.key, "label": prompt.label, "content": prompt.content,
             "updated_at": prompt.updated_at.isoformat() if prompt.updated_at else None}
