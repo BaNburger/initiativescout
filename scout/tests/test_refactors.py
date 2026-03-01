@@ -495,14 +495,11 @@ class TestInitiativeSummaryDict:
         from scout.services import initiative_summary
         summary = initiative_summary(sample_initiative)
         expected_keys = {
-            "id", "name", "uni", "sector", "mode", "description",
+            "id", "name", "uni", "faculty", "sector", "mode", "description",
             "website", "email", "relevance", "sheet_source",
             "enriched", "enriched_at",
-            "verdict", "score", "classification", "reasoning",
-            "contact_who", "contact_channel", "engagement_hook",
-            "grade_team", "grade_team_num", "grade_tech", "grade_tech_num",
-            "grade_opportunity", "grade_opportunity_num",
-            "key_evidence", "data_gaps",
+            "verdict", "score", "classification",
+            "grade_team", "grade_tech", "grade_opportunity",
             "technology_domains", "categories", "member_count",
             "outreach_now_score", "venture_upside_score",
             "custom_fields",

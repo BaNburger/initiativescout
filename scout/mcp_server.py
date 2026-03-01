@@ -177,7 +177,7 @@ def list_initiatives(
     verdict: str | None = None, classification: str | None = None,
     uni: str | None = None, faculty: str | None = None,
     search: str | None = None,
-    sort_by: str = "score", sort_dir: str = "desc", limit: int = 50,
+    sort_by: str = "score", sort_dir: str = "desc", limit: int = 20,
     fields: str | None = None,
 ) -> list[dict]:
     """List and filter student initiatives.
@@ -197,7 +197,7 @@ def list_initiatives(
         search: Free-text search across name, description, sector, and more (FTS5-ranked).
         sort_by: Sort field: score, name, uni, faculty, verdict, grade_team, grade_tech, grade_opportunity.
         sort_dir: Sort direction: asc or desc.
-        limit: Max results (default 50, max 500).
+        limit: Max results (default 20, max 500).
         fields: Comma-separated field names for compact mode, e.g. "id,name,verdict,score".
                 Only returns the requested fields from each item (must be valid summary fields).
     """

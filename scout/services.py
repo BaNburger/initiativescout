@@ -34,15 +34,23 @@ def get_entity(session: Session, model, entity_id: int):
 # Shared field tuples
 # ---------------------------------------------------------------------------
 
-SCORE_FIELDS = (
+# Light fields for list views (compact, token-efficient)
+SCORE_LIST_FIELDS = (
+    "verdict", "score", "classification",
+    "grade_team", "grade_tech", "grade_opportunity",
+)
+
+# Full fields for detail views (includes reasoning, contact info, evidence)
+SCORE_DETAIL_FIELDS = (
     "verdict", "score", "classification", "reasoning", "contact_who",
     "contact_channel", "engagement_hook", "grade_team", "grade_team_num",
     "grade_tech", "grade_tech_num", "grade_opportunity", "grade_opportunity_num",
 )
 
-SCORE_RESPONSE_FIELDS = (
-    "verdict", "score", "classification", "grade_team", "grade_tech", "grade_opportunity",
-)
+# Backwards compat alias
+SCORE_FIELDS = SCORE_DETAIL_FIELDS
+
+SCORE_RESPONSE_FIELDS = SCORE_LIST_FIELDS
 
 DETAIL_FIELDS = (
     "team_page", "team_size", "linkedin", "github_org", "key_repos",
@@ -103,13 +111,19 @@ def score_response_dict(outreach: OutreachScore, extended: bool = False) -> dict
     return result
 
 
-def latest_score_fields(scores: list[OutreachScore]) -> dict[str, Any]:
+def latest_score_fields(scores: list[OutreachScore], detail: bool = True) -> dict[str, Any]:
+    fields = SCORE_DETAIL_FIELDS if detail else SCORE_LIST_FIELDS
     if not scores:
-        return {**{f: None for f in SCORE_FIELDS}, "key_evidence": [], "data_gaps": []}
+        result: dict[str, Any] = {f: None for f in fields}
+        if detail:
+            result["key_evidence"] = []
+            result["data_gaps"] = []
+        return result
     latest = max(scores, key=lambda s: s.scored_at)
-    result = {f: getattr(latest, f) for f in SCORE_FIELDS}
-    result["key_evidence"] = json_parse(latest.key_evidence_json, [])
-    result["data_gaps"] = json_parse(latest.data_gaps_json, [])
+    result = {f: getattr(latest, f) for f in fields}
+    if detail:
+        result["key_evidence"] = json_parse(latest.key_evidence_json, [])
+        result["data_gaps"] = json_parse(latest.data_gaps_json, [])
     return result
 
 
@@ -153,12 +167,19 @@ def initiative_summary(init: Initiative) -> dict:
         init,
         enriched=enriched,
         enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
-        score_fields=latest_score_fields(init.scores),
+        score_fields=latest_score_fields(init.scores, detail=False),
     )
 
 
 def initiative_detail(init: Initiative) -> dict:
-    base = initiative_summary(init)
+    enriched = bool(init.enrichments)
+    enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
+    base = _build_initiative_dict(
+        init,
+        enriched=enriched,
+        enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
+        score_fields=latest_score_fields(init.scores, detail=True),
+    )
     base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
     base["extra_links"] = json_parse(init.extra_links_json)
     base["enrichments"] = [
@@ -250,34 +271,46 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
 # ---------------------------------------------------------------------------
 
 
-def _latest_score_subquery():
-    """Subquery returning the latest initiative-level score per initiative."""
-    return (
-        select(
-            OutreachScore.initiative_id,
-            OutreachScore.verdict,
-            OutreachScore.score,
-            OutreachScore.classification,
+def _latest_score_subquery(detail: bool = False):
+    """Subquery returning the latest initiative-level score per initiative.
+
+    Args:
+        detail: If True, include heavy text columns (reasoning, contact info,
+                evidence, data gaps). If False, only include lightweight fields
+                needed for list views.
+    """
+    columns = [
+        OutreachScore.initiative_id,
+        OutreachScore.verdict,
+        OutreachScore.score,
+        OutreachScore.classification,
+        OutreachScore.grade_team,
+        OutreachScore.grade_team_num,
+        OutreachScore.grade_tech,
+        OutreachScore.grade_tech_num,
+        OutreachScore.grade_opportunity,
+        OutreachScore.grade_opportunity_num,
+        OutreachScore.scored_at,
+    ]
+    if detail:
+        columns.extend([
             OutreachScore.reasoning,
             OutreachScore.contact_who,
             OutreachScore.contact_channel,
             OutreachScore.engagement_hook,
             OutreachScore.key_evidence_json,
             OutreachScore.data_gaps_json,
-            OutreachScore.grade_team,
-            OutreachScore.grade_team_num,
-            OutreachScore.grade_tech,
-            OutreachScore.grade_tech_num,
-            OutreachScore.grade_opportunity,
-            OutreachScore.grade_opportunity_num,
-            OutreachScore.scored_at,
-            func.row_number()
-            .over(
-                partition_by=OutreachScore.initiative_id,
-                order_by=OutreachScore.scored_at.desc(),
-            )
-            .label("rn"),
+        ])
+    columns.append(
+        func.row_number()
+        .over(
+            partition_by=OutreachScore.initiative_id,
+            order_by=OutreachScore.scored_at.desc(),
         )
+        .label("rn"),
+    )
+    return (
+        select(*columns)
         .where(OutreachScore.project_id.is_(None))
         .subquery()
     )
@@ -298,7 +331,7 @@ def query_initiatives(
     fields: set[str] | None = None,
 ) -> tuple[list[dict], int]:
     """Return (items, total) with filtering, sorting, and pagination in SQL."""
-    ls = _latest_score_subquery()
+    ls = _latest_score_subquery(detail=False)
 
     # Enrichment aggregates as a subquery
     enrich_sub = (
@@ -311,25 +344,16 @@ def query_initiatives(
         .subquery()
     )
 
-    # Base query: Initiative LEFT JOIN latest score + enrichment aggregates
+    # Base query: Initiative LEFT JOIN latest score (light) + enrichment aggregates
     base = (
         select(
             Initiative,
             ls.c.verdict.label("ls_verdict"),
             ls.c.score.label("ls_score"),
             ls.c.classification.label("ls_classification"),
-            ls.c.reasoning.label("ls_reasoning"),
-            ls.c.contact_who.label("ls_contact_who"),
-            ls.c.contact_channel.label("ls_contact_channel"),
-            ls.c.engagement_hook.label("ls_engagement_hook"),
-            ls.c.key_evidence_json.label("ls_key_evidence_json"),
-            ls.c.data_gaps_json.label("ls_data_gaps_json"),
             ls.c.grade_team.label("ls_grade_team"),
-            ls.c.grade_team_num.label("ls_grade_team_num"),
             ls.c.grade_tech.label("ls_grade_tech"),
-            ls.c.grade_tech_num.label("ls_grade_tech_num"),
             ls.c.grade_opportunity.label("ls_grade_opportunity"),
-            ls.c.grade_opportunity_num.label("ls_grade_opportunity_num"),
             func.coalesce(enrich_sub.c.enrich_count, 0).label("enrich_count"),
             enrich_sub.c.enrich_latest.label("enrich_latest"),
         )
@@ -410,12 +434,10 @@ def query_initiatives(
     items = []
     for row in rows:
         init = row[0]
-        # Build score fields from the SQL row (ls_ prefix columns)
+        # Build score fields from the SQL row (light fields only)
         score_fields: dict[str, Any] = {}
-        for f in SCORE_FIELDS:
+        for f in SCORE_LIST_FIELDS:
             score_fields[f] = getattr(row, f"ls_{f}", None)
-        score_fields["key_evidence"] = json_parse(row.ls_key_evidence_json, [])
-        score_fields["data_gaps"] = json_parse(row.ls_data_gaps_json, [])
 
         items.append(_build_initiative_dict(
             init,

@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "scout": {
-      "command": "scout-mcp"
-    }
-  }
-}

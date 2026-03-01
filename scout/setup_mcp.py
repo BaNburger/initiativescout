@@ -53,13 +53,50 @@ def find_claude_cli() -> Path | None:
     return Path(found).resolve() if found else None
 
 
-def get_env_vars() -> dict[str, str]:
-    """Collect env vars to pass through to the MCP server config."""
+def _prompt_key(name: str, *, required: bool = False, hint: str = "") -> str:
+    """Prompt the user for an API key interactively."""
+    label = f"  Enter {name}"
+    if hint:
+        label += f" ({hint})"
+    if not required:
+        label += " [press Enter to skip]"
+    label += ": "
+    try:
+        val = input(label).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
+    return val
+
+
+def get_env_vars(interactive: bool = True) -> dict[str, str]:
+    """Collect env vars, prompting interactively for missing required keys."""
     env: dict[str, str] = {}
-    for key in ("ANTHROPIC_API_KEY", "GITHUB_TOKEN"):
-        val = os.environ.get(key, "").strip()
+
+    # ANTHROPIC_API_KEY — required for scoring
+    val = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if val:
+        masked = val[:7] + "..." + val[-4:] if len(val) > 11 else "***"
+        print(f"  {OK} ANTHROPIC_API_KEY found in environment ({masked})")
+        env["ANTHROPIC_API_KEY"] = val
+    elif interactive:
+        print(f"  {WARN} ANTHROPIC_API_KEY not found in environment")
+        val = _prompt_key("ANTHROPIC_API_KEY", required=True, hint="required for scoring")
         if val:
-            env[key] = val
+            env["ANTHROPIC_API_KEY"] = val
+        else:
+            print(f"  {WARN} Skipped — scoring will not work without this key")
+
+    # GITHUB_TOKEN — optional for enrichment
+    val = os.environ.get("GITHUB_TOKEN", "").strip()
+    if val:
+        print(f"  {OK} GITHUB_TOKEN found in environment")
+        env["GITHUB_TOKEN"] = val
+    elif interactive:
+        val = _prompt_key("GITHUB_TOKEN", required=False, hint="optional, improves GitHub enrichment")
+        if val:
+            env["GITHUB_TOKEN"] = val
+
     return env
 
 
@@ -354,9 +391,12 @@ Commands:
   --verify         Check if everything is configured correctly
   --help           Show this help message
 
-Environment variables (read from current shell):
-  ANTHROPIC_API_KEY   Required for LLM scoring (passed to MCP server)
-  GITHUB_TOKEN        Optional for GitHub enrichment (passed to MCP server)
+API keys are read from environment variables if set, otherwise you will be
+prompted to enter them interactively. Keys are stored in the client's MCP
+config (not in your shell profile or .env files).
+
+  ANTHROPIC_API_KEY   Required for LLM scoring
+  GITHUB_TOKEN        Optional, improves GitHub enrichment
 """
 
 
@@ -388,14 +428,10 @@ def main() -> None:
         sys.exit(1)
     print(f"  {OK} scout-mcp: {scout_mcp}")
 
-    # Step 2: Collect env vars
-    env = get_env_vars()
-    if env.get("ANTHROPIC_API_KEY"):
-        print(f"  {OK} ANTHROPIC_API_KEY will be passed through")
-    else:
-        print(f"  {WARN} ANTHROPIC_API_KEY not set -- scoring will not work")
-    if env.get("GITHUB_TOKEN"):
-        print(f"  {OK} GITHUB_TOKEN will be passed through")
+    # Step 2: Collect API keys (prompts interactively if missing)
+    print()
+    print(_bold("API Keys"))
+    env = get_env_vars(interactive=sys.stdin.isatty())
     print()
 
     # Step 3: Dispatch
