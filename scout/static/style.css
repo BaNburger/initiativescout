@@ -64,6 +64,7 @@ a:hover { text-decoration: underline; }
 
 /* --- List panel --- */
 .list-panel { flex: 0 0 55%; min-width: 360px; overflow-y: auto; border-right: 1px solid var(--border); }
+.result-count { padding: 6px 12px; font-size: 12px; color: var(--ink-dim); border-bottom: 1px solid var(--border); }
 .list-table { width: 100%; border-collapse: collapse; }
 .list-table th { position: sticky; top: 0; background: var(--surface); padding: 10px 12px; text-align: left; font-size: 12px; font-weight: 500; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; z-index: 2; }
 .list-table th:hover { color: var(--ink); }
@@ -115,6 +116,15 @@ a:hover { text-decoration: underline; }
 .card-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-dim); margin-bottom: 4px; }
 
 .detail-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+/* --- Enrichment cards --- */
+.enrichment-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 8px; }
+.enrichment-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.enrichment-source { font-weight: 600; font-size: 13px; text-transform: capitalize; }
+.enrichment-date { font-size: 12px; color: var(--ink-dim); }
+.enrichment-summary { font-size: 13px; line-height: 1.5; color: var(--ink-dim); white-space: pre-line; }
+.btn-link { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 0; }
+.btn-link:hover { text-decoration: underline; }
 
 /* --- Buttons --- */
 .btn { padding: 7px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2); color: var(--ink); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }

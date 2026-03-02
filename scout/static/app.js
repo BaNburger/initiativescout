@@ -50,6 +50,18 @@ function gradeBadge(grade) {
   return `<span class="grade-badge ${gradeColorClass(grade)}">${esc(grade)}</span>`;
 }
 
+function toggleEnrichment(btn) {
+  const el = btn.previousElementSibling;
+  const full = el.dataset.full;
+  if (btn.textContent === '[show more]') {
+    el.textContent = full;
+    btn.textContent = '[show less]';
+  } else {
+    el.textContent = full.slice(0, 300) + '\u2026';
+    btn.textContent = '[show more]';
+  }
+}
+
 const VERDICT_SHORT = { reach_out_now: 'NOW', reach_out_soon: 'SOON', monitor: 'MON', skip: 'SKIP' };
 const VERDICT_LONG = { reach_out_now: 'Reach Out Now', reach_out_soon: 'Reach Out Soon', monitor: 'Monitor', skip: 'Skip' };
 
@@ -270,7 +282,7 @@ async function loadInitiatives() {
   const data = await api('GET', url);
   state.initiatives = data.items;
   renderList();
-  populateFacultyFilter();
+  updateResultCount(data.items.length, data.total);
 }
 
 async function loadStats() {
@@ -347,12 +359,37 @@ function clearFilters() {
   loadInitiatives();
 }
 
-function populateFacultyFilter() {
-  const faculties = [...new Set(state.initiatives.map(i => i.faculty).filter(Boolean))].sort();
+function updateResultCount(shown, total) {
+  let el = document.getElementById('result-count');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'result-count';
+    el.className = 'result-count';
+    const listPanel = document.getElementById('list-panel');
+    listPanel.insertBefore(el, listPanel.firstChild);
+  }
+  if (total === 0) {
+    el.textContent = 'No results';
+  } else if (shown < total) {
+    el.textContent = `Showing ${shown} of ${total} initiatives`;
+  } else {
+    el.textContent = `${total} initiatives`;
+  }
+}
+
+async function populateFacultyFilter() {
   const sel = document.getElementById('filter-faculty');
   const current = sel.value;
-  sel.innerHTML = '<option value="">All Faculties</option>' +
-    faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
+  try {
+    const faculties = await api('GET', '/api/faculties');
+    sel.innerHTML = '<option value="">All Faculties</option>' +
+      faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
+  } catch (e) {
+    // Fallback: derive from current page data
+    const faculties = [...new Set(state.initiatives.map(i => i.faculty).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">All Faculties</option>' +
+      faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
+  }
 }
 
 function sortBy(field) {
@@ -638,6 +675,27 @@ function renderDetail(d) {
   // Description
   html += `<div class="detail-section"><h3>Description</h3><p class="editable"${ea('description',d.description,'textarea')} ondblclick="editFromAttr(this)">${esc(d.description) || 'Double-click to add description...'}</p></div>`;
 
+  // Enrichments
+  if (d.enrichments && d.enrichments.length > 0) {
+    html += `<div class="detail-section"><h3>Enrichment Sources</h3>`;
+    d.enrichments.forEach(e => {
+      const label = esc(humanize(e.source_type));
+      const date = esc(e.fetched_at.split('T')[0]);
+      html += `<div class="enrichment-card">`;
+      html += `<div class="enrichment-card-header"><span class="enrichment-source">${label}</span><span class="enrichment-date">${date}</span></div>`;
+      if (e.summary) {
+        const short = e.summary.length > 300;
+        const text = short ? e.summary.slice(0, 300) + '\u2026' : e.summary;
+        html += `<div class="enrichment-summary"${short ? ` data-full="${escAttr(e.summary)}"` : ''}>${esc(text)}</div>`;
+        if (short) {
+          html += `<button class="btn-link" onclick="toggleEnrichment(this)">[show more]</button>`;
+        }
+      }
+      html += `</div>`;
+    });
+    html += `</div>`;
+  }
+
   // Domain tags
   const hasDomains = d.technology_domains || d.market_domains || d.categories;
   if (hasDomains) {
@@ -702,15 +760,6 @@ function renderDetail(d) {
     state.customColumns.forEach(cc => {
       const val = (d.custom_fields || {})[cc.key] || '';
       html += `<li class="editable"${editAttr(d.id, 'custom:' + cc.key, val)} ondblclick="editFromAttr(this)">${esc(cc.label)}: ${esc(val) || '\u2014'}</li>`;
-    });
-    html += `</ul></div>`;
-  }
-
-  // Enrichments
-  if (d.enrichments && d.enrichments.length > 0) {
-    html += `<div class="detail-section"><h3>Enrichment Sources</h3><ul>`;
-    d.enrichments.forEach(e => {
-      html += `<li>${esc(e.source_type)} \u2014 ${esc(e.fetched_at.split('T')[0])}</li>`;
     });
     html += `</ul></div>`;
   }
@@ -1537,6 +1586,7 @@ async function initApp() {
   await loadDatabases();
   await loadCustomColumns();
   await loadInitiatives();
+  populateFacultyFilter();
   loadStats();
 }
 initApp();

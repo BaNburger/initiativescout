@@ -490,6 +490,17 @@ async def update_scoring_prompt(key: str, body: ScoringPromptUpdate,
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/faculties", tags=["Stats"],
+         summary="List all distinct faculty values for filter dropdowns")
+async def get_faculties(session: Session = Depends(db_session)):
+    rows = session.execute(
+        select(func.distinct(Initiative.faculty))
+        .where(Initiative.faculty != "")
+        .where(Initiative.faculty.isnot(None))
+    ).scalars().all()
+    return sorted(rows)
+
+
 @app.get("/api/stats", response_model=StatsOut,
          tags=["Stats"], summary="Get aggregate statistics and breakdowns")
 async def get_stats(session: Session = Depends(db_session)):

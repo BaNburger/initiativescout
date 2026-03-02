@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from datetime import UTC, datetime
+
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 
 from scout import services
 from scout.db import (
-    create_database, current_db_name, init_db, list_databases,
+    create_database, current_db_name, get_session, init_db, list_databases,
     session_scope, switch_db, validate_db_name,
 )
-from scout.models import Initiative, Project
+from scout.enricher import open_crawler
+from scout.models import Enrichment, Initiative, OutreachScore, Project
+from scout.scorer import (
+    DEFAULT_PROMPTS, GRADE_MAP, VALID_CLASSIFICATIONS, VALID_GRADES,
+    LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
+    compute_data_gaps, compute_score, compute_verdict,
+)
 from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
@@ -35,7 +45,9 @@ mcp = FastMCP(
     instructions=(
         "Scout is an outreach intelligence tool for Munich student initiatives. "
         "QUICK START: get_stats() → get_work_queue() → follow recommended_action for each item. "
-        "AUTONOMOUS: get_work_queue() → enrich_initiative(id) → score_initiative_tool(id) → repeat until queue empty. "
+        "BULK (RECOMMENDED): process_queue(limit=20) enriches AND scores in one call. Repeat until remaining_in_queue=0. "
+        "BULK SELECTIVE: batch_enrich(initiative_ids='1,2,3') → batch_score(initiative_ids='1,2,3') for specific items. "
+        "SINGLE ITEM: enrich_initiative(id) → score_initiative_tool(id) for one-off processing with full detail. "
         "DEEP MODE: discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id). "
         "Discovery uses DuckDuckGo to find LinkedIn, GitHub, HuggingFace URLs not in the spreadsheet. Rate-limited (~12s/call). "
         "NEW DATA: create_initiative(name, uni, website) → discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id). "
@@ -70,6 +82,33 @@ def _llm_error(exc: Exception) -> dict:
     """Convert an LLM-related exception into a standard error dict."""
     retryable = getattr(exc, "retryable", False)
     return _error(f"Scoring failed: {exc}", "LLM_ERROR", retryable=retryable)
+
+
+def _check_api_key() -> dict | None:
+    """Return an error dict if the LLM API key is not configured, else None."""
+    provider = os.environ.get("LLM_PROVIDER", "anthropic")
+    if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+        return _error(
+            "ANTHROPIC_API_KEY not set in MCP server environment. "
+            "Run 'scout-setup claude-code' to configure, or add "
+            "env.ANTHROPIC_API_KEY to your .mcp.json / Claude Desktop config. "
+            "Alternatively, use get_scoring_dossier() + submit_score() for LLM-free scoring.",
+            "CONFIG_ERROR",
+        )
+    if provider in ("openai", "openai_compatible") and not os.environ.get("OPENAI_API_KEY"):
+        return _error(
+            "OPENAI_API_KEY not set in MCP server environment. "
+            "Alternatively, use get_scoring_dossier() + submit_score() for LLM-free scoring.",
+            "CONFIG_ERROR",
+        )
+    return None
+
+
+def _parse_ids(raw: str | None) -> list[int] | None:
+    """Parse a comma-separated string of IDs into a list of ints, or None."""
+    if not raw:
+        return None
+    return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
 
 
 # ---------------------------------------------------------------------------
@@ -112,22 +151,30 @@ def scout_overview() -> str:
             "5. discover_initiative(id) — find new URLs via DuckDuckGo (rate-limited, run once per initiative).",
             "6. enrich_initiative(id) — fetch fresh data from all known URLs + GitHub.",
             "7. score_initiative_tool(id) — score 3 dimensions in parallel.",
-            "7. list_initiatives(verdict, ..., fields='id,name,verdict,score') — browse/filter/compact mode.",
-            "8. get_initiative(id) — full details with enrichments and scores.",
-            "9. embed_all_tool() — build dense embeddings for similarity search.",
-            "10. find_similar_initiatives(query='...') — semantic similarity search.",
-            "11. update_initiative(id, ...) — correct or add information.",
-            "12. list_scoring_prompts() / update_scoring_prompt() — customize dimension prompts.",
-            "13. delete_initiative(id) — remove duplicates or irrelevant entries.",
+            "8. list_initiatives(verdict, ..., fields='id,name,verdict,score') — browse/filter/compact mode.",
+            "9. get_initiative(id) — full details with enrichments and scores.",
+            "10. embed_all_tool() — build dense embeddings for similarity search.",
+            "11. find_similar_initiatives(query='...') — semantic similarity search.",
+            "12. update_initiative(id, ...) — correct or add information.",
+            "13. list_scoring_prompts() / update_scoring_prompt() — customize dimension prompts.",
+            "14. delete_initiative(id) — remove duplicates or irrelevant entries.",
         ],
-        "autonomous_workflow": {
-            "description": "For AI agents processing initiatives autonomously.",
+        "bulk_workflow": {
+            "description": "Efficient batch processing (recommended for >5 items).",
             "steps": [
                 "1. get_stats() — understand database state.",
-                "2. get_work_queue(limit=10) — get prioritized items needing work.",
-                "3. For each item, follow recommended_action: 'enrich' → enrich_initiative(id), 'score' → score_initiative_tool(id).",
-                "4. Repeat get_work_queue() until queue is empty.",
-                "5. list_initiatives(verdict='reach_out_now') — review top results.",
+                "2. process_queue(limit=20) — enriches AND scores in one call.",
+                "3. Repeat process_queue() until remaining_in_queue=0.",
+                "4. list_initiatives(verdict='reach_out_now') — review top results.",
+            ],
+            "selective": "batch_enrich(initiative_ids='1,2,3') → batch_score(initiative_ids='1,2,3') for specific items.",
+        },
+        "single_item_workflow": {
+            "description": "For detailed single-item processing with full response data.",
+            "steps": [
+                "1. get_work_queue(limit=10) — get prioritized items.",
+                "2. enrich_initiative(id) → score_initiative_tool(id) per item.",
+                "3. get_initiative(id) — inspect full details.",
             ],
             "new_data_flow": "create_initiative(name, uni, website) → discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id)",
         },
@@ -212,18 +259,27 @@ def list_initiatives(
 
 
 @mcp.tool()
-def get_initiative(initiative_id: int) -> dict:
-    """Get full details for a single initiative including enrichments, projects, and scores.
+def get_initiative(initiative_id: int, compact: bool = False) -> dict:
+    """Get details for a single initiative.
 
-    WHAT: Returns complete profile, all enrichments, projects, scores, and computed data gaps.
+    WHAT: Returns initiative profile, enrichments, projects, scores, and data gaps.
     WHEN: Use after list_initiatives() to inspect a specific initiative before enriching or scoring.
     RESPONSE: verdict=null means unscored. enriched=false means no web data fetched yet.
         data_gaps lists what's missing (e.g. "No GitHub data"). enrichments array shows fetched sources.
     NEXT: If enriched=false, call enrich_initiative(id). If verdict=null, call score_initiative_tool(id).
+
+    Args:
+        initiative_id: The numeric ID of the initiative.
+        compact: If true, returns lighter payload — skips enrichment summaries, extra_links,
+                 projects, and full reasoning. Use for quick lookups. Default false (full detail).
     """
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
-        return err if err else services.initiative_detail(init)
+        if err:
+            return err
+        if compact:
+            return services.initiative_detail_compact(init)
+        return services.initiative_detail(init)
 
 
 @mcp.tool()
@@ -262,9 +318,12 @@ def create_initiative(
             sponsors=sponsors, competitions=competitions,
         )
         session.commit()
-        detail = services.initiative_detail(init)
-        detail["hint"] = "Call enrich_initiative(id) next to fetch web/GitHub data."
-        return detail
+        return {
+            "id": init.id, "name": init.name, "uni": init.uni,
+            "website": init.website or None,
+            "github_org": init.github_org or None,
+            "hint": "Call enrich_initiative(id) next to fetch web/GitHub data.",
+        }
 
 
 @mcp.tool()
@@ -360,7 +419,6 @@ async def enrich_initiative(initiative_id: int) -> dict:
         lists sources that couldn't run (e.g. no website URL set).
     NEXT: Call score_initiative_tool(id) to score using the enrichment data.
     """
-    from scout.enricher import open_crawler
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
         if err:
@@ -455,6 +513,9 @@ async def score_initiative_tool(initiative_id: int) -> dict:
     Args:
         initiative_id: The numeric ID of the initiative to score.
     """
+    key_err = _check_api_key()
+    if key_err:
+        return key_err
     with session_scope() as session:
         try:
             init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
@@ -468,6 +529,423 @@ async def score_initiative_tool(initiative_id: int) -> dict:
             return result
         except Exception as exc:
             return _llm_error(exc)
+
+
+@mcp.tool()
+def get_scoring_dossier(initiative_id: int) -> dict:
+    """Build scoring dossiers and prompts for an initiative WITHOUT making LLM calls.
+
+    WHAT: Returns the 3 dimension dossiers (team, tech, opportunity) and their
+        system prompts so the calling LLM can evaluate them directly.
+        No API key required — all data is assembled locally.
+    WHEN: Use when no LLM API key is configured, or when you want the calling
+        LLM (e.g. Claude Code) to perform the scoring itself.
+    NEXT: Evaluate each dimension, then call submit_score() with the results.
+
+    Args:
+        initiative_id: The numeric ID of the initiative.
+    """
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        if err:
+            return err
+        enrichments = session.execute(
+            select(Enrichment).where(Enrichment.initiative_id == init.id)
+        ).scalars().all()
+        prompts = services.load_scoring_prompts(session)
+
+        team_prompt = prompts.get("team", DEFAULT_PROMPTS["team"][1])
+        tech_prompt = prompts.get("tech", DEFAULT_PROMPTS["tech"][1])
+        opp_prompt = prompts.get("opportunity", DEFAULT_PROMPTS["opportunity"][1])
+
+        return {
+            "initiative_id": init.id,
+            "initiative_name": init.name,
+            "enriched": len(enrichments) > 0,
+            "dimensions": {
+                "team": {"prompt": team_prompt, "dossier": build_team_dossier(init, enrichments)},
+                "tech": {"prompt": tech_prompt, "dossier": build_tech_dossier(init, enrichments)},
+                "opportunity": {"prompt": opp_prompt, "dossier": build_full_dossier(init, enrichments)},
+            },
+            "hint": (
+                "Evaluate each dimension per its prompt, then call submit_score() with "
+                "grade_team, grade_tech, grade_opportunity, classification, "
+                "contact_who, contact_channel, engagement_hook."
+            ),
+        }
+
+
+@mcp.tool()
+def submit_score(
+    initiative_id: int,
+    grade_team: str, grade_tech: str, grade_opportunity: str,
+    classification: str,
+    contact_who: str = "", contact_channel: str = "website_form",
+    engagement_hook: str = "", reasoning: str = "",
+) -> dict:
+    """Submit externally-evaluated scores for an initiative. No LLM call needed.
+
+    WHAT: Validates grades, computes verdict/score deterministically, and saves
+        the OutreachScore. Use after get_scoring_dossier() when the calling LLM
+        has evaluated the dossiers.
+    WHEN: Use as the second step of LLM-free scoring (after get_scoring_dossier).
+
+    Args:
+        initiative_id: The numeric ID of the initiative.
+        grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D).
+        grade_tech: Tech grade (same scale).
+        grade_opportunity: Opportunity grade (same scale).
+        classification: One of: deep_tech, student_venture, applied_research, student_club, dormant.
+        contact_who: Recommended contact person/role.
+        contact_channel: One of: email, linkedin, event, website_form.
+        engagement_hook: Suggested opening line for outreach.
+        reasoning: Brief reasoning for the opportunity assessment.
+    """
+    # Normalize and validate grades
+    gt = grade_team.strip().upper().replace(" ", "")
+    gtech = grade_tech.strip().upper().replace(" ", "")
+    gopp = grade_opportunity.strip().upper().replace(" ", "")
+    for label, val in [("grade_team", gt), ("grade_tech", gtech), ("grade_opportunity", gopp)]:
+        if val not in VALID_GRADES:
+            return _error(f"Invalid {label}: {val!r}. Valid: {', '.join(sorted(VALID_GRADES))}", "VALIDATION_ERROR")
+
+    classification = classification.strip().lower()
+    if classification not in VALID_CLASSIFICATIONS:
+        return _error(
+            f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(VALID_CLASSIFICATIONS))}",
+            "VALIDATION_ERROR",
+        )
+
+    VALID_CHANNELS = {"email", "linkedin", "event", "website_form"}
+    contact_channel = contact_channel.strip().lower()
+    if contact_channel and contact_channel not in VALID_CHANNELS:
+        return _error(
+            f"Invalid contact_channel: {contact_channel!r}. Valid: {', '.join(sorted(VALID_CHANNELS))}",
+            "VALIDATION_ERROR",
+        )
+
+    avg_grade = (GRADE_MAP[gt] + GRADE_MAP[gtech] + GRADE_MAP[gopp]) / 3
+    verdict = compute_verdict(avg_grade)
+    score = compute_score(avg_grade)
+
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        if err:
+            return err
+
+        enrichments = session.execute(
+            select(Enrichment).where(Enrichment.initiative_id == init.id)
+        ).scalars().all()
+        data_gaps = compute_data_gaps(init, list(enrichments))
+
+        key_evidence = [
+            f"Team ({gt}): externally evaluated",
+            f"Tech ({gtech}): externally evaluated",
+            f"Opportunity ({gopp}): {reasoning}" if reasoning else f"Opportunity ({gopp}): externally evaluated",
+        ]
+
+        outreach = OutreachScore(
+            initiative_id=init.id,
+            project_id=None,
+            verdict=verdict,
+            score=score,
+            classification=classification,
+            reasoning=reasoning,
+            contact_who=contact_who,
+            contact_channel=contact_channel,
+            engagement_hook=engagement_hook,
+            key_evidence_json=json.dumps(key_evidence),
+            data_gaps_json=json.dumps(data_gaps),
+            grade_team=gt,
+            grade_team_num=GRADE_MAP[gt],
+            grade_tech=gtech,
+            grade_tech_num=GRADE_MAP[gtech],
+            grade_opportunity=gopp,
+            grade_opportunity_num=GRADE_MAP[gopp],
+            llm_model="external",
+            scored_at=datetime.now(UTC),
+        )
+
+        # Delete existing initiative-level scores, then save
+        session.execute(delete(OutreachScore).where(
+            OutreachScore.initiative_id == init.id,
+            OutreachScore.project_id.is_(None),
+        ))
+        session.add(outreach)
+        session.commit()
+
+        return {
+            "initiative_id": init.id,
+            "initiative_name": init.name,
+            "verdict": verdict,
+            "score": score,
+            "classification": classification,
+            "grade_team": gt,
+            "grade_tech": gtech,
+            "grade_opportunity": gopp,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Tools: Batch Operations
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def batch_enrich(initiative_ids: str | None = None, limit: int = 20) -> dict:
+    """Enrich multiple initiatives in one call, sharing a single web crawler.
+
+    WHAT: Runs web/GitHub enrichment for a batch of initiatives (3 concurrent).
+        Shares one Crawl4AI browser instance for efficiency. Returns compact
+        status per item — no full enrichment details.
+    WHEN: Use instead of calling enrich_initiative() in a loop. Much faster, fewer tokens.
+    AUTO: If no initiative_ids given, auto-selects from work queue (items needing enrichment).
+
+    Args:
+        initiative_ids: Comma-separated initiative IDs, e.g. "1,2,3". If omitted, picks from work queue.
+        limit: Max items to process (1-50, default 20). Applies when auto-selecting from queue.
+    """
+    limit = max(1, min(limit, 50))
+    ids = _parse_ids(initiative_ids)
+
+    with session_scope() as session:
+        if ids is None:
+            queue = services.get_work_queue(session, limit)
+            ids = [item["id"] for item in queue if item["needs_enrichment"]]
+        if not ids:
+            return {"processed": 0, "succeeded": 0, "failed": 0, "results": [],
+                    "hint": "No initiatives need enrichment. Try batch_score() instead."}
+        ids = ids[:limit]
+
+    results: list[dict] = []
+    sem = asyncio.Semaphore(3)
+
+    async def _enrich_one(init_id: int) -> None:
+        async with sem:
+            s = get_session()
+            try:
+                init = s.execute(
+                    select(Initiative).where(Initiative.id == init_id)
+                ).scalars().first()
+                if not init:
+                    results.append({"id": init_id, "name": f"ID {init_id}",
+                                    "ok": False, "error": "Not found"})
+                    return
+                new = await services.run_enrichment(s, init, crawler=crawler)
+                s.commit()
+                if new:
+                    results.append({"id": init_id, "name": init.name, "ok": True,
+                                    "sources": len(new)})
+                else:
+                    results.append({"id": init_id, "name": init.name, "ok": False,
+                                    "sources": 0,
+                                    "warning": "No data fetched — add website/github URLs or run discover_initiative() first"})
+            except Exception as exc:
+                s.rollback()
+                results.append({"id": init_id, "name": f"ID {init_id}",
+                                "ok": False, "error": str(exc)[:120]})
+            finally:
+                s.close()
+
+    async with open_crawler() as crawler:
+        await asyncio.gather(*[_enrich_one(iid) for iid in ids])
+
+    # Sort results to match input order
+    order = {iid: i for i, iid in enumerate(ids)}
+    results.sort(key=lambda r: order.get(r["id"], 999))
+
+    ok = sum(1 for r in results if r.get("ok"))
+    failed = len(results) - ok
+    result = {"processed": len(ids), "succeeded": ok, "failed": failed, "results": results}
+    if ok > 0:
+        result["hint"] = "Call batch_score() next to score the enriched initiatives."
+    return result
+
+
+@mcp.tool()
+async def batch_score(initiative_ids: str | None = None, limit: int = 20) -> dict:
+    """Score multiple initiatives in one call, sharing a single LLM client.
+
+    WHAT: Runs LLM scoring for a batch of initiatives sequentially (3 parallel dimension
+        calls per initiative). Returns compact verdict+score per item — no reasoning or evidence.
+    WHEN: Use instead of calling score_initiative_tool() in a loop. Saves tokens significantly.
+    AUTO: If no initiative_ids given, auto-selects from work queue (enriched but unscored).
+    PREREQ: Initiatives should be enriched first. Use batch_enrich() or process_queue().
+
+    Args:
+        initiative_ids: Comma-separated initiative IDs, e.g. "1,2,3". If omitted, picks from work queue.
+        limit: Max items to process (1-50, default 20). Applies when auto-selecting from queue.
+    """
+    key_err = _check_api_key()
+    if key_err:
+        return key_err
+
+    limit = max(1, min(limit, 50))
+    ids = _parse_ids(initiative_ids)
+
+    with session_scope() as session:
+        if ids is None:
+            queue = services.get_work_queue(session, limit)
+            ids = [item["id"] for item in queue if item["needs_scoring"]]
+        if not ids:
+            return {"processed": 0, "succeeded": 0, "failed": 0,
+                    "results": [], "summary": {},
+                    "hint": "No initiatives need scoring."}
+        ids = ids[:limit]
+
+    client = LLMClient()
+    results: list[dict] = []
+    ok = failed = 0
+    verdict_counts: dict[str, int] = {}
+
+    for init_id in ids:
+        s = get_session()
+        try:
+            init = s.execute(
+                select(Initiative).where(Initiative.id == init_id)
+            ).scalars().first()
+            if not init:
+                results.append({"id": init_id, "ok": False, "error": "Not found"})
+                failed += 1
+                continue
+            outreach = await services.run_scoring(s, init, client)
+            s.commit()
+            v = outreach.verdict
+            verdict_counts[v] = verdict_counts.get(v, 0) + 1
+            results.append({"id": init_id, "name": init.name, "ok": True,
+                            "verdict": v, "score": outreach.score,
+                            "classification": outreach.classification})
+            ok += 1
+        except Exception as exc:
+            s.rollback()
+            results.append({"id": init_id, "ok": False, "error": str(exc)[:120]})
+            failed += 1
+        finally:
+            s.close()
+
+    return {"processed": len(ids), "succeeded": ok, "failed": failed,
+            "results": results, "summary": verdict_counts}
+
+
+@mcp.tool()
+async def process_queue(limit: int = 20, enrich: bool = True, score: bool = True) -> dict:
+    """Autonomous pipeline: fetch work queue, enrich, then score. All-in-one.
+
+    WHAT: Fetches the work queue, enriches items that need it, then scores items that
+        need it (including freshly enriched ones). Returns compact results per step.
+        This is the recommended tool for autonomous bulk processing.
+    WHEN: Use as the primary autonomous workflow tool. One call processes a full batch.
+        Call repeatedly until remaining_in_queue reaches 0.
+    RESPONSE: Enrichment counts + per-item scoring verdicts (compact, no reasoning).
+
+    Args:
+        limit: Max items to process (1-50, default 20).
+        enrich: Whether to run enrichment step (default true).
+        score: Whether to run scoring step (default true). Requires ANTHROPIC_API_KEY.
+    """
+    if score:
+        key_err = _check_api_key()
+        if key_err:
+            return key_err
+
+    limit = max(1, min(limit, 50))
+
+    with session_scope() as session:
+        queue = services.get_work_queue(session, limit)
+        stats = services.compute_stats(session)
+
+    if not queue:
+        return {"enrichment": None, "scoring": None, "remaining_in_queue": 0,
+                "hint": "Work queue is empty. All initiatives are processed."}
+
+    to_enrich = [item for item in queue if item["needs_enrichment"]]
+    to_score_only = [item for item in queue if item["needs_scoring"] and not item["needs_enrichment"]]
+
+    enrich_result = None
+    score_result = None
+
+    # Step 1: Enrich
+    if enrich and to_enrich:
+        enrich_ok = enrich_failed = 0
+        sem = asyncio.Semaphore(3)
+
+        async def _do_enrich(item: dict, crawler: object) -> None:
+            nonlocal enrich_ok, enrich_failed
+            async with sem:
+                s = get_session()
+                try:
+                    init = s.execute(
+                        select(Initiative).where(Initiative.id == item["id"])
+                    ).scalars().first()
+                    if init:
+                        await services.run_enrichment(s, init, crawler=crawler)
+                        s.commit()
+                        enrich_ok += 1
+                    else:
+                        enrich_failed += 1
+                except Exception:
+                    log.warning("process_queue enrich failed for id=%s", item["id"], exc_info=True)
+                    s.rollback()
+                    enrich_failed += 1
+                finally:
+                    s.close()
+
+        async with open_crawler() as crawler:
+            await asyncio.gather(*[_do_enrich(item, crawler) for item in to_enrich])
+
+        enrich_result = {"processed": len(to_enrich), "succeeded": enrich_ok, "failed": enrich_failed}
+
+    # After enrichment, freshly-enriched items now need scoring
+    score_ids = [item["id"] for item in to_score_only]
+    if enrich and to_enrich:
+        score_ids.extend(item["id"] for item in to_enrich)
+
+    # Step 2: Score
+    if score and score_ids:
+        client = LLMClient()
+        score_ok = score_failed = 0
+        score_results: list[dict] = []
+        verdict_counts: dict[str, int] = {}
+
+        for init_id in score_ids:
+            s = get_session()
+            try:
+                init = s.execute(
+                    select(Initiative).where(Initiative.id == init_id)
+                ).scalars().first()
+                if not init:
+                    score_failed += 1
+                    continue
+                outreach = await services.run_scoring(s, init, client)
+                s.commit()
+                v = outreach.verdict
+                verdict_counts[v] = verdict_counts.get(v, 0) + 1
+                score_results.append({"id": init_id, "name": init.name,
+                                      "verdict": v, "score": outreach.score,
+                                      "classification": outreach.classification})
+                score_ok += 1
+            except Exception:
+                log.warning("process_queue score failed for id=%s", init_id, exc_info=True)
+                s.rollback()
+                score_failed += 1
+            finally:
+                s.close()
+
+        score_result = {"processed": len(score_ids), "succeeded": score_ok,
+                        "failed": score_failed, "results": score_results,
+                        "summary": verdict_counts}
+
+    remaining = max(0, (stats["total"] - stats["scored"])
+                    - (score_result["succeeded"] if score_result else 0))
+    result: dict = {"enrichment": enrich_result, "scoring": score_result,
+                    "remaining_in_queue": remaining}
+    if not score:
+        result["hint"] = "Enrichment done. Scoring was skipped (score=False)."
+    elif remaining > 0:
+        result["hint"] = "Call process_queue() again to process the next batch."
+    else:
+        result["hint"] = "All initiatives processed. Use list_initiatives(verdict='reach_out_now') to review top results."
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +1038,10 @@ def embed_all_tool() -> dict:
         return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
 
     with session_scope() as session:
-        count = embed_all(session)
+        try:
+            count = embed_all(session)
+        except Exception as exc:
+            return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
         return {"ok": True, "embedded": count, "hint": "Use find_similar_initiatives() for semantic search."}
 
 
@@ -669,6 +1150,9 @@ async def score_project_tool(project_id: int) -> dict:
     WHEN: Call after creating or updating a project. Requires ANTHROPIC_API_KEY.
     ERRORS: Returns {error, error_code: "LLM_ERROR", retryable} on failure.
     """
+    key_err = _check_api_key()
+    if key_err:
+        return key_err
     with session_scope() as session:
         try:
             proj, err = _get_or_error(session, Project, project_id, "Project")
@@ -695,15 +1179,21 @@ async def score_project_tool(project_id: int) -> dict:
 
 
 @mcp.tool()
-def list_scoring_prompts() -> list[dict]:
+def list_scoring_prompts(compact: bool = False) -> list[dict]:
     """List the 3 scoring prompt definitions (team, tech, opportunity).
 
     WHAT: Returns each prompt's key, label, content (system prompt text), and updated_at.
     WHEN: Use to inspect or audit how the LLM evaluates each dimension before scoring.
     NEXT: Use update_scoring_prompt(key, content) to customize a dimension's evaluation criteria.
+
+    Args:
+        compact: If true, returns only key, label, and updated_at (no prompt content). Default false.
     """
     with session_scope() as session:
-        return services.get_scoring_prompts(session)
+        prompts = services.get_scoring_prompts(session)
+        if compact:
+            return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]} for p in prompts]
+        return prompts
 
 
 @mcp.tool()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import threading
 from contextlib import contextmanager
@@ -39,6 +40,13 @@ def init_db(db_path: str | Path | None = None) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{db_path}"
         new_engine = create_engine(url, connect_args={"check_same_thread": False})
+        # Performance PRAGMAs — must run before any schema operations
+        with new_engine.begin() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.execute(text("PRAGMA cache_size=10000"))      # ~40MB page cache
+            conn.execute(text("PRAGMA mmap_size=30000000"))    # 30MB memory-mapped I/O
+            conn.execute(text("PRAGMA temp_store=MEMORY"))
         Base.metadata.create_all(new_engine)
         new_factory = sessionmaker(bind=new_engine, autoflush=False, expire_on_commit=False)
         _migrate_existing_db(new_engine)
@@ -137,22 +145,29 @@ def list_databases() -> list[str]:
     return sorted(p.stem for p in DATA_DIR.glob("*.db"))
 
 
+def _safe_db_path(name: str) -> Path:
+    """Build a DB path and verify it stays inside DATA_DIR."""
+    db_path = (DATA_DIR / f"{name}.db").resolve()
+    if not str(db_path).startswith(str(DATA_DIR.resolve()) + os.sep):
+        raise ValueError("Invalid database path")
+    return db_path
+
+
 def switch_db(name: str) -> None:
     """Switch to a different database by stem name. Creates if it doesn't exist."""
-    db_path = DATA_DIR / f"{name}.db"
-    init_db(db_path)
+    init_db(_safe_db_path(name))
 
 
 def create_database(name: str) -> None:
     """Create a new database and switch to it."""
-    db_path = DATA_DIR / f"{name}.db"
+    db_path = _safe_db_path(name)
     if db_path.exists():
         raise ValueError(f"Database '{name}' already exists")
     init_db(db_path)
 
 
 def _ensure_fts_table(engine) -> None:
-    """Create and populate the FTS5 full-text search table if it doesn't exist."""
+    """Create the FTS5 table structure (rebuild deferred to first search)."""
     with engine.begin() as conn:
         conn.execute(text("""
             CREATE VIRTUAL TABLE IF NOT EXISTS initiative_fts USING fts5(
@@ -161,10 +176,6 @@ def _ensure_fts_table(engine) -> None:
                 content='initiatives', content_rowid='id'
             )
         """))
-        # Only rebuild if FTS table is empty (first creation or after reset)
-        count = conn.execute(text("SELECT COUNT(*) FROM initiative_fts")).scalar()
-        if count == 0:
-            conn.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
 
 
 def _seed_scoring_prompts(engine) -> None:

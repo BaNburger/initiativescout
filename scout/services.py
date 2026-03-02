@@ -191,6 +191,26 @@ def initiative_detail(init: Initiative) -> dict:
     return base
 
 
+def initiative_detail_compact(init: Initiative) -> dict:
+    """Lighter detail view: skips enrichment summaries, extra_links, projects, reasoning."""
+    enriched = bool(init.enrichments)
+    enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
+    base = _build_initiative_dict(
+        init,
+        enriched=enriched,
+        enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
+        score_fields=latest_score_fields(init.scores, detail=False),
+    )
+    base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
+    base["enrichment_sources"] = [e.source_type for e in init.enrichments]
+    base["project_count"] = len(init.projects)
+    # Strip empty/default values to reduce context, but keep id, name, enriched
+    # and preserve legitimate 0 and False values (e.g. github_commits_90d=0)
+    _keep = {"id", "name", "enriched"}
+    _empty = ("", None, [], {})
+    return {k: v for k, v in base.items() if k in _keep or v not in _empty}
+
+
 def project_summary(proj: Project) -> dict:
     sf = latest_score_fields(proj.scores)
     return {
@@ -256,10 +276,23 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
         # Strip control characters and escape FTS5 special chars
         safe_q = "".join(c for c in query if c >= " " or c == "\t")
         safe_q = safe_q.replace('"', '""')
+        fts_q = f'"{safe_q}"'
         rows = session.execute(text(
             'SELECT rowid FROM initiative_fts WHERE initiative_fts MATCH :q '
             'ORDER BY rank LIMIT 500'
-        ), {"q": f'"{safe_q}"'}).all()
+        ), {"q": fts_q}).all()
+        # Lazy FTS rebuild: if empty result, check if FTS index needs populating
+        if not rows:
+            has_rows = session.execute(text(
+                "SELECT 1 FROM initiative_fts LIMIT 1"
+            )).first()
+            if not has_rows:
+                log.info("FTS index empty — rebuilding lazily")
+                rebuild_fts(session)
+                rows = session.execute(text(
+                    'SELECT rowid FROM initiative_fts WHERE initiative_fts MATCH :q '
+                    'ORDER BY rank LIMIT 500'
+                ), {"q": fts_q}).all()
         return [r[0] for r in rows]
     except Exception:
         log.debug("FTS5 search failed for query %r, falling back to LIKE", query)
