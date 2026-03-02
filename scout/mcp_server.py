@@ -52,7 +52,7 @@ mcp = FastMCP(
         "Discovery uses DuckDuckGo to find LinkedIn, GitHub, HuggingFace URLs not in the spreadsheet. Rate-limited (~12s/call). "
         "NEW DATA: create_initiative(name, uni, website) → discover_initiative(id) → enrich_initiative(id) → score_initiative_tool(id). "
         "ANALYTICS: get_stats() → get_aggregations() for score distributions and top-N by verdict. "
-        "SIMILARITY: embed_all_tool() → find_similar_initiatives(query='...') for semantic search. "
+        "SIMILARITY: find_similar_initiatives(query='...') for semantic search (embeddings auto-update on enrichment). "
         "COMPACT: list_initiatives(fields='id,name,verdict,score') to reduce token usage for large lists. "
         "SEARCH: list_initiatives(search='...') uses FTS5 ranked search across name, description, sector, domains, faculty. "
         "ERRORS: All errors return {error, error_code, retryable}. Retry if retryable=true."
@@ -180,7 +180,7 @@ def scout_overview() -> str:
         },
         "search_modes": {
             "keyword": "list_initiatives(search='...') — FTS5-ranked full-text search across name, description, sector, domains, faculty.",
-            "semantic": "find_similar_initiatives(query='...') — Dense embedding similarity via model2vec. Run embed_all_tool() first.",
+            "semantic": "find_similar_initiatives(query='...') — Dense embedding similarity via model2vec. Embeddings auto-update on enrichment.",
             "similar": "find_similar_initiatives(initiative_id=N) — Find initiatives most similar to a given one.",
             "hybrid": "find_similar_initiatives(query='...', uni='TUM', verdict='reach_out_now') — SQL pre-filter + semantic ranking.",
             "compact": "list_initiatives(fields='id,name,verdict,score') — Return only requested fields to save tokens.",
@@ -200,7 +200,7 @@ def scout_overview() -> str:
                 "LLM_ERROR": "LLM API call failed or returned bad output. Check retryable flag.",
                 "ALREADY_EXISTS": "Duplicate entity (database or custom column key).",
                 "VALIDATION_ERROR": "Invalid input (e.g. bad database name format).",
-                "DEPENDENCY_MISSING": "Optional dependency not installed (e.g. model2vec for embeddings).",
+                "DEPENDENCY_MISSING": "Optional dependency not installed (e.g. duckduckgo-search for discovery).",
             },
         },
         "verdicts": {
@@ -965,7 +965,7 @@ def find_similar_initiatives(
         with similarity scores. Supports hybrid mode: SQL pre-filters + semantic ranking.
     WHEN: Use to discover related initiatives, find thematic clusters, or answer
         "show me initiatives similar to X".
-    PREREQ: Run embed_all() first to build embeddings. Returns empty if no embeddings exist.
+    PREREQ: Embeddings are auto-built during enrichment. Run embed_all() to rebuild all at once.
     NEXT: get_initiative(id) to inspect top results.
 
     Args:
@@ -975,10 +975,7 @@ def find_similar_initiatives(
         verdict: Pre-filter by verdict before ranking (comma-separated).
         limit: Max results (default 10, max 100).
     """
-    try:
-        from scout.embedder import find_similar
-    except ImportError:
-        return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
+    from scout.embedder import find_similar
 
     with session_scope() as session:
         # Build optional ID mask from SQL filters
@@ -1028,15 +1025,11 @@ def embed_all_tool() -> dict:
 
     WHAT: Encodes all initiatives into dense vectors using model2vec (local, ~15MB model).
         Embeddings are stored as .npy files alongside the database. Takes ~1 second for 200 initiatives.
-    WHEN: Run once after importing data, or after significant enrichment changes.
-        Re-run is safe (overwrites previous embeddings).
+    WHEN: Embeddings auto-update on each enrichment. Use this tool to rebuild all at once
+        (e.g. after bulk import or if sidecar files are deleted). Re-run is safe (overwrites).
     NEXT: Use find_similar_initiatives() for semantic search.
     """
-    try:
-        from scout.embedder import embed_all
-    except ImportError:
-        return _error("model2vec not installed. Run: pip install 'scout[embeddings]'", "DEPENDENCY_MISSING")
-
+    from scout.embedder import embed_all
     with session_scope() as session:
         try:
             count = embed_all(session)

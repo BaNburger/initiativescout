@@ -2,19 +2,14 @@
 
 Lightweight (~15MB model, numpy-only) semantic embeddings for initiative
 similarity search. Vectors are stored as .npy sidecar files next to the DB.
-
-Install: pip install model2vec
 """
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-try:
-    import numpy as np
-except ImportError:
-    np = None  # type: ignore[assignment]
-
+import numpy as np
+from model2vec import StaticModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,20 +25,9 @@ log = logging.getLogger(__name__)
 _model = None
 
 
-def _check_deps() -> None:
-    """Raise ImportError with a clear message if optional deps are missing."""
-    if np is None:
-        raise ImportError("Embeddings require numpy and model2vec. Install: pip install 'scout[embeddings]'")
-
-
-def _get_model():
+def _get_model() -> StaticModel:
     global _model
     if _model is None:
-        _check_deps()
-        try:
-            from model2vec import StaticModel
-        except ImportError:
-            raise ImportError("model2vec not installed. Install: pip install 'scout[embeddings]'")
         _model = StaticModel.from_pretrained("minishlab/potion-base-32M")
     return _model
 
@@ -88,7 +72,6 @@ def _build_text(init: Initiative, enrichment_summaries: list[str] | None = None)
 
 def embed_all(session: Session) -> int:
     """Embed all initiatives and save to .npy sidecar files. Returns count."""
-    _check_deps()
     model = _get_model()
 
     # Load initiatives with their enrichment summaries
@@ -131,29 +114,30 @@ def embed_all(session: Session) -> int:
 def re_embed_one(session: Session, init: Initiative) -> None:
     """Re-embed a single initiative, updating the sidecar files in-place.
 
-    No-op if sidecar files don't exist yet (user must run embed_all first).
+    Auto-initializes sidecar files if they don't exist yet.
     """
-    _check_deps()
     emb_path, ids_path = _sidecar_paths()
-    if not emb_path.exists() or not ids_path.exists():
-        return
 
-    model = _get_model()
-    vectors = np.load(emb_path)
-    ids = np.load(ids_path)
-
-    # Build text
+    # Build text and encode first (also determines vector dimension for auto-init)
     enrichments = session.execute(
         select(Enrichment).where(Enrichment.initiative_id == init.id)
     ).scalars().all()
     summaries = [e.summary or "" for e in enrichments]
-    text = _build_text(init, summaries)
+    txt = _build_text(init, summaries)
 
-    # Encode and normalize
-    vec = model.encode([text], show_progress_bar=False)[0]
+    model = _get_model()
+    vec = model.encode([txt], show_progress_bar=False)[0]
     norm = np.linalg.norm(vec)
     if norm > 0:
         vec = vec / norm
+
+    # Load existing sidecar files or auto-initialize empty arrays
+    if emb_path.exists() and ids_path.exists():
+        vectors = np.load(emb_path)
+        ids = np.load(ids_path)
+    else:
+        vectors = np.empty((0, vec.shape[0]), dtype=np.float32)
+        ids = np.empty(0, dtype=np.int64)
 
     # Find existing position or append
     idx = np.where(ids == init.id)[0]
@@ -192,7 +176,6 @@ def find_similar(
     Returns:
         List of (initiative_id, similarity_score) tuples, sorted by similarity descending.
     """
-    _check_deps()
     emb_path, ids_path = _sidecar_paths()
     if not emb_path.exists() or not ids_path.exists():
         return []

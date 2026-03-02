@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 
 from scout import services
 from scout.db import (
-    create_database, current_db_name, get_session, init_db, list_databases,
-    session_generator, switch_db, validate_db_name,
+    create_database, current_db_name, get_revision, get_session, init_db,
+    list_databases, session_generator, switch_db, validate_db_name,
 )
 from scout.importer import import_xlsx
 from scout.models import Enrichment, Initiative, OutreachScore, Project
@@ -385,6 +385,15 @@ async def score_project_endpoint(project_id: int, session: Session = Depends(db_
 
 
 # ---------------------------------------------------------------------------
+# Routes: Revision polling (live UI updates)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/revision", tags=["Admin"], summary="Data revision counter for change detection")
+async def get_revision_endpoint():
+    return {"revision": get_revision()}
+
+
+# ---------------------------------------------------------------------------
 # Routes: Databases
 # ---------------------------------------------------------------------------
 
@@ -519,14 +528,11 @@ async def get_aggregations(session: Session = Depends(db_session)):
 
 
 @app.post("/api/embed", tags=["Enrichment"],
-          summary="Build/rebuild dense embeddings for all initiatives (requires model2vec)")
+          summary="Build/rebuild dense embeddings for all initiatives")
 async def embed_all(session: Session = Depends(db_session)):
-    try:
-        from scout.embedder import embed_all as _embed_all
-        count = _embed_all(session)
-        return {"ok": True, "embedded": count}
-    except ImportError:
-        raise HTTPException(501, "model2vec not installed. Run: pip install model2vec")
+    from scout.embedder import embed_all as _embed_all
+    count = _embed_all(session)
+    return {"ok": True, "embedded": count}
 
 
 @app.get("/api/similar/{initiative_id}", tags=["Initiatives"],
@@ -537,11 +543,8 @@ async def find_similar_endpoint(
     session: Session = Depends(db_session),
 ):
     _get_or_404(session, Initiative, initiative_id, "Initiative")
-    try:
-        from scout.embedder import find_similar
-        results = find_similar(initiative_id=initiative_id, top_k=limit)
-    except ImportError:
-        raise HTTPException(501, "model2vec not installed. Run: pip install model2vec")
+    from scout.embedder import find_similar
+    results = find_similar(initiative_id=initiative_id, top_k=limit)
     if not results:
         return {"results": [], "hint": "No embeddings found. Run POST /api/embed first."}
     # Enrich results with names
@@ -567,10 +570,7 @@ async def semantic_search(
     verdict: str | None = Query(None, description="Pre-filter by verdict"),
     session: Session = Depends(db_session),
 ):
-    try:
-        from scout.embedder import find_similar
-    except ImportError:
-        raise HTTPException(501, "model2vec not installed. Run: pip install model2vec")
+    from scout.embedder import find_similar
 
     # Optional SQL pre-filter to build ID mask
     id_mask = None

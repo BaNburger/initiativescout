@@ -18,11 +18,11 @@ dependencies = [
   "anthropic>=0.40.0",
   "python-multipart>=0.0.9",
   "mcp>=1.26.0",
+  "model2vec>=0.4.0",
 ]
 
 [project.optional-dependencies]
 openai = ["openai>=1.50.0"]
-embeddings = ["model2vec>=0.4.0"]
 crawl = ["crawl4ai>=0.8.0", "duckduckgo-search>=8.0.0"]
 
 [tool.setuptools]

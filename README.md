@@ -12,13 +12,7 @@ Requires **Python 3.11+**.
 pipx install git+https://github.com/BaNburger/initiativescout.git
 ```
 
-This installs `scout`, `scout-mcp`, and `scout-setup` commands in an isolated environment.
-
-**With semantic search** ("Find Similar" via [model2vec](https://github.com/MinishLab/model2vec), ~15MB, no PyTorch):
-
-```bash
-pipx install 'scout[embeddings] @ git+https://github.com/BaNburger/initiativescout.git'
-```
+This installs `scout`, `scout-mcp`, and `scout-setup` commands in an isolated environment. Semantic search via [model2vec](https://github.com/MinishLab/model2vec) (~15MB, no PyTorch) is included by default.
 
 ### Alternative: pip
 
@@ -45,7 +39,7 @@ pip uninstall scout         # pip
 ```bash
 git clone https://github.com/BaNburger/initiativescout.git
 cd initiativescout
-pip install -e '.[embeddings]'
+pip install -e .
 ```
 
 ## Quickstart
@@ -68,7 +62,7 @@ Open the browser and import an `.xlsx` spreadsheet (see `output/spreadsheet/`).
 3. **Score** — Three parallel LLM calls evaluate Team, Tech, and Opportunity dimensions. Verdict and score are computed deterministically from the average grade.
 4. **Browse** — Filter, sort, and inspect initiatives in the UI. Full keyboard navigation (spreadsheet-style grid cursor + detail browsing). Inline editing via double-click.
 5. **Search** — FTS5 full-text search with BM25 ranking across name, description, sector, domains, and faculty.
-6. **Similarity** — Dense embeddings via model2vec enable semantic "Find Similar" search.
+6. **Similarity** — Dense embeddings via model2vec enable semantic "Find Similar" search. Embeddings auto-update on each enrichment.
 
 ## Keyboard Shortcuts
 
@@ -166,7 +160,7 @@ Default prompts are seeded on first run and can be freely modified per database.
 | `GET` | `/api/aggregations` | Score distributions by uni/faculty, top-N per verdict, grade breakdowns |
 | `GET` | `/api/similar/{id}` | Find semantically similar initiatives |
 | `GET` | `/api/search/semantic` | Semantic text search with optional SQL pre-filters |
-| `POST` | `/api/embed` | Build/rebuild dense embeddings (requires model2vec) |
+| `POST` | `/api/embed` | Build/rebuild dense embeddings |
 | `GET` | `/api/databases` | List available databases |
 | `POST` | `/api/databases/select` | Switch database |
 | `POST` | `/api/databases/create` | Create new database |
@@ -185,7 +179,7 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 
 **Analytics workflow:** `get_stats()` → `get_aggregations()` → `list_initiatives(verdict='reach_out_now', fields='id,name,uni,score')` for a quick overview.
 
-**Similarity workflow:** `embed_all_tool()` → `find_similar_initiatives(query='applied ML workshops')` or `find_similar_initiatives(initiative_id=42)`.
+**Similarity workflow:** `find_similar_initiatives(query='applied ML workshops')` or `find_similar_initiatives(initiative_id=42)`. Embeddings auto-update on each enrichment; use `embed_all_tool()` to rebuild all at once.
 
 **Available tools:**
 
@@ -200,7 +194,13 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 | `update_initiative` | Update initiative fields (partial update) |
 | `delete_initiative` | Remove an initiative and all associated data |
 | `enrich_initiative` | Fetch fresh web/GitHub enrichment data |
+| `discover_initiative` | Discover new URLs via DuckDuckGo (LinkedIn, GitHub, HuggingFace, etc.) |
 | `score_initiative_tool` | Score 3 dimensions in parallel, aggregate deterministically |
+| `get_scoring_dossier` | Build scoring dossiers and prompts without making LLM calls |
+| `submit_score` | Submit externally computed grades and verdict |
+| `batch_enrich` | Enrich multiple initiatives in one call (shared browser) |
+| `batch_score` | Score multiple initiatives in one call |
+| `process_queue` | Autonomous pipeline: fetch queue → enrich → score in one call |
 | `embed_all_tool` | Build/rebuild dense embeddings for similarity search |
 | `find_similar_initiatives` | Semantic similarity search (by query text or initiative ID, with SQL pre-filters) |
 | `create_project` | Add a sub-project to an initiative |

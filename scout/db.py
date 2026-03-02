@@ -84,6 +84,7 @@ def _migrate_existing_db(engine) -> None:
         ):
             conn.execute(text(stmt))
     _ensure_fts_table(engine)
+    _ensure_revision_tracking(engine)
     _seed_scoring_prompts(engine)
 
 
@@ -164,6 +165,32 @@ def create_database(name: str) -> None:
     if db_path.exists():
         raise ValueError(f"Database '{name}' already exists")
     init_db(db_path)
+
+
+def _ensure_revision_tracking(engine) -> None:
+    """Create the _meta table and triggers that bump a revision counter on data changes."""
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)"
+        ))
+        conn.execute(text(
+            "INSERT OR IGNORE INTO _meta (key, value) VALUES ('revision', 0)"
+        ))
+        for table in ("initiatives", "enrichments", "outreach_scores", "projects"):
+            for op in ("INSERT", "UPDATE", "DELETE"):
+                conn.execute(text(f"""
+                    CREATE TRIGGER IF NOT EXISTS _meta_bump_{table}_{op.lower()}
+                    AFTER {op} ON {table}
+                    BEGIN
+                        UPDATE _meta SET value = value + 1 WHERE key = 'revision';
+                    END
+                """))
+
+
+def get_revision() -> int:
+    """Read the current data revision counter (cheap single-row read)."""
+    with _engine.connect() as conn:
+        return conn.execute(text("SELECT value FROM _meta WHERE key = 'revision'")).scalar() or 0
 
 
 def _ensure_fts_table(engine) -> None:

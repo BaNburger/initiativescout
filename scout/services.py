@@ -696,15 +696,13 @@ async def run_enrichment(
         session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
         for e in new_enrichments:
             session.add(e)
-        # Re-embed if embeddings exist (optional dependency)
-        session.flush()  # make new enrichments visible for re-embedding
+        # Re-embed with updated enrichment data
+        session.flush()
         try:
             from scout.embedder import re_embed_one
             re_embed_one(session, init)
-        except ImportError:
-            pass
         except Exception:
-            log.debug("Re-embed failed for %s (non-fatal)", init.name)
+            log.warning("Re-embed failed for %s (non-fatal)", init.name, exc_info=True)
     return new_enrichments
 
 

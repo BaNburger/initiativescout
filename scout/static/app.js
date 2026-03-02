@@ -16,6 +16,50 @@ const state = {
 const _COL_KEY_RE = /^[a-zA-Z0-9_-]+$/;
 
 // ---------------------------------------------------------------------------
+// Revision polling (live UI updates from MCP / other processes)
+// ---------------------------------------------------------------------------
+let _lastRevision = null;
+let _revisionTimer = null;
+let _revisionPaused = false;
+let _refreshInFlight = false;
+
+async function syncRevision() {
+  try {
+    const r = await fetch('/api/revision').then(r => r.json());
+    _lastRevision = r.revision;
+  } catch (e) { /* ignore */ }
+}
+
+async function pollRevision() {
+  if (_revisionPaused || _refreshInFlight) return;
+  try {
+    const r = await fetch('/api/revision').then(r => r.json());
+    const changed = _lastRevision !== null && r.revision !== _lastRevision;
+    _lastRevision = r.revision;
+    if (changed) {
+      _refreshInFlight = true;
+      try {
+        await loadInitiatives();
+        await loadStats();
+        if (state.selectedId) await loadDetail(state.selectedId);
+      } finally { _refreshInFlight = false; }
+    }
+  } catch (e) { /* silently ignore network errors during polling */ }
+}
+
+function startRevisionPolling() {
+  if (_revisionTimer) return;
+  _revisionTimer = setInterval(pollRevision, 3000);
+}
+
+async function refreshUI(detailId) {
+  await loadInitiatives();
+  await loadStats();
+  if (detailId) loadDetail(detailId);
+  syncRevision();
+}
+
+// ---------------------------------------------------------------------------
 // Utility (defined early — used by column renderers and all HTML builders)
 // ---------------------------------------------------------------------------
 const _escDiv = document.createElement('div');
@@ -859,8 +903,7 @@ async function uploadFile(file) {
     const result = await api('POST', '/api/import', fd);
     hideImport();
     showToast(`Imported ${result.total_imported} initiatives (${result.spin_off_count} spin-off, ${result.duplicates_updated} updated)`, 'success');
-    loadInitiatives();
-    loadStats();
+    refreshUI();
   } catch (err) {
     showToast('Import failed: ' + err.message, 'error');
   }
@@ -875,9 +918,7 @@ async function enrichOne(id) {
   try {
     const r = await api('POST', `/api/enrich/${id}`);
     showToast(`Added ${r.enrichments_added} enrichments`, 'success');
-    loadDetail(id);
-    loadInitiatives();
-    loadStats();
+    refreshUI(id);
   } catch (err) {
     showToast('Enrich failed: ' + err.message, 'error');
   } finally {
@@ -891,9 +932,7 @@ async function scoreOne(id) {
   try {
     const r = await api('POST', `/api/score/${id}`);
     showToast(`Verdict: ${r.verdict} (${r.score})`, 'success');
-    loadDetail(id);
-    loadInitiatives();
-    loadStats();
+    refreshUI(id);
   } catch (err) {
     showToast('Score failed: ' + err.message, 'error');
   } finally {
@@ -953,8 +992,9 @@ async function streamBatch(url, body) {
   fill.style.width = '0%';
   let gotComplete = false;
 
-  // Prevent DB switching while a batch operation is in-flight
+  // Prevent DB switching and revision polling while a batch operation is in-flight
   if (dbSelector) dbSelector.disabled = true;
+  _revisionPaused = true;
 
   try {
     const resp = await fetch(url, {
@@ -987,8 +1027,7 @@ async function streamBatch(url, body) {
             gotComplete = true;
             label.textContent = `Done! ${JSON.stringify(event.stats)}`;
             setTimeout(() => container.classList.remove('active'), 3000);
-            loadInitiatives();
-            loadStats();
+            refreshUI();
           }
         } catch (e) { console.warn('SSE parse error:', e, line); }
       }
@@ -997,14 +1036,14 @@ async function streamBatch(url, body) {
     if (!gotComplete) {
       label.textContent = 'Stream ended unexpectedly';
       setTimeout(() => container.classList.remove('active'), 3000);
-      loadInitiatives();
-      loadStats();
+      refreshUI();
     }
   } catch (err) {
     label.textContent = `Error: ${err.message}`;
     setTimeout(() => container.classList.remove('active'), 5000);
   } finally {
     if (dbSelector) dbSelector.disabled = false;
+    _revisionPaused = false;
   }
 }
 
@@ -1284,11 +1323,11 @@ async function switchDatabase(name) {
   try {
     const result = await api('POST', '/api/databases/select', { name });
     state.currentDb = result.current;
+    _lastRevision = null;
     _resetDetailPanel();
     loadColumnOrder();
     await loadCustomColumns();
-    await loadInitiatives();
-    loadStats();
+    await refreshUI();
   } catch (err) {
     // Revert dropdown to the actual current DB
     document.getElementById('db-selector').value = state.currentDb;
@@ -1306,12 +1345,12 @@ async function showCreateDb() {
   try {
     const result = await api('POST', '/api/databases/create', { name });
     state.currentDb = result.current;
+    _lastRevision = null;
     _resetDetailPanel();
     loadColumnOrder();
     await loadDatabases();
     await loadCustomColumns();
-    await loadInitiatives();
-    loadStats();
+    await refreshUI();
   } catch (err) {
     showToast('Failed: ' + err.message, 'error');
   }
@@ -1588,5 +1627,7 @@ async function initApp() {
   await loadInitiatives();
   populateFacultyFilter();
   loadStats();
+  await syncRevision();
+  startRevisionPolling();
 }
 initApp();
