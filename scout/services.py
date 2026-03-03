@@ -47,10 +47,6 @@ SCORE_DETAIL_FIELDS = (
     "grade_tech", "grade_tech_num", "grade_opportunity", "grade_opportunity_num",
 )
 
-# Backwards compat alias
-SCORE_FIELDS = SCORE_DETAIL_FIELDS
-
-SCORE_RESPONSE_FIELDS = SCORE_LIST_FIELDS
 
 DETAIL_FIELDS = (
     "team_page", "team_size", "linkedin", "github_org", "key_repos",
@@ -98,7 +94,7 @@ def score_response_dict(outreach: OutreachScore, extended: bool = False) -> dict
         outreach: The score object.
         extended: If True, include reasoning, contact info, evidence, and data gaps.
     """
-    result = {f: getattr(outreach, f) for f in SCORE_RESPONSE_FIELDS}
+    result = {f: getattr(outreach, f) for f in SCORE_LIST_FIELDS}
     if extended:
         result.update({
             "reasoning": outreach.reasoning,
@@ -160,24 +156,26 @@ def _build_initiative_dict(
     return result
 
 
+def _enrichment_meta(init: Initiative) -> tuple[bool, str | None]:
+    """Return (enriched, enriched_at_iso) from an initiative's enrichments."""
+    if not init.enrichments:
+        return False, None
+    latest = max(e.fetched_at for e in init.enrichments)
+    return True, latest.isoformat()
+
+
 def initiative_summary(init: Initiative) -> dict:
-    enriched = bool(init.enrichments)
-    enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
+    enriched, enriched_at_iso = _enrichment_meta(init)
     return _build_initiative_dict(
-        init,
-        enriched=enriched,
-        enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
+        init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=False),
     )
 
 
 def initiative_detail(init: Initiative) -> dict:
-    enriched = bool(init.enrichments)
-    enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
+    enriched, enriched_at_iso = _enrichment_meta(init)
     base = _build_initiative_dict(
-        init,
-        enriched=enriched,
-        enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
+        init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=True),
     )
     base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
@@ -193,12 +191,9 @@ def initiative_detail(init: Initiative) -> dict:
 
 def initiative_detail_compact(init: Initiative) -> dict:
     """Lighter detail view: skips enrichment summaries, extra_links, projects, reasoning."""
-    enriched = bool(init.enrichments)
-    enriched_at = max((e.fetched_at for e in init.enrichments), default=None) if enriched else None
+    enriched, enriched_at_iso = _enrichment_meta(init)
     base = _build_initiative_dict(
-        init,
-        enriched=enriched,
-        enriched_at_iso=enriched_at.isoformat() if enriched_at else None,
+        init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=False),
     )
     base.update({f: getattr(init, f) for f in DETAIL_FIELDS})

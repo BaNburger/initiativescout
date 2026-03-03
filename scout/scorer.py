@@ -185,16 +185,25 @@ class LLMClient:
         if self.provider == "anthropic":
             import anthropic
             self.model = self.model or "claude-haiku-4-5-20251001"
-            self._client = anthropic.AsyncAnthropic(
-                api_key=self._api_key or os.environ.get("ANTHROPIC_API_KEY")
-            )
+            key = self._api_key or os.environ.get("ANTHROPIC_API_KEY")
+            if not key:
+                raise LLMCallError(
+                    "ANTHROPIC_API_KEY not set. Export it in the shell where you run 'scout', "
+                    "or set it in your MCP config.",
+                    retryable=False,
+                )
+            self._client = anthropic.AsyncAnthropic(api_key=key)
         elif self.provider in ("openai", "openai_compatible"):
             import openai
-            self.model = self.model or "gpt-4o-mini"
+            self.model = self.model or "gpt-5-mini"
             kwargs: dict[str, Any] = {}
             key = self._api_key or os.environ.get("OPENAI_API_KEY")
-            if key:
-                kwargs["api_key"] = key
+            if not key:
+                raise LLMCallError(
+                    "OPENAI_API_KEY not set. Export it in your environment.",
+                    retryable=False,
+                )
+            kwargs["api_key"] = key
             url = self._base_url or os.environ.get("OPENAI_BASE_URL")
             if url:
                 kwargs["base_url"] = url
@@ -270,11 +279,12 @@ def _build_dossier(
     sections: list[str] = list(header or [])
     for label, attr in fields:
         val = getattr(obj, attr, None)
-        if val:
-            if isinstance(val, bool):
-                sections.append(label)
-            else:
-                sections.append(f"{label}: {val}")
+        if val is None or val is False or val == "":
+            continue
+        if isinstance(val, bool):
+            sections.append(label)
+        else:
+            sections.append(f"{label}: {val}")
 
     if enrichments is not None:
         for e in enrichments:
@@ -282,7 +292,7 @@ def _build_dossier(
                 continue
             max_len = (source_filter or {}).get(e.source_type, 5000)
             sections.append(f"\n--- {e.source_type.upper()} DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
-            sections.append(e.summary or e.raw_text[:max_len])
+            sections.append((e.summary or e.raw_text)[:max_len])
 
     return "\n".join(sections)
 

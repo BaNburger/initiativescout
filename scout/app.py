@@ -5,6 +5,7 @@ import json
 import logging
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Generator
 
@@ -35,13 +36,15 @@ from scout.schemas import (
     ScoringPromptUpdate,
     StatsOut,
 )
-from scout.scorer import LLMClient
+from scout.scorer import LLMCallError, LLMClient
 
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from scout.utils import load_llm_env
+    load_llm_env()
     init_db()
     yield
 
@@ -58,7 +61,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "Initiatives", "description": "Browse, search, and update student initiatives."},
         {"name": "Enrichment", "description": "Fetch live web and GitHub data for initiatives."},
-        {"name": "Scoring", "description": "LLM-powered outreach scoring. Requires ANTHROPIC_API_KEY."},
+        {"name": "Scoring", "description": "LLM-powered outreach scoring. Requires LLM API key (auto-loaded from .mcp.json)."},
         {"name": "Projects", "description": "Manage sub-projects within initiatives."},
         {"name": "Import", "description": "Bulk import initiatives from XLSX spreadsheets."},
         {"name": "Stats", "description": "Aggregate statistics and breakdowns."},
@@ -80,10 +83,10 @@ def db_session() -> Generator[Session, None, None]:
     yield from session_generator()
 
 
-def _get_or_404(session: Session, model, entity_id: int, label: str = "Entity"):
+def _get_or_404(session: Session, model, entity_id: int):
     obj = services.get_entity(session, model, entity_id)
     if not obj:
-        raise HTTPException(404, f"{label} not found")
+        raise HTTPException(404, f"{model.__name__} not found")
     return obj
 
 
@@ -120,6 +123,30 @@ async def import_file(file: UploadFile = File(...), session: Session = Depends(d
     finally:
         if tmp_path:
             tmp_path.unlink(missing_ok=True)
+
+
+@app.get("/api/export", tags=["Import"], summary="Export initiatives to XLSX")
+async def export_file(
+    verdict: str | None = Query(None, description="Comma-separated verdict filter"),
+    uni: str | None = Query(None, description="Comma-separated uni filter"),
+    include_enrichments: bool = Query(True, description="Include enrichment summary column"),
+    include_scores: bool = Query(True, description="Include score columns"),
+    include_extras: bool = Query(False, description="Include extra profile fields"),
+    session: Session = Depends(db_session),
+):
+    from scout.exporter import export_xlsx
+    buf = export_xlsx(
+        session, verdict=verdict, uni=uni,
+        include_enrichments=include_enrichments,
+        include_scores=include_scores, include_extras=include_extras,
+    )
+    db_name = current_db_name()
+    filename = f"scout-{db_name}-{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -161,13 +188,13 @@ async def list_initiatives(
 @app.get("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
          tags=["Initiatives"], summary="Get full initiative detail with enrichments, projects, and scores")
 async def get_initiative(initiative_id: int, session: Session = Depends(db_session)):
-    return services.initiative_detail(_get_or_404(session, Initiative, initiative_id, "Initiative"))
+    return services.initiative_detail(_get_or_404(session, Initiative, initiative_id))
 
 
 @app.put("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
          tags=["Initiatives"], summary="Update initiative fields (partial update, null fields ignored)")
 async def update_initiative(initiative_id: int, body: InitiativeUpdate, session: Session = Depends(db_session)):
-    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    init = _get_or_404(session, Initiative, initiative_id)
     services.apply_updates(init, body.model_dump(), services.UPDATABLE_FIELDS)
     if body.custom_fields is not None:
         existing = services.json_parse(init.custom_fields_json, {})
@@ -188,39 +215,63 @@ async def update_initiative(initiative_id: int, body: InitiativeUpdate, session:
 # ---------------------------------------------------------------------------
 
 
-def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
-    """SSE streaming wrapper for batch enrich/score operations."""
+def _batch_stream(initiative_ids, process_fn, stat_key, *,
+                   exclude_scored=False, delay=0.1, context_manager=None):
+    """SSE streaming wrapper for batch enrich/score operations.
+
+    Args:
+        context_manager: Optional async context manager (e.g. open_crawler())
+            whose result is passed as the third argument to process_fn.
+    """
     async def stream():
         session = None
         try:
             session = get_session()
-            # Load IDs + names upfront so a rollback doesn't expire ORM objects
             query = select(Initiative.id, Initiative.name)
             if initiative_ids:
                 query = query.where(Initiative.id.in_(initiative_ids))
+            if exclude_scored:
+                scored_ids = (
+                    select(func.distinct(OutreachScore.initiative_id))
+                    .where(OutreachScore.project_id.is_(None))
+                )
+                query = query.where(Initiative.id.notin_(scored_ids))
             rows = session.execute(query).all()
             total = len(rows)
             ok = failed = 0
 
-            for idx, (init_id, init_name) in enumerate(rows):
-                yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_name})}\n\n"
-                try:
-                    # Re-fetch a fresh ORM object each iteration
-                    init = session.execute(select(Initiative).where(Initiative.id == init_id)).scalars().first()
-                    if init is None:
+            async def _run_loop(ctx=None):
+                nonlocal ok, failed
+                for idx, (init_id, init_name) in enumerate(rows):
+                    yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_name})}\n\n"
+                    try:
+                        init = session.execute(select(Initiative).where(Initiative.id == init_id)).scalars().first()
+                        if init is None:
+                            failed += 1
+                            continue
+                        if ctx is not None:
+                            await process_fn(session, init, ctx)
+                        else:
+                            await process_fn(session, init)
+                        session.commit()
+                        ok += 1
+                    except Exception as exc:
+                        log.warning("Batch %s failed for %s: %s", stat_key, init_name, exc)
                         failed += 1
-                        continue
-                    await process_fn(session, init)
-                    session.commit()
-                    ok += 1
-                except Exception as exc:
-                    log.warning("Batch %s failed for %s: %s", stat_key, init_name, exc)
-                    failed += 1
-                    session.rollback()
-                await asyncio.sleep(delay)
+                        session.rollback()
+                    await asyncio.sleep(delay)
+
+            if context_manager is not None:
+                async with context_manager as ctx:
+                    async for msg in _run_loop(ctx):
+                        yield msg
+            else:
+                async for msg in _run_loop():
+                    yield msg
 
             yield f"data: {json.dumps({'type': 'complete', 'stats': {stat_key: ok, 'failed': failed}})}\n\n"
         except Exception:
+            log.exception("Batch %s stream error", stat_key)
             if session is not None:
                 session.rollback()
             raise
@@ -235,54 +286,19 @@ def _batch_stream(initiative_ids, process_fn, stat_key, delay=0.1):
 async def enrich_batch(body: dict[str, Any] | None = None):
     from scout.enricher import open_crawler
 
-    def _make_stream(initiative_ids):
-        """SSE stream with a shared Crawl4AI crawler for the entire batch."""
-        async def stream():
-            session = None
-            try:
-                session = get_session()
-                query = select(Initiative.id, Initiative.name)
-                if initiative_ids:
-                    query = query.where(Initiative.id.in_(initiative_ids))
-                rows = session.execute(query).all()
-                total = len(rows)
-                ok = failed = 0
+    async def _enrich(session, init, crawler):
+        await services.run_enrichment(session, init, crawler=crawler)
 
-                async with open_crawler() as crawler:
-                    for idx, (init_id, init_name) in enumerate(rows):
-                        yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'name': init_name})}\n\n"
-                        try:
-                            init = session.execute(select(Initiative).where(Initiative.id == init_id)).scalars().first()
-                            if init is None:
-                                failed += 1
-                                continue
-                            await services.run_enrichment(session, init, crawler=crawler)
-                            session.commit()
-                            ok += 1
-                        except Exception as exc:
-                            log.warning("Batch enrichment failed for %s: %s", init_name, exc)
-                            failed += 1
-                            session.rollback()
-                        await asyncio.sleep(0.1)
-
-                yield f"data: {json.dumps({'type': 'complete', 'stats': {'enriched': ok, 'failed': failed}})}\n\n"
-            except Exception:
-                if session is not None:
-                    session.rollback()
-                raise
-            finally:
-                if session is not None:
-                    session.close()
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
-
-    return _make_stream((body or {}).get("initiative_ids"))
+    return _batch_stream(
+        (body or {}).get("initiative_ids"), _enrich, "enriched",
+        context_manager=open_crawler(),
+    )
 
 
 @app.post("/api/enrich/{initiative_id}", tags=["Enrichment"], summary="Enrich a single initiative from web and GitHub")
 async def enrich_one(initiative_id: int, session: Session = Depends(db_session)):
     from scout.enricher import open_crawler
-    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    init = _get_or_404(session, Initiative, initiative_id)
     async with open_crawler() as crawler:
         added = await services.run_enrichment(session, init, crawler=crawler)
     session.commit()
@@ -291,7 +307,7 @@ async def enrich_one(initiative_id: int, session: Session = Depends(db_session))
 
 @app.post("/api/discover/{initiative_id}", tags=["Enrichment"], summary="Discover new URLs via DuckDuckGo search")
 async def discover_one(initiative_id: int, session: Session = Depends(db_session)):
-    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    init = _get_or_404(session, Initiative, initiative_id)
     try:
         result = await services.run_discovery(session, init)
         session.commit()
@@ -307,22 +323,30 @@ async def discover_one(initiative_id: int, session: Session = Depends(db_session
 
 @app.post("/api/score/batch", tags=["Scoring"], summary="Score multiple initiatives via LLM (SSE progress stream)")
 async def score_batch(body: dict[str, Any] | None = None):
-    client = LLMClient()
+    try:
+        client = LLMClient()
+    except LLMCallError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    params = body or {}
 
     async def _score_one(session, init):
         await services.run_scoring(session, init, client)
 
-    return _batch_stream((body or {}).get("initiative_ids"), _score_one, "scored", delay=0.3)
+    return _batch_stream(
+        params.get("initiative_ids"), _score_one, "scored",
+        exclude_scored=params.get("only_unscored", False), delay=0.3,
+    )
 
 
 @app.post("/api/score/{initiative_id}", tags=["Scoring"], summary="Score a single initiative via LLM")
 async def score_one(initiative_id: int, session: Session = Depends(db_session)):
-    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    init = _get_or_404(session, Initiative, initiative_id)
     try:
         outreach = await services.run_scoring(session, init)
         session.commit()
-    except Exception as exc:
-        raise HTTPException(500, f"Scoring failed: {exc}") from exc
+    except LLMCallError as exc:
+        code = 503 if exc.retryable else 422
+        raise HTTPException(code, str(exc)) from exc
     return services.score_response_dict(outreach)
 
 
@@ -334,14 +358,14 @@ async def score_one(initiative_id: int, session: Session = Depends(db_session)):
 @app.get("/api/initiatives/{initiative_id}/projects", response_model=list[ProjectOut],
          tags=["Projects"], summary="List projects for an initiative")
 async def list_projects(initiative_id: int, session: Session = Depends(db_session)):
-    init = _get_or_404(session, Initiative, initiative_id, "Initiative")
+    init = _get_or_404(session, Initiative, initiative_id)
     return [services.project_summary(p) for p in init.projects]
 
 
 @app.post("/api/initiatives/{initiative_id}/projects", response_model=ProjectOut, status_code=201,
           tags=["Projects"], summary="Create a new project under an initiative")
 async def create_project(initiative_id: int, body: ProjectCreate, session: Session = Depends(db_session)):
-    _get_or_404(session, Initiative, initiative_id, "Initiative")
+    _get_or_404(session, Initiative, initiative_id)
     proj = services.create_project(
         session, initiative_id,
         name=body.name, description=body.description,
@@ -355,7 +379,7 @@ async def create_project(initiative_id: int, body: ProjectCreate, session: Sessi
 @app.put("/api/projects/{project_id}", response_model=ProjectOut,
          tags=["Projects"], summary="Update project fields (partial update)")
 async def update_project(project_id: int, body: ProjectUpdate, session: Session = Depends(db_session)):
-    proj = _get_or_404(session, Project, project_id, "Project")
+    proj = _get_or_404(session, Project, project_id)
     services.apply_updates(proj, body.model_dump(), ("name", "description", "website", "github_url", "team"))
     if body.extra_links is not None:
         proj.extra_links_json = json.dumps(body.extra_links)
@@ -365,7 +389,7 @@ async def update_project(project_id: int, body: ProjectUpdate, session: Session 
 
 @app.delete("/api/projects/{project_id}", tags=["Projects"], summary="Delete a project and its scores")
 async def delete_project(project_id: int, session: Session = Depends(db_session)):
-    proj = _get_or_404(session, Project, project_id, "Project")
+    proj = _get_or_404(session, Project, project_id)
     session.delete(proj)
     session.commit()
     return {"ok": True}
@@ -374,13 +398,14 @@ async def delete_project(project_id: int, session: Session = Depends(db_session)
 @app.post("/api/projects/{project_id}/score", tags=["Scoring", "Projects"],
           summary="Score a project via LLM in context of its parent initiative")
 async def score_project_endpoint(project_id: int, session: Session = Depends(db_session)):
-    proj = _get_or_404(session, Project, project_id, "Project")
-    init = _get_or_404(session, Initiative, proj.initiative_id, "Initiative")
+    proj = _get_or_404(session, Project, project_id)
+    init = _get_or_404(session, Initiative, proj.initiative_id)
     try:
         outreach = await services.run_project_scoring(session, proj, init)
         session.commit()
-    except Exception as exc:
-        raise HTTPException(500, f"Scoring failed: {exc}") from exc
+    except LLMCallError as exc:
+        code = 503 if exc.retryable else 422
+        raise HTTPException(code, str(exc)) from exc
     return services.score_response_dict(outreach)
 
 
@@ -542,7 +567,7 @@ async def find_similar_endpoint(
     limit: int = Query(10, ge=1, le=100),
     session: Session = Depends(db_session),
 ):
-    _get_or_404(session, Initiative, initiative_id, "Initiative")
+    _get_or_404(session, Initiative, initiative_id)
     from scout.embedder import find_similar
     results = find_similar(initiative_id=initiative_id, top_k=limit)
     if not results:

@@ -17,10 +17,12 @@
   </div>
   <div class="header-actions">
     <button class="btn btn-sm" onclick="showImport()">Import XLSX</button>
+    <a class="btn btn-sm" id="export-link" href="/api/export?include_scores=true&include_enrichments=true">Export XLSX</a>
     <button class="btn btn-sm" onclick="showPrompts()">Prompts</button>
     <button class="btn btn-sm" onclick="showMcpSetup()">MCP Setup</button>
     <button class="btn btn-sm" id="btn-enrich-all" onclick="enrichBatch()" disabled>Enrich All</button>
-    <button class="btn btn-sm" id="btn-score-all" onclick="scoreBatch()" disabled>Score All</button>
+    <button class="btn btn-sm" id="btn-score-unscored" onclick="scoreUnscored()" disabled>Score Unscored</button>
+    <button class="btn btn-sm btn-muted" id="btn-rescore-all" onclick="rescoreAll()" disabled>Rescore All</button>
   </div>
 </div>
 
@@ -91,6 +93,10 @@
 <div class="progress-bar-container" id="progress-container">
   <div class="progress-label" id="progress-label">Processing...</div>
   <div class="progress-bar"><div class="fill" id="progress-fill" style="width:0%"></div></div>
+  <div class="progress-actions" id="progress-actions">
+    <button class="btn btn-xs" id="btn-batch-pause" onclick="batchPause()" title="Pause">Pause</button>
+    <button class="btn btn-xs btn-danger" id="btn-batch-cancel" onclick="batchCancel()" title="Cancel">Cancel</button>
+  </div>
 </div>
 
 <!-- Import overlay -->

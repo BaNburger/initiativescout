@@ -138,11 +138,18 @@ a:hover { text-decoration: underline; }
 .btn .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; }
 
 /* --- Progress bar --- */
-.progress-bar-container { padding: 10px 20px; border-top: 1px solid var(--border); background: var(--surface); display: none; }
+.progress-bar-container { padding: 10px 20px; border-top: 1px solid var(--border); background: var(--surface); display: none; position: sticky; bottom: 0; z-index: 50; }
 .progress-bar-container.active { display: flex; align-items: center; gap: 12px; }
 .progress-bar { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
 .progress-bar .fill { height: 100%; background: var(--accent); transition: width 0.2s; border-radius: 3px; }
 .progress-label { font-size: 12px; color: var(--ink-dim); white-space: nowrap; min-width: 180px; }
+.progress-actions { display: flex; gap: 6px; }
+.btn-xs { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink); cursor: pointer; }
+.btn-xs:hover { background: var(--border); }
+.btn-xs.btn-danger { color: var(--red); border-color: var(--red); }
+.btn-xs.btn-danger:hover { background: var(--red); color: #fff; }
+.btn-muted { opacity: 0.6; }
+.btn-muted:hover { opacity: 1; }
 
 /* --- Overlay (shared) --- */
 .import-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; opacity: 1; transition: opacity 0.15s; }

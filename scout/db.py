@@ -96,32 +96,11 @@ def get_session() -> Session:
     return factory()  # type: ignore[misc]
 
 
-@contextmanager
-def session_scope() -> Generator[Session, None, None]:
-    """Context manager providing a transactional session scope.
-
-    Usage (MCP server, scripts, etc.)::
-
-        with session_scope() as session:
-            ...
-    """
-    session = get_session()
-    try:
-        yield session
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
 def session_generator() -> Generator[Session, None, None]:
-    """Generator-based session suitable for FastAPI ``Depends()``.
+    """Generator yielding a transactional session.
 
-    Usage::
-
-        def db_session() -> Generator[Session, None, None]:
-            yield from session_generator()
+    Use directly with FastAPI ``Depends()``, or via ``session_scope()``
+    as a context manager for MCP / scripts.
     """
     session = get_session()
     try:
@@ -131,6 +110,10 @@ def session_generator() -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+
+
+# Context manager wrapper for non-FastAPI code (MCP server, scripts, etc.)
+session_scope = contextmanager(session_generator)
 
 
 def current_db_name() -> str:
@@ -189,7 +172,11 @@ def _ensure_revision_tracking(engine) -> None:
 
 def get_revision() -> int:
     """Read the current data revision counter (cheap single-row read)."""
-    with _engine.connect() as conn:
+    with _lock:
+        engine = _engine
+    if engine is None:
+        return 0
+    with engine.connect() as conn:
         return conn.execute(text("SELECT value FROM _meta WHERE key = 'revision'")).scalar() or 0
 
 

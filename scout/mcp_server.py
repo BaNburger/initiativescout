@@ -6,7 +6,6 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-
 from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
@@ -55,7 +54,12 @@ mcp = FastMCP(
         "SIMILARITY: find_similar_initiatives(query='...') for semantic search (embeddings auto-update on enrichment). "
         "COMPACT: list_initiatives(fields='id,name,verdict,score') to reduce token usage for large lists. "
         "SEARCH: list_initiatives(search='...') uses FTS5 ranked search across name, description, sector, domains, faculty. "
-        "ERRORS: All errors return {error, error_code, retryable}. Retry if retryable=true."
+        "ERRORS: All errors return {error, error_code, retryable}. Retry if retryable=true. "
+        "DATA SAFETY: This database contains real initiative data — treat it as production. "
+        "NEVER rename, delete, or overwrite initiatives for testing or debugging. "
+        "For experiments, create a test database first: create_scout_database('test') → select_scout_database('test'). "
+        "delete_initiative() requires confirm=True to prevent accidental deletion. "
+        "update_initiative() will warn you when changing the name field — only do so with verified data."
     ),
     lifespan=scout_lifespan,
     json_response=True,
@@ -67,10 +71,10 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 
 
-def _get_or_error(session, model, entity_id, label="Entity"):
+def _get_or_error(session, model, entity_id):
     obj = services.get_entity(session, model, entity_id)
     if not obj:
-        return None, _error(f"{label} {entity_id} not found", "NOT_FOUND")
+        return None, _error(f"{model.__name__} {entity_id} not found", "NOT_FOUND")
     return obj, None
 
 
@@ -109,6 +113,9 @@ def _parse_ids(raw: str | None) -> list[int] | None:
     if not raw:
         return None
     return [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+
+
+VALID_CHANNELS = {"email", "linkedin", "event", "website_form"}
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +281,7 @@ def get_initiative(initiative_id: int, compact: bool = False) -> dict:
                  projects, and full reasoning. Use for quick lookups. Default false (full detail).
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
         if compact:
@@ -327,12 +334,30 @@ def create_initiative(
 
 
 @mcp.tool()
-def delete_initiative(initiative_id: int) -> dict:
+def delete_initiative(initiative_id: int, confirm: bool = False) -> dict:
     """Delete an initiative and all its enrichments, scores, and projects.
 
     WHAT: Permanently removes an initiative and all associated data (cascading delete).
     WHEN: Use when an initiative is duplicate, out of scope, or no longer relevant.
+    SAFETY: You must pass confirm=True to execute. This prevents accidental deletion.
+
+    Args:
+        initiative_id: The numeric ID of the initiative to delete.
+        confirm: Must be True to confirm deletion. Defaults to False (dry run).
     """
+    if not confirm:
+        with session_scope() as session:
+            init, err = _get_or_error(session, Initiative, initiative_id)
+            if err:
+                return err
+            return {
+                "ok": False,
+                "action": "delete_initiative",
+                "initiative_id": init.id,
+                "initiative_name": init.name,
+                "warning": f"This will permanently delete '{init.name}' and all its enrichments, scores, and projects. "
+                           "Call again with confirm=True to proceed.",
+            }
     with session_scope() as session:
         if not services.delete_initiative(session, initiative_id):
             return _error(f"Initiative {initiative_id} not found", "NOT_FOUND")
@@ -377,12 +402,15 @@ def update_initiative(
     WHAT: Modifies initiative profile data. Returns the full updated detail.
     WHEN: Use to correct data, add missing URLs (website, github_org, linkedin) before enrichment,
         or fill in context (description, sector) before scoring.
+    SAFETY: Changing the name field triggers a warning with old→new values. Only rename
+        an initiative if you have verified the correct name from a primary source.
     NEXT: If you added website/github_org, call enrich_initiative(id) to fetch fresh data.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
+        old_name = init.name
         updates = {k: v for k, v in {
             "name": name, "uni": uni, "faculty": faculty, "sector": sector, "mode": mode,
             "description": description, "website": website, "email": email,
@@ -397,7 +425,13 @@ def update_initiative(
         except Exception:
             log.debug("FTS sync failed for initiative %s", initiative_id)
         session.commit()
-        return services.initiative_detail(init)
+        detail = services.initiative_detail(init)
+        if name is not None and name != old_name:
+            detail["warning"] = (
+                f"Initiative renamed: '{old_name}' → '{name}'. "
+                "Verify this is correct — renaming changes the identity of the record."
+            )
+        return detail
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +454,7 @@ async def enrich_initiative(initiative_id: int) -> dict:
     NEXT: Call score_initiative_tool(id) to score using the enrichment data.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
         async with open_crawler() as crawler:
@@ -477,7 +511,7 @@ async def discover_initiative(initiative_id: int) -> dict:
         initiative_id: The numeric ID of the initiative.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
         try:
@@ -518,7 +552,7 @@ async def score_initiative_tool(initiative_id: int) -> dict:
         return key_err
     with session_scope() as session:
         try:
-            init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+            init, err = _get_or_error(session, Initiative, initiative_id)
             if err:
                 return err
             outreach = await services.run_scoring(session, init)
@@ -546,7 +580,7 @@ def get_scoring_dossier(initiative_id: int) -> dict:
         initiative_id: The numeric ID of the initiative.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
         enrichments = session.execute(
@@ -616,7 +650,6 @@ def submit_score(
             "VALIDATION_ERROR",
         )
 
-    VALID_CHANNELS = {"email", "linkedin", "event", "website_form"}
     contact_channel = contact_channel.strip().lower()
     if contact_channel and contact_channel not in VALID_CHANNELS:
         return _error(
@@ -629,7 +662,7 @@ def submit_score(
     score = compute_score(avg_grade)
 
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
 
@@ -1085,7 +1118,7 @@ def create_project(
     NEXT: Call score_project_tool(project_id) to score the project.
     """
     with session_scope() as session:
-        _, err = _get_or_error(session, Initiative, initiative_id, "Initiative")
+        _, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
         proj = services.create_project(
@@ -1109,7 +1142,7 @@ def update_project(
     WHEN: Use to add missing info (website, github_url, team) before scoring.
     """
     with session_scope() as session:
-        proj, err = _get_or_error(session, Project, project_id, "Project")
+        proj, err = _get_or_error(session, Project, project_id)
         if err:
             return err
         updates = {k: v for k, v in {"name": name, "description": description,
@@ -1121,15 +1154,30 @@ def update_project(
 
 
 @mcp.tool()
-def delete_project(project_id: int) -> dict:
+def delete_project(project_id: int, confirm: bool = False) -> dict:
     """Delete a project and its associated scores.
 
     WHAT: Permanently removes a project and its scores. Does not affect the parent initiative.
+    SAFETY: You must pass confirm=True to execute. This prevents accidental deletion.
+
+    Args:
+        project_id: The numeric ID of the project to delete.
+        confirm: Must be True to confirm deletion. Defaults to False (dry run).
     """
     with session_scope() as session:
-        proj, err = _get_or_error(session, Project, project_id, "Project")
+        proj, err = _get_or_error(session, Project, project_id)
         if err:
             return err
+        if not confirm:
+            return {
+                "ok": False,
+                "action": "delete_project",
+                "project_id": proj.id,
+                "project_name": proj.name,
+                "initiative_id": proj.initiative_id,
+                "warning": f"This will permanently delete project '{proj.name}' and its scores. "
+                           "Call again with confirm=True to proceed.",
+            }
         session.delete(proj)
         session.commit()
         return {"ok": True, "deleted_project_id": project_id}
@@ -1148,10 +1196,10 @@ async def score_project_tool(project_id: int) -> dict:
         return key_err
     with session_scope() as session:
         try:
-            proj, err = _get_or_error(session, Project, project_id, "Project")
+            proj, err = _get_or_error(session, Project, project_id)
             if err:
                 return err
-            init, err = _get_or_error(session, Initiative, proj.initiative_id, "Initiative")
+            init, err = _get_or_error(session, Initiative, proj.initiative_id)
             if err:
                 return err
             outreach = await services.run_project_scoring(session, proj, init)
@@ -1207,6 +1255,54 @@ def update_scoring_prompt(key: str, content: str) -> dict:
             return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
         session.commit()
         return result
+
+
+# ---------------------------------------------------------------------------
+# Tools: Export
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def export_initiatives(
+    verdict: str | None = None,
+    uni: str | None = None,
+    include_enrichments: bool = True,
+    include_scores: bool = True,
+    include_extras: bool = False,
+) -> dict:
+    """Export initiatives to an XLSX file saved in the data directory.
+
+    WHAT: Generates a spreadsheet with initiative profiles, scores, and enrichment summaries.
+        Saves the file to the Scout data directory and returns the file path.
+    WHEN: Use to export data for sharing, reporting, or offline analysis.
+
+    Args:
+        verdict: Comma-separated verdict filter (e.g. "reach_out_now,reach_out_soon"). None = all.
+        uni: Comma-separated uni filter (e.g. "TUM,LMU"). None = all.
+        include_enrichments: Include enrichment summary column. Default true.
+        include_scores: Include score columns (verdict, grades, reasoning). Default true.
+        include_extras: Include extra profile fields (domains, member count). Default false.
+    """
+    from scout.db import DATA_DIR, current_db_name
+    from scout.exporter import export_xlsx
+
+    with session_scope() as session:
+        buf = export_xlsx(
+            session, verdict=verdict, uni=uni,
+            include_enrichments=include_enrichments,
+            include_scores=include_scores, include_extras=include_extras,
+        )
+    db_name = current_db_name()
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"scout-{db_name}-{ts}.xlsx"
+    out_path = DATA_DIR / filename
+    out_path.write_bytes(buf.getvalue())
+    return {
+        "ok": True,
+        "file": str(out_path),
+        "filename": filename,
+        "hint": f"File saved to {out_path}. Open in Excel or Google Sheets.",
+    }
 
 
 # ---------------------------------------------------------------------------

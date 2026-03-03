@@ -475,15 +475,16 @@ class TestDossierBuilders:
         assert "GITHUB CI/CD: Present: True" not in dossier
 
     def test_falsy_fields_excluded(self, session):
-        """Fields with falsy values (0, '', None) should be omitted."""
+        """Empty strings and None should be omitted; zero ints are included (meaningful data)."""
         from scout.scorer import build_team_dossier
         init = Initiative(name="Sparse", uni="HM")
         session.add(init)
         session.flush()
         dossier = build_team_dossier(init, [])
-        assert "TEAM SIZE" not in dossier
-        assert "LINKEDIN" not in dossier
-        assert "SPONSORS" not in dossier
+        assert "TEAM SIZE" not in dossier  # empty string
+        assert "SPONSORS" not in dossier   # empty string
+        # Zero-valued integers ARE included (e.g. linkedin_hits=0 is meaningful)
+        assert "LINKEDIN HITS: 0" in dossier
 
 
 # =========================================================================
@@ -585,6 +586,7 @@ class TestServicesCRUD:
     def test_delete_initiative(self, session, sample_initiative):
         from scout.services import delete_initiative, get_entity
         assert delete_initiative(session, sample_initiative.id) is True
+        session.flush()
         assert get_entity(session, Initiative, sample_initiative.id) is None
 
     def test_delete_initiative_not_found(self, session):

@@ -338,7 +338,10 @@ async function loadStats() {
   document.getElementById('stat-soon').textContent = `${stats.by_verdict.reach_out_soon || 0} soon`;
   document.getElementById('stat-monitor').textContent = `${stats.by_verdict.monitor || 0} monitor`;
   document.getElementById('btn-enrich-all').disabled = stats.total === 0;
-  document.getElementById('btn-score-all').disabled = stats.total === 0;
+  const unscored = stats.total - stats.scored;
+  document.getElementById('btn-score-unscored').disabled = unscored === 0;
+  document.getElementById('btn-score-unscored').textContent = unscored > 0 ? `Score ${unscored} Unscored` : 'All Scored';
+  document.getElementById('btn-rescore-all').disabled = stats.total === 0;
 }
 
 let _loadDetailInFlight = false;
@@ -380,6 +383,7 @@ function applyFilters() {
   clearTimeout(_filterTimeout);
   _filterTimeout = setTimeout(() => loadInitiatives(), 200);
   updateFilterIndicators();
+  updateExportLink();
 }
 
 function updateFilterIndicators() {
@@ -909,6 +913,16 @@ async function uploadFile(file) {
   }
 }
 
+function updateExportLink() {
+  const a = document.getElementById('export-link');
+  if (!a) return;
+  let url = '/api/export?include_scores=true&include_enrichments=true';
+  const f = getFilters();
+  if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
+  if (f.uni) url += `&uni=${encodeURIComponent(f.uni)}`;
+  a.href = url;
+}
+
 // ---------------------------------------------------------------------------
 // Enrich & Score (single)
 // ---------------------------------------------------------------------------
@@ -981,18 +995,28 @@ async function findSimilar(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Batch operations via SSE (streaming fetch)
+// Batch operations via SSE (streaming fetch with pause/cancel + live refresh)
 // ---------------------------------------------------------------------------
+let _batchReader = null;
+let _batchPaused = false;
+let _batchCancelled = false;
+
 async function streamBatch(url, body) {
   const container = document.getElementById('progress-container');
   const label = document.getElementById('progress-label');
   const fill = document.getElementById('progress-fill');
+  const actions = document.getElementById('progress-actions');
+  const pauseBtn = document.getElementById('btn-batch-pause');
   const dbSelector = document.getElementById('db-selector');
   container.classList.add('active');
   fill.style.width = '0%';
+  if (actions) actions.style.display = 'flex';
+  if (pauseBtn) { pauseBtn.textContent = 'Pause'; pauseBtn.disabled = false; }
+  _batchPaused = false;
+  _batchCancelled = false;
   let gotComplete = false;
+  let lastProgressIdx = 0;
 
-  // Prevent DB switching and revision polling while a batch operation is in-flight
   if (dbSelector) dbSelector.disabled = true;
   _revisionPaused = true;
 
@@ -1003,12 +1027,27 @@ async function streamBatch(url, body) {
       body: JSON.stringify(body || {}),
     });
 
-    const reader = resp.body.getReader();
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`${resp.status}: ${err}`);
+    }
+
+    _batchReader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
     while (true) {
-      const { done, value } = await reader.read();
+      // Pause loop: wait until unpaused or cancelled
+      while (_batchPaused && !_batchCancelled) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (_batchCancelled) {
+        await _batchReader.cancel();
+        label.textContent = `Cancelled at ${lastProgressIdx} items`;
+        break;
+      }
+
+      const { done, value } = await _batchReader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
@@ -1020,35 +1059,56 @@ async function streamBatch(url, body) {
         try {
           const event = JSON.parse(line.slice(6));
           if (event.type === 'progress') {
+            lastProgressIdx = event.current;
             const pct = Math.round((event.current / event.total) * 100);
             fill.style.width = pct + '%';
             label.textContent = `${event.current}/${event.total} \u2014 ${event.name}`;
+            // Live refresh: reload list + stats after each scored item
+            loadInitiatives();
+            loadStats();
           } else if (event.type === 'complete') {
             gotComplete = true;
-            label.textContent = `Done! ${JSON.stringify(event.stats)}`;
-            setTimeout(() => container.classList.remove('active'), 3000);
-            refreshUI();
+            const s = event.stats;
+            label.textContent = `Done! ${s.scored || s.enriched || 0} succeeded, ${s.failed} failed`;
           }
         } catch (e) { console.warn('SSE parse error:', e, line); }
       }
     }
-    // Stream ended without a complete event — clean up
-    if (!gotComplete) {
-      label.textContent = 'Stream ended unexpectedly';
-      setTimeout(() => container.classList.remove('active'), 3000);
-      refreshUI();
+    if (!gotComplete && !_batchCancelled) {
+      label.textContent = 'Stream ended';
     }
   } catch (err) {
     label.textContent = `Error: ${err.message}`;
-    setTimeout(() => container.classList.remove('active'), 5000);
   } finally {
+    _batchReader = null;
+    if (actions) actions.style.display = 'none';
     if (dbSelector) dbSelector.disabled = false;
     _revisionPaused = false;
+    await refreshUI();
+    setTimeout(() => container.classList.remove('active'), 3000);
   }
 }
 
+function batchPause() {
+  _batchPaused = !_batchPaused;
+  const btn = document.getElementById('btn-batch-pause');
+  if (btn) btn.textContent = _batchPaused ? 'Resume' : 'Pause';
+}
+
+function batchCancel() {
+  _batchCancelled = true;
+  _batchPaused = false;
+}
+
 function enrichBatch() { streamBatch('/api/enrich/batch', null); }
-function scoreBatch() { streamBatch('/api/score/batch', null); }
+
+function scoreUnscored() { streamBatch('/api/score/batch', { only_unscored: true }); }
+
+function rescoreAll() {
+  const total = parseInt(document.getElementById('stat-total').textContent) || 0;
+  if (!confirm(`This will re-score all ${total} initiatives using LLM API calls. Continue?`)) return;
+  streamBatch('/api/score/batch', null);
+}
 
 // ---------------------------------------------------------------------------
 // Keyboard cursor (CSS-only, no re-render)
