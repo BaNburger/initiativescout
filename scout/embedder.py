@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _model = None
+# In-memory cache for sidecar arrays — avoids re-reading .npy files on every find_similar() call.
+# Keyed by db stem name; invalidated on embed_all() and re_embed_one().
+_vec_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
 
 def _get_model() -> StaticModel:
@@ -30,6 +33,25 @@ def _get_model() -> StaticModel:
     if _model is None:
         _model = StaticModel.from_pretrained("minishlab/potion-base-32M")
     return _model
+
+
+def _cache_vectors(vectors: np.ndarray, ids: np.ndarray) -> None:
+    """Store vectors in the in-memory cache for the current database."""
+    _vec_cache[current_db_name()] = (vectors, ids)
+
+
+def _load_vectors() -> tuple[np.ndarray, np.ndarray] | None:
+    """Load vectors from cache or disk. Returns None if no sidecar files exist."""
+    stem = current_db_name()
+    if stem in _vec_cache:
+        return _vec_cache[stem]
+    emb_path, ids_path = _sidecar_paths()
+    if not emb_path.exists() or not ids_path.exists():
+        return None
+    vectors = np.load(emb_path)
+    ids = np.load(ids_path)
+    _vec_cache[stem] = (vectors, ids)
+    return vectors, ids
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +119,11 @@ def embed_all(session: Session) -> int:
     norms[norms == 0] = 1  # avoid division by zero
     vectors = vectors / norms
 
-    # Save sidecar files
+    # Save sidecar files and update cache
     emb_path, ids_path = _sidecar_paths()
     np.save(emb_path, vectors)
     np.save(ids_path, ids)
+    _cache_vectors(vectors, ids)
 
     log.info("Embedded %d initiatives → %s", len(inits), emb_path)
     return len(inits)
@@ -132,9 +155,9 @@ def re_embed_one(session: Session, init: Initiative) -> None:
         vec = vec / norm
 
     # Load existing sidecar files or auto-initialize empty arrays
-    if emb_path.exists() and ids_path.exists():
-        vectors = np.load(emb_path)
-        ids = np.load(ids_path)
+    cached = _load_vectors()
+    if cached is not None:
+        vectors, ids = cached[0].copy(), cached[1].copy()
     else:
         vectors = np.empty((0, vec.shape[0]), dtype=np.float32)
         ids = np.empty(0, dtype=np.int64)
@@ -149,6 +172,7 @@ def re_embed_one(session: Session, init: Initiative) -> None:
 
     np.save(emb_path, vectors)
     np.save(ids_path, ids)
+    _cache_vectors(vectors, ids)
 
 
 # ---------------------------------------------------------------------------
@@ -176,12 +200,11 @@ def find_similar(
     Returns:
         List of (initiative_id, similarity_score) tuples, sorted by similarity descending.
     """
-    emb_path, ids_path = _sidecar_paths()
-    if not emb_path.exists() or not ids_path.exists():
+    cached = _load_vectors()
+    if cached is None:
         return []
 
-    vectors = np.load(emb_path)
-    ids = np.load(ids_path)
+    vectors, ids = cached
 
     if len(vectors) == 0:
         return []

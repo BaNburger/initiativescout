@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -323,20 +324,16 @@ _PLATFORM_PATTERNS: dict[str, str] = {
     "crunchbase": "crunchbase.com",
     "tiktok": "tiktok.com",
     "discord": "discord.gg",
+    "google_scholar": "scholar.google.com",
+    "orcid": "orcid.org",
+    "semantic_scholar": "semanticscholar.org",
+    "openalex": "openalex.org",
 }
 
 
 async def _ddg_search(query: str, max_results: int = 10) -> list[dict]:
-    """Run a single DuckDuckGo search with rate limiting and retry."""
-    await _ddg_limiter.acquire()
-    try:
-        async with AsyncDDGS() as ddgs:
-            results = [r async for r in ddgs.atext(query, max_results=max_results)]
-        _ddg_limiter.reset()
-        return results
-    except RatelimitException:
-        _ddg_limiter.backoff()
-        # One retry after backoff
+    """Run a single DuckDuckGo search with rate limiting and one retry."""
+    for attempt in range(2):
         await _ddg_limiter.acquire()
         try:
             async with AsyncDDGS() as ddgs:
@@ -345,8 +342,8 @@ async def _ddg_search(query: str, max_results: int = 10) -> list[dict]:
             return results
         except RatelimitException:
             _ddg_limiter.backoff()
-            log.warning("DDG rate limited after retry for query=%r, skipping", query)
-            return []
+    log.warning("DDG rate limited after retry for query=%r, skipping", query)
+    return []
 
 
 async def discover_urls(initiative: Initiative) -> dict[str, str]:
@@ -414,36 +411,41 @@ async def _fetch_url(url: str) -> str:
 
 
 def _extract_text(raw_html: str) -> str:
-    """Extract readable text from HTML using lxml."""
+    """Extract all visible text from HTML, stripping navigation and boilerplate."""
     try:
-        tree = lxml_html.fromstring(raw_html)
+        # Strip XML declaration — lxml.html chokes on XHTML prologues like <?xml ...?>
+        cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
+        tree = lxml_html.fromstring(cleaned)
     except (etree.ParserError, etree.XMLSyntaxError, ValueError):
         return ""
     title = " ".join(tree.xpath("//title//text()")).strip()
     meta = " ".join(tree.xpath("//meta[@name='description']/@content")).strip()
-    headings = " ".join(tree.xpath("//h1//text() | //h2//text() | //h3//text()")).strip()
-    paragraphs = " ".join(tree.xpath("//p//text()")).strip()
+
+    # Strip noise elements before extracting visible text
+    for el in tree.xpath("//script | //style | //nav | //footer | //header | //noscript"):
+        el.getparent().remove(el)
+
+    body = tree.xpath("//body")
+    content = " ".join((body[0] if body else tree).text_content().split())
 
     parts = []
     if title:
         parts.append(f"TITLE: {title}")
     if meta:
         parts.append(f"META: {meta}")
-    if headings:
-        parts.append(f"HEADINGS: {headings}")
-    if paragraphs:
-        parts.append(f"CONTENT: {paragraphs}")
+    if content:
+        parts.append(f"CONTENT: {content}")
     return "\n".join(parts)[:_MAX_TEXT]
 
 
 def _summarize_text(text: str, url: str) -> str:
-    """Create a compact summary for LLM consumption."""
+    """Create a compact summary for embeddings and display."""
     lines = text.split("\n")
     summary_parts = [f"Source: {url}"]
     for line in lines[:4]:
         if line.strip():
-            summary_parts.append(line[:300])
-    return "\n".join(summary_parts)[:500]
+            summary_parts.append(line[:500])
+    return "\n".join(summary_parts)[:1500]
 
 
 async def _github_get(path: str, headers: dict[str, str]) -> tuple[int, dict | list | None]:

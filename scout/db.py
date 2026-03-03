@@ -26,12 +26,13 @@ _lock = threading.Lock()
 _engine = None
 _SessionLocal = None
 _current_db_path: Path | None = None
+_cached_entity_type: str | None = None
 
 DATA_DIR = Path(__file__).parent / "data"
 
 
 def init_db(db_path: str | Path | None = None) -> None:
-    global _engine, _SessionLocal, _current_db_path
+    global _engine, _SessionLocal, _current_db_path, _cached_entity_type
     with _lock:
         old_engine = _engine
         if db_path is None:
@@ -53,6 +54,7 @@ def init_db(db_path: str | Path | None = None) -> None:
         _engine = new_engine
         _SessionLocal = new_factory
         _current_db_path = db_path
+        _cached_entity_type = None  # invalidate cache on DB init
     # Dispose old engine outside the lock so get_session() isn't blocked
     if old_engine is not None:
         old_engine.dispose()
@@ -142,12 +144,13 @@ def switch_db(name: str) -> None:
     init_db(_safe_db_path(name))
 
 
-def create_database(name: str) -> None:
+def create_database(name: str, entity_type: str = "initiative") -> None:
     """Create a new database and switch to it."""
     db_path = _safe_db_path(name)
     if db_path.exists():
         raise ValueError(f"Database '{name}' already exists")
     init_db(db_path)
+    set_entity_type(entity_type)
 
 
 def _ensure_revision_tracking(engine) -> None:
@@ -158,6 +161,9 @@ def _ensure_revision_tracking(engine) -> None:
         ))
         conn.execute(text(
             "INSERT OR IGNORE INTO _meta (key, value) VALUES ('revision', 0)"
+        ))
+        conn.execute(text(
+            "INSERT OR IGNORE INTO _meta (key, value) VALUES ('entity_type', 'initiative')"
         ))
         for table in ("initiatives", "enrichments", "outreach_scores", "projects"):
             for op in ("INSERT", "UPDATE", "DELETE"):
@@ -180,6 +186,38 @@ def get_revision() -> int:
         return conn.execute(text("SELECT value FROM _meta WHERE key = 'revision'")).scalar() or 0
 
 
+def get_entity_type() -> str:
+    """Return the entity type for the current database ('initiative', 'professor', etc.)."""
+    global _cached_entity_type
+    with _lock:
+        if _cached_entity_type is not None:
+            return _cached_entity_type
+        engine = _engine
+    if engine is None:
+        return "initiative"
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_type'")).scalar()
+    result = str(row) if row else "initiative"
+    with _lock:
+        _cached_entity_type = result
+    return result
+
+
+def set_entity_type(entity_type: str) -> None:
+    """Set the entity type for the current database."""
+    global _cached_entity_type
+    with _lock:
+        engine = _engine
+    if engine is None:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT OR REPLACE INTO _meta (key, value) VALUES ('entity_type', :et)"
+        ), {"et": entity_type})
+    with _lock:
+        _cached_entity_type = entity_type
+
+
 def _ensure_fts_table(engine) -> None:
     """Create the FTS5 table structure (rebuild deferred to first search)."""
     with engine.begin() as conn:
@@ -193,14 +231,43 @@ def _ensure_fts_table(engine) -> None:
 
 
 def _seed_scoring_prompts(engine) -> None:
-    """Seed default scoring prompts if the table is empty."""
+    """Seed or fix scoring prompts to match the database's entity type."""
+    from scout.scorer import default_prompts_for, _ALL_DEFAULT_PROMPTS
+
+    with engine.connect() as conn:
+        et_row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_type'")).scalar()
+    entity_type = str(et_row) if et_row else "initiative"
+    prompts = default_prompts_for(entity_type)
+
     with engine.connect() as conn:
         count = conn.execute(text("SELECT COUNT(*) FROM scoring_prompts")).scalar()
-        if count > 0:
-            return
-    from scout.scorer import DEFAULT_PROMPTS
-    with engine.begin() as conn:
-        for key, (label, content) in DEFAULT_PROMPTS.items():
-            conn.execute(text(
-                "INSERT INTO scoring_prompts (key, label, content) VALUES (:key, :label, :content)"
-            ), {"key": key, "label": label, "content": content})
+
+    if count == 0:
+        # Fresh DB — seed with correct defaults
+        with engine.begin() as conn:
+            for key, (label, content) in prompts.items():
+                conn.execute(text(
+                    "INSERT INTO scoring_prompts (key, label, content) VALUES (:key, :label, :content)"
+                ), {"key": key, "label": label, "content": content})
+        return
+
+    # Existing prompts — check if they're stale defaults from a different entity type.
+    # Only auto-fix if content exactly matches a different type's defaults (user edits preserved).
+    wrong_defaults: dict[str, str] = {}
+    for other_type, other_prompts in _ALL_DEFAULT_PROMPTS.items():
+        if other_type != entity_type:
+            for key, (_, content) in other_prompts.items():
+                wrong_defaults[key + ":" + content] = key
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT key, content FROM scoring_prompts")).fetchall()
+    to_fix = []
+    for key, content in rows:
+        if (key + ":" + content) in wrong_defaults and key in prompts:
+            to_fix.append(key)
+    if to_fix:
+        with engine.begin() as conn:
+            for key in to_fix:
+                label, content = prompts[key]
+                conn.execute(text(
+                    "UPDATE scoring_prompts SET label = :label, content = :content WHERE key = :key"
+                ), {"key": key, "label": label, "content": content})

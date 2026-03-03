@@ -148,15 +148,150 @@ Respond with ONLY valid JSON:
 }
 """
 
-# Registry used by db.py to seed defaults — {key: (label, content)}
-DEFAULT_PROMPTS: dict[str, tuple[str, str]] = {
-    "team": ("Team", DEFAULT_TEAM_PROMPT),
-    "tech": ("Tech", DEFAULT_TECH_PROMPT),
-    "opportunity": ("Opportunity", DEFAULT_OPPORTUNITY_PROMPT),
+# ---------------------------------------------------------------------------
+# Professor default prompts
+# ---------------------------------------------------------------------------
+
+DEFAULT_PROFESSOR_TEAM_PROMPT = """\
+You are evaluating the RESEARCH GROUP dimension of a TUM professor \
+for collaboration and outreach purposes.
+
+Assess the quality and activity of the professor's research group based on:
+- Research group size and composition (postdocs, PhD students, research staff)
+- LinkedIn / professional presence of group members
+- Advisor and collaborator network quality
+- Evidence of successful mentorship (graduated PhDs, placed students)
+- Industry advisory roles or board memberships
+
+Be opinionated. A strong research group has active members, clear structure, \
+and evidence of producing results. A weak signal is a professor with no \
+visible group activity.
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+(A+ = exceptional research group, D = no evidence of group quality)
+
+Respond with ONLY valid JSON:
+{
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "reasoning": "<2-3 sentences explaining the grade>"
+}
+"""
+
+DEFAULT_PROFESSOR_TECH_PROMPT = """\
+You are evaluating the RESEARCH OUTPUT dimension of a TUM professor \
+for collaboration and outreach purposes.
+
+Assess research depth and technical impact based on:
+- Publication record: recent papers, venue quality, citation signals
+- GitHub activity: open-source code, research artifacts, tools
+- Research output: HuggingFace models, datasets, benchmarks
+- Patents, standards contributions, technical reports
+- Research funding signals (ERC grants, DFG projects, industry funding)
+
+Be opinionated. Strong research output means active publication with \
+reproducible artifacts and open-source impact. Weak means no visible \
+publications or code.
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+(A+ = prolific researcher with open-source impact, D = no research evidence)
+
+Respond with ONLY valid JSON:
+{
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "reasoning": "<2-3 sentences explaining the grade>"
+}
+"""
+
+DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT = """\
+You are evaluating the COLLABORATION POTENTIAL of a TUM professor \
+for outreach purposes.
+
+Assess collaboration opportunity based on:
+- Research relevance to industry applications
+- Existing industry partnerships or spin-offs
+- Openness to collaboration (consulting, joint projects, advisory roles)
+- Research group capacity for new projects
+- Complementarity with venture and startup ecosystem
+- Track record of technology transfer
+
+Also provide:
+- A classification of the professor type
+- A specific contact recommendation
+- An engagement hook for first outreach
+
+Be opinionated. A strong collaboration opportunity means the professor \
+has relevant expertise AND demonstrated interest in applied work. \
+Weak means purely theoretical or no evidence of external engagement.
+
+CLASSIFICATION (assign exactly one):
+- research_leader: Established authority with significant impact and citations
+- emerging_researcher: Junior professor or recently appointed with high potential
+- industry_bridge: Strong industry connections, spin-offs, or consulting activity
+- teaching_focused: Primarily teaching role, limited research output
+- emeritus: Retired or emeritus professor
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+(A+ = ideal collaboration partner, D = no collaboration potential)
+
+Respond with ONLY valid JSON:
+{
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "reasoning": "<2-3 sentences explaining the grade>",
+  "classification": "<research_leader|emerging_researcher|industry_bridge|teaching_focused|emeritus>",
+  "contact_who": "<specific person/role + channel for outreach>",
+  "contact_channel": "<email|linkedin|event|website_form>",
+  "engagement_hook": "<specific opener referencing something concrete from the dossier>"
+}
+"""
+
+# ---------------------------------------------------------------------------
+# Prompt & classification registries (keyed by entity type)
+# ---------------------------------------------------------------------------
+
+# {entity_type: {key: (label, content)}}
+_ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = {
+    "initiative": {
+        "team": ("Team", DEFAULT_TEAM_PROMPT),
+        "tech": ("Tech", DEFAULT_TECH_PROMPT),
+        "opportunity": ("Opportunity", DEFAULT_OPPORTUNITY_PROMPT),
+    },
+    "professor": {
+        "team": ("Research Group", DEFAULT_PROFESSOR_TEAM_PROMPT),
+        "tech": ("Research Output", DEFAULT_PROFESSOR_TECH_PROMPT),
+        "opportunity": ("Collaboration Potential", DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT),
+    },
 }
 
+def default_prompts_for(entity_type: str) -> dict[str, tuple[str, str]]:
+    """Return default prompt definitions for the given entity type."""
+    return _ALL_DEFAULT_PROMPTS.get(entity_type, _ALL_DEFAULT_PROMPTS["initiative"])
+
+
 VALID_VERDICTS = {"reach_out_now", "reach_out_soon", "monitor", "skip"}
-VALID_CLASSIFICATIONS = {"deep_tech", "student_venture", "applied_research", "student_club", "dormant"}
+
+# {entity_type: list of valid classifications}  — first element is the default fallback
+DEFAULT_CLASSIFICATIONS: dict[str, list[str]] = {
+    "initiative": ["deep_tech", "student_venture", "applied_research", "student_club", "dormant"],
+    "professor": ["research_leader", "emerging_researcher", "industry_bridge", "teaching_focused", "emeritus"],
+}
+
+def valid_classifications(entity_type: str = "initiative") -> set[str]:
+    """Return valid classification values for the given entity type."""
+    return set(DEFAULT_CLASSIFICATIONS.get(entity_type, DEFAULT_CLASSIFICATIONS["initiative"]))
+
+
+def default_classification(entity_type: str = "initiative") -> str:
+    """Return the deterministic default classification for the given entity type."""
+    return DEFAULT_CLASSIFICATIONS.get(entity_type, DEFAULT_CLASSIFICATIONS["initiative"])[0]
+
+
+def _normalize_classification(value: str | None, entity_type: str = "initiative") -> str:
+    """Normalize and validate a classification value, falling back to the entity default."""
+    fallback = default_classification(entity_type)
+    if not value:
+        return fallback
+    normalized = str(value).strip().lower()
+    return normalized if normalized in valid_classifications(entity_type) else fallback
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +365,7 @@ class LLMClient:
             else:
                 response = await self._client.chat.completions.create(
                     model=self.model,
-                    max_tokens=2048,
+                    max_completion_tokens=2048,
                     response_format={"type": "json_object"},
                     messages=[
                         {"role": "system", "content": system},
@@ -279,7 +414,7 @@ def _build_dossier(
     sections: list[str] = list(header or [])
     for label, attr in fields:
         val = getattr(obj, attr, None)
-        if val is None or val is False or val == "":
+        if val is None or val is False or val == "" or val == 0:
             continue
         if isinstance(val, bool):
             sections.append(label)
@@ -297,8 +432,20 @@ def _build_dossier(
     return "\n".join(sections)
 
 
-def _initiative_header(init: Initiative) -> list[str]:
-    return [f"INITIATIVE: {init.name}", f"UNIVERSITY: {init.uni}"]
+ENTITY_CONFIG: dict[str, dict[str, str]] = {
+    "initiative": {"label": "initiative", "label_plural": "initiatives",
+                   "context": "Munich student initiatives"},
+    "professor": {"label": "professor", "label_plural": "professors",
+                  "context": "TUM professors"},
+}
+
+
+def _initiative_header(init: Initiative, entity_type: str = "initiative") -> list[str]:
+    label = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])["label"].upper()
+    lines = [f"{label}: {init.name}", f"UNIVERSITY: {init.uni}"]
+    if init.faculty:
+        lines.append(f"FACULTY: {init.faculty}")
+    return lines
 
 
 # Dimension-specific field specs: (label, attribute_name)
@@ -351,40 +498,41 @@ _OPPORTUNITY_FIELDS: list[tuple[str, str]] = [
 ]
 
 
-def build_team_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
+def build_team_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:
     """Assemble team-relevant data for the Team dimension LLM call."""
     return _build_dossier(
         init, _TEAM_FIELDS,
         enrichments=enrichments,
         source_filter={
-            "team_page": 5000, "website": 3000,
+            "team_page": 5000, "website": 3000, "github": 3000,
             "linkedin": 3000, "instagram": 2000, "facebook": 2000,
         },
-        header=_initiative_header(init),
+        header=_initiative_header(init, entity_type),
     )
 
 
-def build_tech_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
+def build_tech_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:
     """Assemble tech-relevant data for the Tech dimension LLM call."""
     return _build_dossier(
         init, _TECH_FIELDS,
         enrichments=enrichments,
         source_filter={
-            "github": 5000,
+            "github": 5000, "website": 3000,
             "huggingface": 3000, "researchgate": 3000,
             "openalex": 3000, "semantic_scholar": 3000,
+            "google_scholar": 3000, "orcid": 3000,
         },
-        header=_initiative_header(init),
+        header=_initiative_header(init, entity_type),
     )
 
 
-def build_full_dossier(init: Initiative, enrichments: list[Enrichment]) -> str:
+def build_full_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:
     """Assemble full dossier for the Opportunity dimension (needs big picture)."""
     return _build_dossier(
         init, _OPPORTUNITY_FIELDS,
         enrichments=enrichments,
         source_filter=None,  # include all enrichment sources
-        header=_initiative_header(init),
+        header=_initiative_header(init, entity_type),
     )
 
 
@@ -445,18 +593,21 @@ def compute_score(avg_grade: float) -> float:
     return round(max(1.0, min(5.0, raw)) * 2) / 2  # snap to half-point
 
 
-def compute_data_gaps(init: Initiative, enrichments: list[Enrichment]) -> list[str]:
+def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> list[str]:
     """Identify missing data sources that could improve scoring."""
     gaps: list[str] = []
     source_types = {e.source_type for e in enrichments}
+    prof = entity_type == "professor"
     if "website" not in source_types:
         gaps.append("No website enrichment data available")
     if "team_page" not in source_types:
-        gaps.append("No team page data — team assessment is limited")
+        gaps.append("No chair/group page data — research group assessment is limited" if prof
+                     else "No team page data — team assessment is limited")
     if "github" not in source_types:
         gaps.append("No GitHub data — tech assessment is limited")
     if not init.linkedin:
-        gaps.append("No LinkedIn URL — cannot verify team backgrounds")
+        gaps.append("No LinkedIn URL — cannot verify academic network" if prof
+                     else "No LinkedIn URL — cannot verify team backgrounds")
     if not init.email:
         gaps.append("No contact email on file")
     return gaps
@@ -472,6 +623,7 @@ async def score_initiative(
     enrichments: list[Enrichment],
     client: LLMClient,
     prompts: dict[str, str] | None = None,
+    entity_type: str = "initiative",
 ) -> OutreachScore:
     """Score an initiative across 3 dimensions in parallel.
 
@@ -480,16 +632,18 @@ async def score_initiative(
         enrichments: Enrichment records for this initiative.
         client: LLM client for API calls.
         prompts: Optional ``{key: content}`` dict of custom prompts.
-            Falls back to DEFAULT_PROMPTS if not provided.
+            Falls back to entity-type-specific defaults if not provided.
+        entity_type: Entity type for classification validation and dossier headers.
     """
+    defaults = default_prompts_for(entity_type)
     p = prompts or {}
-    team_prompt = p.get("team", DEFAULT_TEAM_PROMPT)
-    tech_prompt = p.get("tech", DEFAULT_TECH_PROMPT)
-    opp_prompt = p.get("opportunity", DEFAULT_OPPORTUNITY_PROMPT)
+    team_prompt = p.get("team", defaults["team"][1])
+    tech_prompt = p.get("tech", defaults["tech"][1])
+    opp_prompt = p.get("opportunity", defaults["opportunity"][1])
 
-    team_dossier = build_team_dossier(initiative, enrichments)
-    tech_dossier = build_tech_dossier(initiative, enrichments)
-    full_dossier = build_full_dossier(initiative, enrichments)
+    team_dossier = build_team_dossier(initiative, enrichments, entity_type)
+    tech_dossier = build_tech_dossier(initiative, enrichments, entity_type)
+    full_dossier = build_full_dossier(initiative, enrichments, entity_type)
 
     team, tech, opp = await asyncio.gather(
         _score_dimension(client, team_prompt, team_dossier),
@@ -501,16 +655,17 @@ async def score_initiative(
     verdict = compute_verdict(avg_grade)
     score = compute_score(avg_grade)
 
-    classification = str(opp.extras.get("classification", "student_club")).strip().lower()
-    if classification not in VALID_CLASSIFICATIONS:
-        classification = "student_club"
+    classification = _normalize_classification(
+        opp.extras.get("classification"), entity_type,
+    )
 
+    defaults = default_prompts_for(entity_type)
     key_evidence = [
-        f"Team ({team.grade}): {team.reasoning}",
-        f"Tech ({tech.grade}): {tech.reasoning}",
-        f"Opportunity ({opp.grade}): {opp.reasoning}",
+        f"{defaults['team'][0]} ({team.grade}): {team.reasoning}",
+        f"{defaults['tech'][0]} ({tech.grade}): {tech.reasoning}",
+        f"{defaults['opportunity'][0]} ({opp.grade}): {opp.reasoning}",
     ]
-    data_gaps = compute_data_gaps(initiative, enrichments)
+    data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
 
     return OutreachScore(
         initiative_id=initiative.id,
@@ -540,30 +695,30 @@ async def score_initiative(
 # ---------------------------------------------------------------------------
 
 # Project scoring uses a combined prompt since projects have less data.
-PROJECT_SYSTEM_PROMPT = """\
-You are a venture scout's assistant. Read the dossier about a project within \
-a Munich university student initiative and produce an outreach recommendation.
-
-Provide grades for team, tech, and opportunity dimensions, plus a classification.
-
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-
-Respond with ONLY valid JSON:
-{
-  "verdict": "<reach_out_now|reach_out_soon|monitor|skip>",
-  "score": <float 1.0-5.0>,
-  "classification": "<deep_tech|student_venture|applied_research|student_club|dormant>",
-  "reasoning": "<2-3 sentences>",
-  "contact_who": "<contact recommendation>",
-  "contact_channel": "<email|linkedin|event|website_form>",
-  "engagement_hook": "<specific opener>",
-  "key_evidence": ["<bullet 1>", "<bullet 2>"],
-  "data_gaps": ["<what is missing>"],
-  "team_grade": "<grade>",
-  "tech_grade": "<grade>",
-  "opportunity_grade": "<grade>"
-}
-"""
+def _project_system_prompt(entity_type: str = "initiative") -> str:
+    cls_list = "|".join(sorted(valid_classifications(entity_type)))
+    ctx = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])["context"]
+    return (
+        f"You are an outreach assistant. Read the dossier about a project within "
+        f"{ctx} and produce an outreach recommendation.\n\n"
+        f"Provide grades for team, tech, and opportunity dimensions, plus a classification.\n\n"
+        f"Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D\n\n"
+        f"Respond with ONLY valid JSON:\n"
+        "{\n"
+        '  "verdict": "<reach_out_now|reach_out_soon|monitor|skip>",\n'
+        '  "score": <float 1.0-5.0>,\n'
+        f'  "classification": "<{cls_list}>",\n'
+        '  "reasoning": "<2-3 sentences>",\n'
+        '  "contact_who": "<contact recommendation>",\n'
+        '  "contact_channel": "<email|linkedin|event|website_form>",\n'
+        '  "engagement_hook": "<specific opener>",\n'
+        '  "key_evidence": ["<bullet 1>", "<bullet 2>"],\n'
+        '  "data_gaps": ["<what is missing>"],\n'
+        '  "team_grade": "<grade>",\n'
+        '  "tech_grade": "<grade>",\n'
+        '  "opportunity_grade": "<grade>"\n'
+        "}\n"
+    )
 
 
 _PROJECT_DOSSIER_FIELDS: list[tuple[str, str]] = [
@@ -574,11 +729,12 @@ _PROJECT_DOSSIER_FIELDS: list[tuple[str, str]] = [
 ]
 
 
-def build_project_dossier(project: Project, initiative: Initiative) -> str:
+def build_project_dossier(project: Project, initiative: Initiative, entity_type: str = "initiative") -> str:
     """Assemble project + parent initiative context into a dossier."""
+    parent_label = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])["label"].upper()
     header = [
         f"PROJECT: {project.name}",
-        f"PARENT INITIATIVE: {initiative.name}",
+        f"PARENT {parent_label}: {initiative.name}",
         f"UNIVERSITY: {initiative.uni}",
     ]
     if initiative.sector:
@@ -599,7 +755,7 @@ def build_project_dossier(project: Project, initiative: Initiative) -> str:
     return "\n".join(sections)
 
 
-def _validate_project_response(raw: dict[str, Any]) -> dict[str, Any]:
+def _validate_project_response(raw: dict[str, Any], entity_type: str = "initiative") -> dict[str, Any]:
     """Validate and normalize LLM response for project scoring."""
     verdict = str(raw.get("verdict", "monitor")).strip().lower()
     if verdict not in VALID_VERDICTS:
@@ -608,9 +764,7 @@ def _validate_project_response(raw: dict[str, Any]) -> dict[str, Any]:
     score = max(1.0, min(5.0, float(raw.get("score", 3.0))))
     score = round(score * 2) / 2
 
-    classification = str(raw.get("classification", "student_club")).strip().lower()
-    if classification not in VALID_CLASSIFICATIONS:
-        classification = "student_club"
+    classification = _normalize_classification(raw.get("classification"), entity_type)
 
     key_evidence = raw.get("key_evidence", [])
     if not isinstance(key_evidence, list):
@@ -642,11 +796,12 @@ async def score_project(
     project: Project,
     initiative: Initiative,
     client: LLMClient,
+    entity_type: str = "initiative",
 ) -> OutreachScore:
     """Score a project using a single combined LLM call."""
-    dossier = build_project_dossier(project, initiative)
-    raw = await client.call(PROJECT_SYSTEM_PROMPT, dossier)
-    v = _validate_project_response(raw)
+    dossier = build_project_dossier(project, initiative, entity_type)
+    raw = await client.call(_project_system_prompt(entity_type), dossier)
+    v = _validate_project_response(raw, entity_type)
     return OutreachScore(
         initiative_id=initiative.id,
         project_id=project.id,

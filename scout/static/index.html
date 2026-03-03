@@ -48,17 +48,9 @@
   </select>
   <select class="filter-select" id="filter-class" onchange="applyFilters()">
     <option value="">All Types</option>
-    <option value="deep_tech">Deep Tech</option>
-    <option value="student_venture">Student Venture</option>
-    <option value="applied_research">Applied Research</option>
-    <option value="student_club">Student Club</option>
-    <option value="dormant">Dormant</option>
   </select>
   <select class="filter-select" id="filter-uni" onchange="applyFilters()">
     <option value="">All Unis</option>
-    <option value="TUM">TUM</option>
-    <option value="LMU">LMU</option>
-    <option value="HM">HM</option>
   </select>
   <select class="filter-select" id="filter-faculty" onchange="applyFilters()">
     <option value="">All Faculties</option>
@@ -76,15 +68,15 @@
       <tbody id="list-body"></tbody>
     </table>
     <div class="empty-state" id="empty-state" style="display:none;">
-      <h2>No initiatives loaded</h2>
-      <p>Import an XLSX spreadsheet to get started</p>
+      <h2>No data loaded</h2>
+      <p>Import data or use MCP tools to get started</p>
       <button class="btn btn-primary" onclick="showImport()">Import XLSX</button>
     </div>
   </div>
 
   <!-- Detail -->
   <div class="detail-panel" id="detail-panel">
-    <div class="detail-empty" id="detail-empty">Select an initiative to view details</div>
+    <div class="detail-empty" id="detail-empty">Select an item to view details</div>
     <div id="detail-content" style="display:none;"></div>
   </div>
 </div>

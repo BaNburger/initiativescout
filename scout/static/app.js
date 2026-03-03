@@ -40,6 +40,8 @@ async function pollRevision() {
       _refreshInFlight = true;
       try {
         await loadInitiatives();
+        populateUniFilter();
+        populateClassFilter();
         await loadStats();
         if (state.selectedId) await loadDetail(state.selectedId);
       } finally { _refreshInFlight = false; }
@@ -438,6 +440,24 @@ async function populateFacultyFilter() {
     sel.innerHTML = '<option value="">All Faculties</option>' +
       faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
   }
+}
+
+function populateUniFilter() {
+  const sel = document.getElementById('filter-uni');
+  const current = sel.value;
+  const unis = [...new Set(state.initiatives.map(i => i.uni).filter(Boolean))].sort();
+  // Safe: esc() and escAttr() sanitize user content (same pattern as populateFacultyFilter)
+  sel.innerHTML = '<option value="">All Unis</option>' +
+    unis.map(u => `<option value="${escAttr(u)}"${u === current ? ' selected' : ''}>${esc(u)}</option>`).join('');
+}
+
+function populateClassFilter() {
+  const sel = document.getElementById('filter-class');
+  const current = sel.value;
+  const classes = [...new Set(state.initiatives.map(i => i.classification).filter(Boolean))].sort();
+  // Safe: esc() and escAttr() sanitize user content (same pattern as populateFacultyFilter)
+  sel.innerHTML = '<option value="">All Types</option>' +
+    classes.map(c => `<option value="${escAttr(c)}"${c === current ? ' selected' : ''}>${esc(humanize(c))}</option>`).join('');
 }
 
 function sortBy(field) {
@@ -1403,8 +1423,10 @@ async function showCreateDb() {
     showToast('Invalid name. Use only letters, numbers, hyphens, and underscores.', 'error');
     return;
   }
+  const entityType = await showPromptModal('Entity Type', 'Type: initiative or professor', 'initiative');
+  const et = (entityType || 'initiative').trim().toLowerCase();
   try {
-    const result = await api('POST', '/api/databases/create', { name });
+    const result = await api('POST', '/api/databases/create', { name, entity_type: et });
     state.currentDb = result.current;
     _lastRevision = null;
     _resetDetailPanel();
@@ -1687,6 +1709,8 @@ async function initApp() {
   await loadCustomColumns();
   await loadInitiatives();
   populateFacultyFilter();
+  populateUniFilter();
+  populateClassFilter();
   loadStats();
   updateExportLink();
   await syncRevision();

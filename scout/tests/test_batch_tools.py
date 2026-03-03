@@ -319,7 +319,7 @@ class TestBatchScore:
         """Results should NOT contain reasoning, evidence, or contact details."""
         from scout.mcp_server import batch_score
 
-        async def _fake_run_scoring(session, init, client=None):
+        async def _fake_run_scoring(session, init, client=None, **kwargs):
             return _fake_score(init.id)
 
         with (
@@ -363,7 +363,7 @@ class TestBatchScore:
         verdicts = ["reach_out_now", "reach_out_now", "monitor"]
         call_idx = [0]
 
-        async def _varied_scoring(session, init, client=None):
+        async def _varied_scoring(session, init, client=None, **kwargs):
             v = verdicts[call_idx[0]]
             s = 4.5 if v == "reach_out_now" else 2.0
             call_idx[0] += 1
@@ -389,7 +389,7 @@ class TestBatchScore:
 
         call_idx = [0]
 
-        async def _flaky_scoring(session, init, client=None):
+        async def _flaky_scoring(session, init, client=None, **kwargs):
             call_idx[0] += 1
             if call_idx[0] == 2:
                 raise RuntimeError("API rate limited")
@@ -452,7 +452,7 @@ class TestProcessQueue:
         async def _fake_run_enrichment(session, init, crawler=None):
             return [_fake_enrichment(init.id)]
 
-        async def _fake_run_scoring(session, init, client=None):
+        async def _fake_run_scoring(session, init, client=None, **kwargs):
             return _fake_score(init.id, verdict="monitor", score=2.5)
 
         with (
@@ -518,7 +518,7 @@ class TestProcessQueue:
         """Items already enriched should go straight to scoring."""
         from scout.mcp_server import process_queue
 
-        async def _fake_run_scoring(session, init, client=None):
+        async def _fake_run_scoring(session, init, client=None, **kwargs):
             return _fake_score(init.id)
 
         with (

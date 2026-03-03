@@ -18,8 +18,9 @@ from sqlalchemy.orm import Session
 
 from scout import services
 from scout.db import (
-    create_database, current_db_name, get_revision, get_session, init_db,
-    list_databases, session_generator, switch_db, validate_db_name,
+    create_database, current_db_name, get_entity_type, get_revision,
+    get_session, init_db, list_databases, session_generator, switch_db,
+    validate_db_name,
 )
 from scout.importer import import_xlsx
 from scout.models import Enrichment, Initiative, OutreachScore, Project
@@ -53,14 +54,14 @@ app = FastAPI(
     title="Scout",
     version="0.1.0",
     description=(
-        "Outreach intelligence API for Munich student initiatives. "
-        "Discover, enrich, and score initiatives for venture outreach. "
+        "Outreach intelligence API. "
+        "Discover, enrich, and score entities for outreach. "
         "All endpoints return JSON. No authentication required."
     ),
     lifespan=lifespan,
     openapi_tags=[
-        {"name": "Initiatives", "description": "Browse, search, and update student initiatives."},
-        {"name": "Enrichment", "description": "Fetch live web and GitHub data for initiatives."},
+        {"name": "Initiatives", "description": "Browse, search, and update initiatives."},
+        {"name": "Enrichment", "description": "Fetch live web and GitHub data."},
         {"name": "Scoring", "description": "LLM-powered outreach scoring. Requires LLM API key (auto-loaded from .mcp.json)."},
         {"name": "Projects", "description": "Manage sub-projects within initiatives."},
         {"name": "Import", "description": "Bulk import initiatives from XLSX spreadsheets."},
@@ -149,6 +150,41 @@ async def export_file(
     )
 
 
+@app.post("/api/scrape/tum-professors", tags=["Import"],
+          summary="Scrape TUM professor directory and import")
+async def scrape_tum_professors_route(body: dict[str, Any] | None = None):
+    from scout.scrapers import scrape_tum_professors as _scrape
+    params = body or {}
+    professors = await _scrape()
+    school = params.get("school")
+    if school:
+        professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
+    limit = min(int(params.get("limit", 50)), 500)
+    professors = professors[:limit]
+
+    created = skipped = 0
+    with next(session_generator()) as session:
+        for prof in professors:
+            existing = session.execute(
+                select(Initiative).where(Initiative.name == prof["name"])
+            ).scalars().first()
+            if existing:
+                skipped += 1
+                continue
+            session.add(Initiative(
+                name=prof["name"], uni=prof.get("uni", "TUM"),
+                faculty=prof.get("faculty", ""), website=prof.get("website", ""),
+            ))
+            created += 1
+        session.commit()
+    return {"created": created, "skipped_duplicates": skipped, "total_found": len(professors)}
+
+
+@app.get("/api/entity-type", tags=["Stats"], summary="Get entity type for current database")
+async def get_entity_type_route():
+    return {"entity_type": get_entity_type()}
+
+
 # ---------------------------------------------------------------------------
 # Routes: Initiatives
 # ---------------------------------------------------------------------------
@@ -163,7 +199,7 @@ class InitiativeListResponse(BaseModel):
          tags=["Initiatives"], summary="List initiatives with filtering, sorting, and pagination")
 async def list_initiatives(
     verdict: str | None = Query(None, description="Comma-separated: reach_out_now, reach_out_soon, monitor, skip, unscored"),
-    classification: str | None = Query(None, description="Comma-separated: deep_tech, student_venture, applied_research, student_club, dormant"),
+    classification: str | None = Query(None, description="Comma-separated classification filter (values depend on entity type)"),
     uni: str | None = Query(None, description="Comma-separated: TUM, LMU, HM"),
     faculty: str | None = Query(None, description="Comma-separated faculty/department filter"),
     search: str | None = Query(None, description="Free-text search across name, description, and sector"),
@@ -401,7 +437,9 @@ async def score_project_endpoint(project_id: int, session: Session = Depends(db_
     proj = _get_or_404(session, Project, project_id)
     init = _get_or_404(session, Initiative, proj.initiative_id)
     try:
-        outreach = await services.run_project_scoring(session, proj, init)
+        outreach = await services.run_project_scoring(
+            session, proj, init, entity_type=get_entity_type(),
+        )
         session.commit()
     except LLMCallError as exc:
         code = 503 if exc.retryable else 422
@@ -443,11 +481,12 @@ async def create_database_route(body: dict[str, Any]):
         name = validate_db_name(body.get("name") or "")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    entity_type = body.get("entity_type", "initiative")
     try:
-        create_database(name)
+        create_database(name, entity_type=entity_type)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-    return {"current": current_db_name()}
+    return {"current": current_db_name(), "entity_type": entity_type}
 
 
 # ---------------------------------------------------------------------------

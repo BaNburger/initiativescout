@@ -728,14 +728,18 @@ def _ensure_client(client: LLMClient | None) -> LLMClient:
 
 async def run_scoring(
     session: Session, init: Initiative, client: LLMClient | None = None,
+    entity_type: str | None = None,
 ) -> OutreachScore:
     """Score an initiative, replacing existing initiative-level scores (caller must commit)."""
     client = _ensure_client(client)
+    if entity_type is None:
+        from scout.db import get_entity_type
+        entity_type = get_entity_type()
     enrichments = session.execute(
         select(Enrichment).where(Enrichment.initiative_id == init.id)
     ).scalars().all()
     prompts = load_scoring_prompts(session)
-    outreach = await score_initiative(init, list(enrichments), client, prompts)
+    outreach = await score_initiative(init, list(enrichments), client, prompts, entity_type=entity_type)
     session.execute(delete(OutreachScore).where(
         OutreachScore.initiative_id == init.id,
         OutreachScore.project_id.is_(None),
@@ -746,10 +750,11 @@ async def run_scoring(
 
 async def run_project_scoring(
     session: Session, proj: Project, init: Initiative, client: LLMClient | None = None,
+    entity_type: str = "initiative",
 ) -> OutreachScore:
     """Score a project, replacing existing project scores (caller must commit)."""
     client = _ensure_client(client)
-    outreach = await score_project(proj, init, client)
+    outreach = await score_project(proj, init, client, entity_type=entity_type)
     session.execute(delete(OutreachScore).where(OutreachScore.project_id == proj.id))
     session.add(outreach)
     return outreach

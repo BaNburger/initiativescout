@@ -413,11 +413,10 @@ class TestDossierBuilders:
         assert "TEAM SIZE: 5" in dossier
         assert "LINKEDIN: https://linkedin.com/company/testbot" in dossier
         assert "SPONSORS: BMW" in dossier
-        # Should include team_page and website enrichments
+        # Should include team_page, website, and github enrichments
         assert "TEAM_PAGE DATA" in dossier
         assert "WEBSITE DATA" in dossier
-        # Should NOT include github enrichment
-        assert "GITHUB DATA" not in dossier
+        assert "GITHUB DATA" in dossier
 
     def test_tech_dossier(self, sample_initiative, sample_enrichments):
         from scout.scorer import build_tech_dossier
@@ -426,10 +425,10 @@ class TestDossierBuilders:
         assert "TECHNOLOGY DOMAINS: NLP, CV" in dossier
         assert "GITHUB ORG: testbot-org" in dossier
         assert "GITHUB CI/CD: Present" in dossier
-        # Should include github enrichment only
+        # Should include github and website enrichments
         assert "GITHUB DATA" in dossier
-        assert "TEAM PAGE DATA" not in dossier
-        assert "WEBSITE DATA" not in dossier
+        assert "WEBSITE DATA" in dossier
+        assert "TEAM_PAGE DATA" not in dossier
 
     def test_full_dossier(self, sample_initiative, sample_enrichments):
         from scout.scorer import build_full_dossier
@@ -475,16 +474,15 @@ class TestDossierBuilders:
         assert "GITHUB CI/CD: Present: True" not in dossier
 
     def test_falsy_fields_excluded(self, session):
-        """Empty strings and None should be omitted; zero ints are included (meaningful data)."""
+        """Empty strings, None, and zero ints should be omitted from dossier."""
         from scout.scorer import build_team_dossier
         init = Initiative(name="Sparse", uni="HM")
         session.add(init)
         session.flush()
         dossier = build_team_dossier(init, [])
-        assert "TEAM SIZE" not in dossier  # empty string
-        assert "SPONSORS" not in dossier   # empty string
-        # Zero-valued integers ARE included (e.g. linkedin_hits=0 is meaningful)
-        assert "LINKEDIN HITS: 0" in dossier
+        assert "TEAM SIZE" not in dossier    # empty string
+        assert "SPONSORS" not in dossier     # empty string
+        assert "LINKEDIN HITS" not in dossier  # zero — omitted to avoid misleading LLM
 
 
 # =========================================================================
