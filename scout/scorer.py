@@ -292,7 +292,7 @@ def _build_dossier(
                 continue
             max_len = (source_filter or {}).get(e.source_type, 5000)
             sections.append(f"\n--- {e.source_type.upper()} DATA (fetched {e.fetched_at.strftime('%Y-%m-%d')}) ---")
-            sections.append((e.summary or e.raw_text)[:max_len])
+            sections.append((e.summary or e.raw_text or "")[:max_len])
 
     return "\n".join(sections)
 

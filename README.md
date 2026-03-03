@@ -303,10 +303,10 @@ initiativescout/
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes (default provider) | Anthropic API key for LLM scoring |
+| `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key for LLM scoring |
 | `GITHUB_TOKEN` | No | Increases GitHub API rate limits during enrichment |
 | `LLM_PROVIDER` | No | `anthropic` (default) or `openai` / `openai_compatible` |
-| `LLM_MODEL` | No | Override model name (default: `claude-haiku-4-5-20251001` or `gpt-4o-mini`) |
+| `LLM_MODEL` | No | Override model name (default: `claude-haiku-4-5-20251001` or `gpt-5-mini`) |
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `OPENAI_BASE_URL` | No | Custom OpenAI-compatible endpoint |
 
@@ -321,3 +321,26 @@ If you see `Port 8001 is already in use`, another process is occupying the defau
 ```bash
 scout --port 9000
 ```
+
+**API key not configured**
+
+Scoring requires an LLM API key. Set it via environment variable or in `.mcp.json`:
+
+```bash
+export OPENAI_API_KEY=sk-...   # for OpenAI (default if LLM_PROVIDER=openai)
+export ANTHROPIC_API_KEY=...   # for Anthropic (install scout[anthropic])
+```
+
+**Optional dependencies**
+
+Some features require extras. Install what you need:
+
+```bash
+pip install "scout[openai]"      # OpenAI scoring
+pip install "scout[anthropic]"   # Anthropic scoring
+pip install "scout[crawl]"       # Crawl4AI + DuckDuckGo discovery
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

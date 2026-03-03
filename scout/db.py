@@ -132,7 +132,7 @@ def list_databases() -> list[str]:
 def _safe_db_path(name: str) -> Path:
     """Build a DB path and verify it stays inside DATA_DIR."""
     db_path = (DATA_DIR / f"{name}.db").resolve()
-    if not str(db_path).startswith(str(DATA_DIR.resolve()) + os.sep):
+    if not db_path.is_relative_to(DATA_DIR.resolve()):
         raise ValueError("Invalid database path")
     return db_path
 

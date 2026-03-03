@@ -99,7 +99,6 @@ def _latest_scores(session: Session) -> dict[int, OutreachScore]:
         select(OutreachScore)
         .join(subq, (OutreachScore.initiative_id == subq.c.initiative_id)
               & (OutreachScore.scored_at == subq.c.max_scored))
-        .where(OutreachScore.project_id.is_(None))
     ).scalars().all()
     return {s.initiative_id: s for s in rows}
 

@@ -1104,9 +1104,10 @@ function enrichBatch() { streamBatch('/api/enrich/batch', null); }
 
 function scoreUnscored() { streamBatch('/api/score/batch', { only_unscored: true }); }
 
-function rescoreAll() {
+async function rescoreAll() {
   const total = parseInt(document.getElementById('stat-total').textContent) || 0;
-  if (!confirm(`This will re-score all ${total} initiatives using LLM API calls. Continue?`)) return;
+  const ok = await showConfirmModal(`This will re-score all ${total} initiatives using LLM API calls. Continue?`);
+  if (!ok) return;
   streamBatch('/api/score/batch', null);
 }
 
@@ -1687,6 +1688,7 @@ async function initApp() {
   await loadInitiatives();
   populateFacultyFilter();
   loadStats();
+  updateExportLink();
   await syncRevision();
   startRevisionPolling();
 }

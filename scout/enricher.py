@@ -219,23 +219,23 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
 
     lines: list[str] = [f"GitHub org: {org}"]
 
-    # Fetch org repos
+    def _format_repos(repos: list) -> None:
+        lines.append(f"Public repos: {len(repos)}")
+        for r in repos[:5]:
+            lines.append(f"  - {r.get('name')}: stars={r.get('stargazers_count', 0)}, forks={r.get('forks_count', 0)}, lang={r.get('language', '?')}")
+            desc = r.get("description") or ""
+            if desc:
+                lines.append(f"    {desc[:120]}")
+
+    # Fetch org repos (fall back to user repos on 404)
     try:
         status, data = await _github_get(f"/orgs/{org}/repos?per_page=30&sort=updated", headers)
         if status == 200 and isinstance(data, list):
-            lines.append(f"Public repos: {len(data)}")
-            for r in data[:5]:
-                lines.append(f"  - {r.get('name')}: stars={r.get('stargazers_count', 0)}, forks={r.get('forks_count', 0)}, lang={r.get('language', '?')}")
-                desc = r.get("description") or ""
-                if desc:
-                    lines.append(f"    {desc[:120]}")
+            _format_repos(data)
         elif status == 404:
-            # Try as user instead of org
             status, data = await _github_get(f"/users/{org}/repos?per_page=30&sort=updated", headers)
             if status == 200 and isinstance(data, list):
-                lines.append(f"Public repos: {len(data)}")
-                for r in data[:5]:
-                    lines.append(f"  - {r.get('name')}: stars={r.get('stargazers_count', 0)}, forks={r.get('forks_count', 0)}")
+                _format_repos(data)
     except Exception as exc:
         log.warning("GitHub org fetch failed for %s: %s", org, exc)
 
