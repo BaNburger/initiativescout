@@ -252,7 +252,7 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
                 ), {"q": fts_q}).all()
         return [r[0] for r in rows]
     except Exception:
-        log.debug("FTS5 search failed for query %r, falling back to LIKE", query)
+        log.warning("FTS5 search failed for query %r, falling back to LIKE", query, exc_info=True)
         return None
 
 

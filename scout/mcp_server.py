@@ -567,7 +567,7 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
                 if auto_discover:
                     discover_result["auto_triggered"] = True
             except ImportError:
-                discover_result = {"skipped": True, "reason": "duckduckgo-search not installed"}
+                discover_result = {"skipped": True, "reason": "ddgs not installed — pip install 'scout[crawl]'"}
             except Exception as exc:
                 discover_result = {"skipped": True, "reason": str(exc)[:100]}
 
@@ -912,7 +912,7 @@ async def process_queue(
             discover_result = {"processed": len(enrich_ids), "urls_found": disc_ok,
                                "no_new_urls": len(enrich_ids) - disc_ok}
         except ImportError:
-            discover_result = {"skipped": True, "reason": "duckduckgo-search not installed"}
+            discover_result = {"skipped": True, "reason": "ddgs not installed — pip install 'scout[crawl]'"}
 
     # Step 1: Enrich
     if enrich and enrich_ids:

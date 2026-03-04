@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Scout",
-    version="0.1.0",
+    version="1.0.0",
     description=(
         "Outreach intelligence API. "
         "Discover, enrich, and score entities for outreach. "
@@ -159,7 +159,7 @@ async def scrape_tum_professors_route(body: dict[str, Any] | None = None):
     school = params.get("school")
     if school:
         professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
-    limit = min(int(params.get("limit", 50)), 500)
+    limit = min(int(params.get("limit", 50)), 1000)
     professors = professors[:limit]
 
     created = skipped = 0
@@ -344,7 +344,7 @@ async def discover_one(initiative_id: int, session: Session = Depends(db_session
         result = await services.run_discovery(session, init)
         session.commit()
     except ImportError:
-        raise HTTPException(501, "duckduckgo-search not installed. Install: pip install 'scout[crawl]'")
+        raise HTTPException(501, "ddgs not installed — pip install 'scout[crawl]'")
     return result
 
 

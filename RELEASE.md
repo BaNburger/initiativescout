@@ -36,7 +36,7 @@ scout-setup                    # auto-configure MCP client
 ## Architecture
 
 - **LLM-as-a-user** — the MCP server is the primary interface; the web UI is a companion, not the other way around.
-- **Lean** — ~2,500 lines of Python, ~1,700 lines of vanilla JS. No frameworks, no build step.
+- **Lean** — ~6,500 lines of Python, ~1,700 lines of vanilla JS. No frameworks, no build step.
 - **SQLite** — single-file database with WAL mode, FTS5 full-text search, and trigger-based revision tracking for live UI updates.
 - **Deterministic scoring** — given the same enrichment data and LLM responses, the verdict and score are always reproducible.
 

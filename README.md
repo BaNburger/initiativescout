@@ -1,6 +1,6 @@
 # Scout — Outreach Intelligence
 
-Web app and MCP server for discovering, enriching, and scoring Munich student initiatives for outreach. Import spreadsheet data, enrich with live web/GitHub signals, score with LLM-powered evaluations, and export results back to XLSX.
+Web app and MCP server for discovering, enriching, and scoring entities (initiatives, professors, and more) for outreach. Import spreadsheet data, scrape directories, enrich with live web/GitHub signals, score with LLM-powered evaluations, and export results back to XLSX.
 
 ## Installation
 
@@ -270,6 +270,7 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 | `create_custom_column` | Add a custom column definition |
 | `update_custom_column` | Update a custom column definition |
 | `delete_custom_column` | Remove a custom column definition |
+| `scrape_tum_professors` | Scrape TUM professor directory and import |
 
 ## Project Structure
 
@@ -289,6 +290,7 @@ initiativescout/
 │   ├── enricher.py           #   Website, team page, GitHub, extra links enrichment
 │   ├── scorer.py             #   3-dimension LLM scoring + deterministic aggregation
 │   ├── embedder.py           #   Dense embeddings (model2vec) + similarity search
+│   ├── scrapers.py           #   Entity-specific scrapers (TUM professor directory)
 │   ├── utils.py              #   Shared utilities (JSON parsing, LLM env loading)
 │   ├── setup_mcp.py          #   Auto-configure MCP for Claude Desktop, Cursor, Windsurf
 │   └── static/

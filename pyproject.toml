@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scout"
 version = "1.0.0"
-description = "Outreach intelligence for Munich student initiatives"
+description = "Outreach intelligence — discover, enrich, and score entities for outreach"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
@@ -24,7 +24,11 @@ dependencies = [
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.50.0"]
-crawl = ["crawl4ai>=0.8.0", "duckduckgo-search>=8.0.0"]
+crawl = ["crawl4ai>=0.8.0", "ddgs>=9.0.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=1.0"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
 
 [tool.setuptools]
 packages = ["scout"]

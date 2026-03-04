@@ -271,7 +271,7 @@ def _on_initiative_insert(mapper, connection, target):
     try:
         _fts_insert(connection, target)
     except Exception:
-        log.debug("FTS auto-sync insert failed for %s", target.name)
+        log.warning("FTS auto-sync insert failed for %s", target.name, exc_info=True)
 
 
 @event.listens_for(Initiative, "after_update")
@@ -280,7 +280,7 @@ def _on_initiative_update(mapper, connection, target):
         _fts_delete(connection, target.id)
         _fts_insert(connection, target)
     except Exception:
-        log.debug("FTS auto-sync update failed for %s", target.name)
+        log.warning("FTS auto-sync update failed for %s", target.name, exc_info=True)
 
 
 @event.listens_for(Initiative, "after_delete")
@@ -288,7 +288,7 @@ def _on_initiative_delete(mapper, connection, target):
     try:
         _fts_delete(connection, target.id)
     except Exception:
-        log.debug("FTS auto-sync delete failed for id %d", target.id)
+        log.warning("FTS auto-sync delete failed for id %d", target.id, exc_info=True)
 
 
 def _seed_scoring_prompts(engine) -> None:

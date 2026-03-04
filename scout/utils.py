@@ -14,8 +14,10 @@ def json_parse(value: str | None, default: Any = _MISSING) -> Any:
 
     If no default is given, returns ``{}`` on parse error.
     """
+    if not value:
+        return {} if default is _MISSING else default
     try:
-        return json.loads(value or "")
+        return json.loads(value)
     except (json.JSONDecodeError, TypeError):
         return {} if default is _MISSING else default
 

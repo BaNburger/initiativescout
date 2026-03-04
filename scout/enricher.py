@@ -38,15 +38,10 @@ try:
     from ddgs import DDGS  # noqa: F401
     _DDGS_AVAILABLE = True
 except ImportError:
-    try:
-        from duckduckgo_search import DDGS  # noqa: F401
-        _DDGS_AVAILABLE = True
-    except ImportError:
-        DDGS = None  # type: ignore[assignment,misc]
-try:
-    from duckduckgo_search.exceptions import RatelimitException  # noqa: F401
-except ImportError:
-    RatelimitException = Exception  # type: ignore[assignment,misc]
+    DDGS = None  # type: ignore[assignment,misc]
+
+# ddgs v9+ no longer exposes a RatelimitException; use a generic fallback.
+RatelimitException: type[Exception] = Exception  # type: ignore[assignment,misc]
 
 
 # ---------------------------------------------------------------------------
@@ -362,10 +357,10 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
     Returns a dict of ``{source_key: url}`` for newly discovered URLs
     not already in extra_links_json.  Does NOT modify the initiative object.
 
-    Raises ImportError if duckduckgo-search is not installed.
+    Raises ImportError if ddgs is not installed.
     """
     if not _DDGS_AVAILABLE:
-        raise ImportError("duckduckgo-search not installed. Install: pip install 'scout[crawl]'")
+        raise ImportError("ddgs not installed. Install: pip install 'scout[crawl]'")
 
     name = (initiative.name or "").strip()
     uni = (initiative.uni or "").strip()

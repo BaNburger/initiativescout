@@ -263,11 +263,11 @@ class TestDiscoverUrls:
 
     @pytest.mark.asyncio
     async def test_raises_without_ddg_dependency(self, sample_initiative):
-        """Should raise ImportError when duckduckgo-search is not installed."""
+        """Should raise ImportError when ddgs is not installed."""
         from scout.enricher import discover_urls
 
         with patch("scout.enricher._DDGS_AVAILABLE", False):
-            with pytest.raises(ImportError, match="duckduckgo-search"):
+            with pytest.raises(ImportError, match="ddgs"):
                 await discover_urls(sample_initiative)
 
     @pytest.mark.asyncio

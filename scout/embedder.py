@@ -157,7 +157,7 @@ def re_embed_one(session: Session, init: Initiative) -> None:
     # Load existing sidecar files or auto-initialize empty arrays
     cached = _load_vectors()
     if cached is not None:
-        vectors, ids = cached[0].copy(), cached[1].copy()
+        vectors, ids = cached
     else:
         vectors = np.empty((0, vec.shape[0]), dtype=np.float32)
         ids = np.empty(0, dtype=np.int64)
@@ -165,8 +165,10 @@ def re_embed_one(session: Session, init: Initiative) -> None:
     # Find existing position or append
     idx = np.where(ids == init.id)[0]
     if len(idx) > 0:
+        # In-place update — no copy needed
         vectors[idx[0]] = vec
     else:
+        # Must copy to extend
         vectors = np.vstack([vectors, vec.reshape(1, -1)])
         ids = np.append(ids, init.id)
 
@@ -237,14 +239,18 @@ def find_similar(
         id_set = np.array(list(id_mask), dtype=np.int64)
         mask &= np.isin(ids, id_set)
 
-    # Apply mask and get top-k
+    # Apply mask and get top-k (argpartition is O(n) vs argsort O(n log n))
     masked_scores = np.where(mask, scores, -np.inf)
-    top_indices = np.argsort(masked_scores)[::-1][:top_k]
+    n_valid = int(np.sum(np.isfinite(masked_scores)))
+    k = min(top_k, n_valid)
+    if k == 0:
+        return []
+    # argpartition gives the top-k in arbitrary order, then we sort just those
+    part_idx = np.argpartition(masked_scores, -k)[-k:]
+    top_indices = part_idx[np.argsort(masked_scores[part_idx])[::-1]]
 
-    results = []
-    for i in top_indices:
-        if not np.isfinite(masked_scores[i]):
-            break
-        results.append((int(ids[i]), round(float(scores[i]), 4)))
-
-    return results
+    return [
+        (int(ids[i]), round(float(scores[i]), 4))
+        for i in top_indices
+        if np.isfinite(masked_scores[i])
+    ]
