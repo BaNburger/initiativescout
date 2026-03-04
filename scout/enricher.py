@@ -35,11 +35,17 @@ except ImportError:
 
 _DDGS_AVAILABLE = False
 try:
-    from duckduckgo_search import AsyncDDGS  # noqa: F401
-    from duckduckgo_search.exceptions import RatelimitException  # noqa: F401
+    from ddgs import DDGS  # noqa: F401
     _DDGS_AVAILABLE = True
 except ImportError:
-    AsyncDDGS = None  # type: ignore[assignment,misc]
+    try:
+        from duckduckgo_search import DDGS  # noqa: F401
+        _DDGS_AVAILABLE = True
+    except ImportError:
+        DDGS = None  # type: ignore[assignment,misc]
+try:
+    from duckduckgo_search.exceptions import RatelimitException  # noqa: F401
+except ImportError:
     RatelimitException = Exception  # type: ignore[assignment,misc]
 
 
@@ -331,13 +337,17 @@ _PLATFORM_PATTERNS: dict[str, str] = {
 }
 
 
+def _ddg_search_sync(query: str, max_results: int = 10) -> list[dict]:
+    """Synchronous DDG search (called via asyncio.to_thread)."""
+    return list(DDGS().text(query, max_results=max_results))
+
+
 async def _ddg_search(query: str, max_results: int = 10) -> list[dict]:
     """Run a single DuckDuckGo search with rate limiting and one retry."""
     for attempt in range(2):
         await _ddg_limiter.acquire()
         try:
-            async with AsyncDDGS() as ddgs:
-                results = [r async for r in ddgs.atext(query, max_results=max_results)]
+            results = await asyncio.to_thread(_ddg_search_sync, query, max_results)
             _ddg_limiter.reset()
             return results
         except RatelimitException:

@@ -1481,7 +1481,7 @@ async def scrape_tum_professors(school: str | None = None, limit: int = 50) -> d
 
     if school:
         professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
-    professors = professors[:max(1, min(limit, 500))]
+    professors = professors[:max(1, min(limit, 1000))]
 
     created = 0
     skipped = 0
