@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from sqlalchemy import and_, delete, func, select
 
 from scout import services
@@ -113,6 +114,60 @@ def _parse_ids(raw: str | None) -> list[int] | None:
 
 
 VALID_CHANNELS = {"email", "linkedin", "event", "website_form"}
+
+
+# ---------------------------------------------------------------------------
+# Response optimizers — save tokens, keep LLM oriented
+# ---------------------------------------------------------------------------
+
+# Fields to keep even when their value is falsy (0, False, empty string)
+_KEEP_KEYS = frozenset({
+    "id", "name", "enriched", "ok", "action", "error", "error_code", "retryable",
+})
+_STRIP_VALUES = (None, "")
+
+
+def _trim(data, *, max_str: int = 500):
+    """Strip None/empty-string values and truncate long strings to save tokens.
+
+    Preserves 0, False, [], {} — only removes None and "".
+    Fields in _KEEP_KEYS are preserved regardless of value.
+    """
+    if isinstance(data, dict):
+        return {
+            k: _trim(v, max_str=max_str)
+            for k, v in data.items()
+            if k in _KEEP_KEYS or v not in _STRIP_VALUES
+        }
+    if isinstance(data, list):
+        return [_trim(item, max_str=max_str) for item in data]
+    if isinstance(data, str) and len(data) > max_str:
+        return data[:max_str] + "…"
+    return data
+
+
+def _db_pulse(session) -> dict:
+    """Compact database state snapshot (3 cheap COUNT queries).
+
+    Injected into mutating-tool responses so the LLM always knows
+    where it stands without calling get_overview().
+    """
+    total = session.execute(select(func.count(Initiative.id))).scalar() or 0
+    enriched = session.execute(
+        select(func.count(func.distinct(Enrichment.initiative_id)))
+    ).scalar() or 0
+    scored = session.execute(
+        select(func.count(func.distinct(OutreachScore.initiative_id)))
+        .where(OutreachScore.project_id.is_(None))
+    ).scalar() or 0
+    return {"total": total, "enriched": enriched, "scored": scored,
+            "queue_est": total - scored}
+
+
+# Annotation presets for tool safety hints
+_READ = ToolAnnotations(readOnlyHint=True)
+_WRITE = ToolAnnotations(destructiveHint=False)
+_DESTRUCTIVE = ToolAnnotations(destructiveHint=True)
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +359,7 @@ def scout_overview() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 def list_initiatives(
     verdict: str | None = None, classification: str | None = None,
     uni: str | None = None, faculty: str | None = None,
@@ -335,10 +390,10 @@ def list_initiatives(
             uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
             page=1, per_page=max(1, min(limit, 500)), fields=fields_set,
         )
-        return items
+        return _trim(items, max_str=200)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 def get_initiative(initiative_id: int, compact: bool = False) -> dict:
     """Get full details for one entity: profile, enrichments, projects, scores, data gaps.
 
@@ -358,7 +413,7 @@ def get_initiative(initiative_id: int, compact: bool = False) -> dict:
             actions.append(_next("enrich_initiative", "Not yet enriched", initiative_id=initiative_id))
         if data.get("verdict") is None:
             actions.append(_next("score_initiative", "Not yet scored", initiative_id=initiative_id))
-        return _suggest(data, *actions)
+        return _trim(_suggest(data, *actions))
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +421,7 @@ def get_initiative(initiative_id: int, compact: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 def manage_initiative(
     action: str,
     initiative_id: int | None = None,
@@ -409,11 +464,13 @@ def manage_initiative(
                 init.custom_fields_json = json.dumps(custom_fields)
                 session.flush()
             session.commit()
-            return _suggest(
+            result = _suggest(
                 {"id": init.id, "name": init.name, "uni": init.uni,
                  "website": init.website or None, "github_org": init.github_org or None},
                 _next("enrich_initiative", "Fetch web/GitHub data", initiative_id=init.id),
             )
+            result["_db"] = _db_pulse(session)
+            return result
 
     if action == "update":
         if initiative_id is None:
@@ -435,12 +492,13 @@ def manage_initiative(
                 init.custom_fields_json = json.dumps(existing)
             session.flush()
             session.commit()
-            detail = services.initiative_detail(init)
+            detail = _trim(services.initiative_detail(init))
             if updates.get("name") and updates["name"] != old_name:
                 detail["warning"] = (
                     f"Renamed: '{old_name}' -> '{updates['name']}'. "
                     "Verify this is correct."
                 )
+            detail["_db"] = _db_pulse(session)
             return detail
 
     if action == "delete":
@@ -461,7 +519,9 @@ def manage_initiative(
             if not services.delete_initiative(session, initiative_id):
                 return _error(f"Initiative {initiative_id} not found", "NOT_FOUND")
             session.commit()
-            return {"ok": True, "deleted_initiative_id": initiative_id}
+            result = {"ok": True, "deleted_initiative_id": initiative_id}
+            result["_db"] = _db_pulse(session)
+            return result
 
     return _error(f"Unknown action: {action!r}. Use create, update, or delete.", "VALIDATION_ERROR")
 
@@ -471,21 +531,33 @@ def manage_initiative(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
     """Fetch enrichment data from website, team page, GitHub, and extra links.
 
-    WHAT: Scrapes all known URLs. Takes 2-10s. Set discover=True to find new URLs first via DuckDuckGo.
-    WHEN: Before score_initiative(). Discovery adds ~12s but finds LinkedIn, GitHub, HuggingFace URLs.
+    WHAT: Scrapes all known URLs. Takes 2-10s. Auto-enables discovery when no URLs are configured.
+    WHEN: Before score_initiative(). Discovery finds LinkedIn, GitHub, HuggingFace URLs via DuckDuckGo.
 
     Args:
         initiative_id: Entity ID.
-        discover: Run DuckDuckGo URL discovery first (adds ~12s, useful for sparse profiles).
+        discover: Run DuckDuckGo URL discovery first (adds ~12s). Auto-enabled when no URLs configured.
     """
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
+
+        # Smart default: auto-discover when initiative has no URLs at all
+        auto_discover = False
+        if not discover:
+            has_urls = bool(
+                (init.website or "").strip()
+                or (init.github_org or "").strip()
+                or json_parse(init.extra_links_json)
+            )
+            if not has_urls:
+                discover = True
+                auto_discover = True
 
         discover_result = None
         if discover:
@@ -493,6 +565,8 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
                 disc = await services.run_discovery(session, init)
                 session.commit()
                 discover_result = {"urls_found": disc["urls_found"]}
+                if auto_discover:
+                    discover_result["auto_triggered"] = True
             except ImportError:
                 discover_result = {"skipped": True, "reason": "duckduckgo-search not installed"}
             except Exception as exc:
@@ -525,18 +599,19 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         }
         if discover_result:
             result["discovery"] = discover_result
+        result["_db"] = _db_pulse(session)
         return _suggest(
             result,
             _next("score_initiative", "Score using enrichment data", initiative_id=init.id),
         )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def score_initiative(initiative_id: int) -> dict:
     """Score an entity on 3 dimensions (team, tech, opportunity) via parallel LLM calls.
 
     WHAT: 3 parallel LLM calls -> deterministic verdict + score. Takes 5-15s. Requires API key.
-    WHEN: After enrich_initiative(). Without enrichment data, scoring is weaker.
+    Auto-enriches first if no enrichment data exists (prevents weak scores).
     ALTERNATIVE: get_scoring_dossier() + submit_score() for API-key-free scoring.
 
     Args:
@@ -550,6 +625,22 @@ async def score_initiative(initiative_id: int) -> dict:
             init, err = _get_or_error(session, Initiative, initiative_id)
             if err:
                 return err
+
+            # Auto-enrich if no enrichments exist — prevents weak scores
+            has_enrichments = session.execute(
+                select(func.count(Enrichment.id))
+                .where(Enrichment.initiative_id == init.id)
+            ).scalar() or 0
+            auto_enriched = False
+            if has_enrichments == 0:
+                try:
+                    async with open_crawler() as crawler:
+                        await services.run_enrichment(session, init, crawler=crawler)
+                    session.commit()
+                    auto_enriched = True
+                except Exception:
+                    log.info("Auto-enrich failed for %s, scoring with limited data", init.name)
+
             outreach = await services.run_scoring(
                 session, init, entity_type=get_entity_type(),
             )
@@ -557,12 +648,15 @@ async def score_initiative(initiative_id: int) -> dict:
             result = services.score_response_dict(outreach, extended=True)
             result["initiative_id"] = init.id
             result["initiative_name"] = init.name
-            return result
+            if auto_enriched:
+                result["auto_enriched"] = True
+            result["_db"] = _db_pulse(session)
+            return _trim(result)
         except Exception as exc:
             return _llm_error(exc)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 def get_scoring_dossier(initiative_id: int) -> dict:
     """Build scoring dossiers and prompts WITHOUT making LLM calls.
 
@@ -603,7 +697,7 @@ def get_scoring_dossier(initiative_id: int) -> dict:
         )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 def submit_score(
     initiative_id: int,
     grade_team: str, grade_tech: str, grade_opportunity: str,
@@ -674,13 +768,15 @@ def submit_score(
         session.add(outreach)
         session.commit()
 
-        return {
+        result = {
             "initiative_id": init.id, "initiative_name": init.name,
             "verdict": outreach.verdict, "score": outreach.score,
             "classification": outreach.classification,
             "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
             "grade_opportunity": outreach.grade_opportunity,
         }
+        result["_db"] = _db_pulse(session)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +842,7 @@ async def batch_score(initiative_ids: str | None = None, limit: int = 20) -> dic
             "results": results, "summary": verdict_counts}
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def process_queue(
     limit: int = 20, discover: bool = False, enrich: bool = True, score: bool = True,
     initiative_ids: str | None = None,
@@ -754,6 +850,7 @@ async def process_queue(
     """Autonomous pipeline: enrich then score. The primary tool for batch processing.
 
     WHAT: Fetches work queue (or uses provided IDs), enriches, then scores. One call per batch.
+    Auto-degrades to enrich-only when no API key is set (instead of failing).
     WHEN: Primary autonomous workflow. Call repeatedly until remaining_in_queue=0.
 
     Args:
@@ -763,10 +860,19 @@ async def process_queue(
         score: Run scoring step (default true). Requires API key.
         initiative_ids: Comma-separated IDs. If omitted, auto-selects from work queue.
     """
+    api_key_warning = None
     if score:
         key_err = _check_api_key()
         if key_err:
-            return key_err
+            if not enrich:
+                # Can't enrich (disabled) and can't score (no key) — fail
+                return key_err
+            # Graceful degradation: enrich-only mode
+            score = False
+            api_key_warning = (
+                "No API key — enriching only. "
+                "Set API key or use get_scoring_dossier() + submit_score() to score manually."
+            )
 
     limit = max(1, min(limit, 50))
     et = get_entity_type()
@@ -844,8 +950,13 @@ async def process_queue(
 
     remaining = max(0, (stats["total"] - stats["scored"])
                     - (score_result["succeeded"] if score_result else 0))
+    progress_pct = round(100 * (1 - remaining / stats["total"]), 1) if stats["total"] else 100.0
     result: dict = {"discovery": discover_result, "enrichment": enrich_result,
-                    "scoring": score_result, "remaining_in_queue": remaining}
+                    "scoring": score_result, "remaining_in_queue": remaining,
+                    "progress_pct": progress_pct}
+
+    if api_key_warning:
+        result["warning"] = api_key_warning
 
     if not score:
         return _suggest(result, _next("process_queue", "Score enriched items", score=True, enrich=False))
@@ -861,7 +972,7 @@ async def process_queue(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 def get_work_queue(limit: int = 10) -> dict:
     """Get prioritized entities needing enrichment or scoring.
 
@@ -881,7 +992,7 @@ def get_work_queue(limit: int = 10) -> dict:
         return _suggest(result, _next("list_initiatives", "All items processed"))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 def get_overview(detail: bool = False) -> dict:
     """Database statistics and analytical aggregations.
 
@@ -906,7 +1017,7 @@ def get_overview(detail: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 def find_similar(
     query: str | None = None, initiative_id: int | None = None,
     uni: str | None = None, verdict: str | None = None,
@@ -974,7 +1085,7 @@ def find_similar(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 async def manage_project(
     action: str,
     project_id: int | None = None,
@@ -1085,7 +1196,7 @@ async def manage_project(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 def manage_database(
     action: str,
     name: str | None = None,
@@ -1148,7 +1259,7 @@ def manage_database(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DESTRUCTIVE)
 async def manage_settings(
     action: str,
     # Column params
