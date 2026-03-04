@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
+
+log = logging.getLogger(__name__)
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
 
-from sqlalchemy import create_engine, inspect as sa_inspect, text
+from sqlalchemy import create_engine, event, inspect as sa_inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from scout.models import Base
+from scout.models import Base, Initiative
 
 DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -228,6 +231,64 @@ def _ensure_fts_table(engine) -> None:
                 content='initiatives', content_rowid='id'
             )
         """))
+
+
+# ---------------------------------------------------------------------------
+# FTS auto-sync via SQLAlchemy ORM events
+# ---------------------------------------------------------------------------
+
+_FTS_FIELDS = ("name", "description", "sector", "technology_domains",
+               "categories", "market_domains", "faculty")
+
+
+def _fts_insert(connection, initiative) -> None:
+    """Insert a single initiative into the FTS index."""
+    params = {"id": initiative.id}
+    for f in _FTS_FIELDS:
+        params[f] = getattr(initiative, f, "") or ""
+    connection.execute(text(
+        "INSERT INTO initiative_fts(rowid, name, description, sector, "
+        "technology_domains, categories, market_domains, faculty) "
+        "VALUES (:id, :name, :description, :sector, "
+        ":technology_domains, :categories, :market_domains, :faculty)"
+    ), params)
+
+
+def _fts_delete(connection, initiative_id: int) -> None:
+    """Remove a single initiative from the FTS index."""
+    connection.execute(text(
+        "INSERT INTO initiative_fts(initiative_fts, rowid, name, description, sector, "
+        "technology_domains, categories, market_domains, faculty) "
+        "SELECT 'delete', id, COALESCE(name,''), COALESCE(description,''), "
+        "COALESCE(sector,''), COALESCE(technology_domains,''), "
+        "COALESCE(categories,''), COALESCE(market_domains,''), "
+        "COALESCE(faculty,'') FROM initiatives WHERE id = :id"
+    ), {"id": initiative_id})
+
+
+@event.listens_for(Initiative, "after_insert")
+def _on_initiative_insert(mapper, connection, target):
+    try:
+        _fts_insert(connection, target)
+    except Exception:
+        log.debug("FTS auto-sync insert failed for %s", target.name)
+
+
+@event.listens_for(Initiative, "after_update")
+def _on_initiative_update(mapper, connection, target):
+    try:
+        _fts_delete(connection, target.id)
+        _fts_insert(connection, target)
+    except Exception:
+        log.debug("FTS auto-sync update failed for %s", target.name)
+
+
+@event.listens_for(Initiative, "after_delete")
+def _on_initiative_delete(mapper, connection, target):
+    try:
+        _fts_delete(connection, target.id)
+    except Exception:
+        log.debug("FTS auto-sync delete failed for id %d", target.id)
 
 
 def _seed_scoring_prompts(engine) -> None:

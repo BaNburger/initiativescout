@@ -222,44 +222,6 @@ def project_summary(proj: Project) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def sync_fts_insert(session: Session, init: Initiative) -> None:
-    """Insert a single initiative into the FTS index."""
-    session.execute(text("""
-        INSERT INTO initiative_fts(rowid, name, description, sector,
-            technology_domains, categories, market_domains, faculty)
-        VALUES (:id, :name, :description, :sector,
-            :technology_domains, :categories, :market_domains, :faculty)
-    """), {
-        "id": init.id, "name": init.name or "", "description": init.description or "",
-        "sector": init.sector or "", "technology_domains": init.technology_domains or "",
-        "categories": init.categories or "", "market_domains": init.market_domains or "",
-        "faculty": init.faculty or "",
-    })
-
-
-def sync_fts_delete(session: Session, initiative_id: int) -> None:
-    """Remove a single initiative from the FTS index."""
-    session.execute(text(
-        "INSERT INTO initiative_fts(initiative_fts, rowid, name, description, sector, "
-        "technology_domains, categories, market_domains, faculty) "
-        "SELECT 'delete', id, COALESCE(name,''), COALESCE(description,''), "
-        "COALESCE(sector,''), COALESCE(technology_domains,''), "
-        "COALESCE(categories,''), COALESCE(market_domains,''), "
-        "COALESCE(faculty,'') FROM initiatives WHERE id = :id"
-    ), {"id": initiative_id})
-
-
-def sync_fts_update(session: Session, init: Initiative) -> None:
-    """Update FTS index for a single initiative (delete + re-insert).
-
-    Uses a savepoint so that a failed re-insert rolls back the delete,
-    preventing a half-deleted FTS entry from being committed.
-    """
-    with session.begin_nested():
-        sync_fts_delete(session, init.id)
-        sync_fts_insert(session, init)
-
-
 def rebuild_fts(session: Session) -> None:
     """Full rebuild of the FTS index from the initiatives table."""
     session.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
@@ -498,15 +460,14 @@ _PROJECT_FIELDS = ("name", "description", "website", "github_url", "team")
 
 
 def create_initiative(session: Session, **kwargs: Any) -> Initiative:
-    """Create a new initiative. Accepts any UPDATABLE_FIELDS as keyword args."""
+    """Create a new initiative. Accepts any UPDATABLE_FIELDS as keyword args.
+
+    FTS index is updated automatically via SQLAlchemy event listeners (db.py).
+    """
     data = {k: v for k, v in kwargs.items() if k in UPDATABLE_FIELDS and v is not None}
     init = Initiative(**data)
     session.add(init)
-    session.flush()  # assign ID
-    try:
-        sync_fts_insert(session, init)
-    except Exception:
-        log.debug("FTS sync failed on create for %s", init.name)
+    session.flush()  # assign ID (triggers after_insert → FTS sync)
     return init
 
 
@@ -523,15 +484,15 @@ def create_project(session: Session, initiative_id: int, extra_links: dict | Non
 
 
 def delete_initiative(session: Session, initiative_id: int) -> bool:
-    """Delete an initiative (cascade handles enrichments, scores, projects). Returns True if found."""
+    """Delete an initiative (cascade handles enrichments, scores, projects).
+
+    FTS index is updated automatically via SQLAlchemy event listeners (db.py).
+    Returns True if found.
+    """
     init = get_entity(session, Initiative, initiative_id)
     if not init:
         return False
-    try:
-        sync_fts_delete(session, initiative_id)
-    except Exception:
-        log.debug("FTS sync failed on delete for id %d", initiative_id)
-    session.delete(init)
+    session.delete(init)  # triggers after_delete → FTS sync
     return True
 
 

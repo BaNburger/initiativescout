@@ -19,10 +19,10 @@ from scout.db import (
 from scout.enricher import open_crawler
 from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import (
-    ENTITY_CONFIG, GRADE_MAP, VALID_GRADES,
+    ENTITY_CONFIG, GRADE_MAP, VALID_GRADES, Grade,
     LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
-    compute_data_gaps, compute_score, compute_verdict, default_prompts_for,
-    valid_classifications,
+    compute_data_gaps, compute_score, compute_verdict,
+    create_score_from_grades, default_prompts_for, valid_classifications,
 )
 from scout.utils import json_parse
 
@@ -131,6 +131,56 @@ def _parse_ids(raw: str | None) -> list[int] | None:
 
 
 VALID_CHANNELS = {"email", "linkedin", "event", "website_form"}
+
+
+# ---------------------------------------------------------------------------
+# Batch runner — eliminates per-item session boilerplate
+# ---------------------------------------------------------------------------
+
+
+async def _run_for_item(init_id: int, operation, **kwargs) -> dict:
+    """Run an async operation on a single initiative with full session lifecycle.
+
+    Returns {"id", "ok": True, "name", ...result} on success,
+    or {"id", "ok": False, "error"} on failure. Never raises.
+    """
+    s = get_session()
+    try:
+        init = s.execute(
+            select(Initiative).where(Initiative.id == init_id)
+        ).scalars().first()
+        if not init:
+            return {"id": init_id, "ok": False, "error": "Not found"}
+        result = await operation(s, init, **kwargs)
+        s.commit()
+        return {"id": init_id, "ok": True, "name": init.name, **(result or {})}
+    except Exception as exc:
+        s.rollback()
+        log.warning("Batch op failed for id=%s: %s", init_id, exc, exc_info=True)
+        return {"id": init_id, "ok": False, "error": str(exc)[:120]}
+    finally:
+        s.close()
+
+
+async def _run_batch(ids: list[int], operation, concurrency: int = 1, **kwargs) -> list[dict]:
+    """Run an operation on multiple initiative IDs with controlled concurrency."""
+    if concurrency > 1:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _limited(init_id):
+            async with sem:
+                return await _run_for_item(init_id, operation, **kwargs)
+
+        results = list(await asyncio.gather(*[_limited(i) for i in ids]))
+    else:
+        results = [await _run_for_item(i, operation, **kwargs) for i in ids]
+    return results
+
+
+def _batch_summary(results: list[dict]) -> tuple[int, int]:
+    """Return (succeeded, failed) counts from batch results."""
+    ok = sum(1 for r in results if r.get("ok"))
+    return ok, len(results) - ok
 
 
 # ---------------------------------------------------------------------------
@@ -449,11 +499,7 @@ def update_initiative(
             existing.update(custom_fields)
             existing = {k: v for k, v in existing.items() if v is not None}
             init.custom_fields_json = json.dumps(existing)
-        session.flush()
-        try:
-            services.sync_fts_update(session, init)
-        except Exception:
-            log.warning("FTS sync failed for id=%s, search index may be stale", initiative_id, exc_info=True)
+        session.flush()  # triggers after_update → FTS sync automatically
         session.commit()
         detail = services.initiative_detail(init)
         if name is not None and name != old_name:
@@ -669,69 +715,45 @@ def submit_score(
         engagement_hook: Suggested opening line for outreach.
         reasoning: Brief reasoning for the opportunity assessment.
     """
-    # Normalize and validate grades
-    gt = grade_team.strip().upper().replace(" ", "")
-    gtech = grade_tech.strip().upper().replace(" ", "")
-    gopp = grade_opportunity.strip().upper().replace(" ", "")
-    for label, val in [("grade_team", gt), ("grade_tech", gtech), ("grade_opportunity", gopp)]:
-        if val not in VALID_GRADES:
-            return _error(f"Invalid {label}: {val!r}. Valid: {', '.join(sorted(VALID_GRADES))}", "VALIDATION_ERROR")
+    # Parse grades (Grade.parse never fails — falls back to "C")
+    grades = {
+        "team": Grade.parse(grade_team),
+        "tech": Grade.parse(grade_tech),
+        "opportunity": Grade.parse(grade_opportunity),
+    }
+    # Reject truly invalid input (typos, garbage) — Grade.parse defaults to C
+    for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
+                       ("grade_opportunity", grade_opportunity)]:
+        normalized = raw.strip().upper().replace(" ", "")
+        if normalized not in VALID_GRADES:
+            return _error(f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
+                          "VALIDATION_ERROR")
 
     classification = classification.strip().lower()
     valid_cls = valid_classifications(get_entity_type())
     if classification not in valid_cls:
-        return _error(
-            f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
-            "VALIDATION_ERROR",
-        )
+        return _error(f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
+                      "VALIDATION_ERROR")
 
     contact_channel = contact_channel.strip().lower()
     if contact_channel and contact_channel not in VALID_CHANNELS:
-        return _error(
-            f"Invalid contact_channel: {contact_channel!r}. Valid: {', '.join(sorted(VALID_CHANNELS))}",
-            "VALIDATION_ERROR",
-        )
-
-    avg_grade = (GRADE_MAP[gt] + GRADE_MAP[gtech] + GRADE_MAP[gopp]) / 3
-    verdict = compute_verdict(avg_grade)
-    score = compute_score(avg_grade)
+        return _error(f"Invalid contact_channel: {contact_channel!r}. Valid: {', '.join(sorted(VALID_CHANNELS))}",
+                      "VALIDATION_ERROR")
 
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
 
-        enrichments = session.execute(
+        enrichments = list(session.execute(
             select(Enrichment).where(Enrichment.initiative_id == init.id)
-        ).scalars().all()
-        data_gaps = compute_data_gaps(init, list(enrichments), get_entity_type())
+        ).scalars().all())
 
-        key_evidence = [
-            f"Team ({gt}): externally evaluated",
-            f"Tech ({gtech}): externally evaluated",
-            f"Opportunity ({gopp}): {reasoning}" if reasoning else f"Opportunity ({gopp}): externally evaluated",
-        ]
-
-        outreach = OutreachScore(
-            initiative_id=init.id,
-            project_id=None,
-            verdict=verdict,
-            score=score,
-            classification=classification,
-            reasoning=reasoning,
-            contact_who=contact_who,
-            contact_channel=contact_channel,
-            engagement_hook=engagement_hook,
-            key_evidence_json=json.dumps(key_evidence),
-            data_gaps_json=json.dumps(data_gaps),
-            grade_team=gt,
-            grade_team_num=GRADE_MAP[gt],
-            grade_tech=gtech,
-            grade_tech_num=GRADE_MAP[gtech],
-            grade_opportunity=gopp,
-            grade_opportunity_num=GRADE_MAP[gopp],
-            llm_model="external",
-            scored_at=datetime.now(UTC),
+        outreach = create_score_from_grades(
+            init, enrichments, grades,
+            classification=classification, contact_who=contact_who,
+            contact_channel=contact_channel, engagement_hook=engagement_hook,
+            reasoning=reasoning, entity_type=get_entity_type(),
         )
 
         # Delete existing initiative-level scores, then save
@@ -743,14 +765,11 @@ def submit_score(
         session.commit()
 
         return {
-            "initiative_id": init.id,
-            "initiative_name": init.name,
-            "verdict": verdict,
-            "score": score,
-            "classification": classification,
-            "grade_team": gt,
-            "grade_tech": gtech,
-            "grade_opportunity": gopp,
+            "initiative_id": init.id, "initiative_name": init.name,
+            "verdict": outreach.verdict, "score": outreach.score,
+            "classification": outreach.classification,
+            "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+            "grade_opportunity": outreach.grade_opportunity,
         }
 
 
@@ -785,45 +804,17 @@ async def batch_enrich(initiative_ids: str | None = None, limit: int = 20) -> di
                     "hint": f"No {_entity_cfg()['label_plural']} need enrichment. Try batch_score() instead."}
         ids = ids[:limit]
 
-    results: list[dict] = []
-    sem = asyncio.Semaphore(3)
-
-    async def _enrich_one(init_id: int) -> None:
-        async with sem:
-            s = get_session()
-            try:
-                init = s.execute(
-                    select(Initiative).where(Initiative.id == init_id)
-                ).scalars().first()
-                if not init:
-                    results.append({"id": init_id, "name": f"ID {init_id}",
-                                    "ok": False, "error": "Not found"})
-                    return
-                new = await services.run_enrichment(s, init, crawler=crawler)
-                s.commit()
-                if new:
-                    results.append({"id": init_id, "name": init.name, "ok": True,
-                                    "sources": len(new)})
-                else:
-                    results.append({"id": init_id, "name": init.name, "ok": False,
-                                    "sources": 0,
-                                    "warning": "No data fetched — add website/github URLs or run discover_initiative() first"})
-            except Exception as exc:
-                s.rollback()
-                results.append({"id": init_id, "name": f"ID {init_id}",
-                                "ok": False, "error": str(exc)[:120]})
-            finally:
-                s.close()
+    async def _do_enrich(s, init, *, crawler=None):
+        new = await services.run_enrichment(s, init, crawler=crawler)
+        if new:
+            return {"sources": len(new)}
+        return {"ok": False, "sources": 0,
+                "warning": "No data fetched — add website/github URLs or run discover_initiative() first"}
 
     async with open_crawler() as crawler:
-        await asyncio.gather(*[_enrich_one(iid) for iid in ids])
+        results = await _run_batch(ids, _do_enrich, concurrency=3, crawler=crawler)
 
-    # Sort results to match input order
-    order = {iid: i for i, iid in enumerate(ids)}
-    results.sort(key=lambda r: order.get(r["id"], 999))
-
-    ok = sum(1 for r in results if r.get("ok"))
-    failed = len(results) - ok
+    ok, failed = _batch_summary(results)
     result = {"processed": len(ids), "succeeded": ok, "failed": failed, "results": results}
     if ok > 0:
         result["hint"] = "Call batch_score() next to score the enriched initiatives."
@@ -863,34 +854,19 @@ async def batch_score(initiative_ids: str | None = None, limit: int = 20) -> dic
 
     client = LLMClient()
     et = get_entity_type()
-    results: list[dict] = []
-    ok = failed = 0
-    verdict_counts: dict[str, int] = {}
 
-    for init_id in ids:
-        s = get_session()
-        try:
-            init = s.execute(
-                select(Initiative).where(Initiative.id == init_id)
-            ).scalars().first()
-            if not init:
-                results.append({"id": init_id, "ok": False, "error": "Not found"})
-                failed += 1
-                continue
-            outreach = await services.run_scoring(s, init, client, entity_type=et)
-            s.commit()
-            v = outreach.verdict
+    async def _do_score(s, init, *, client=None, entity_type="initiative"):
+        outreach = await services.run_scoring(s, init, client, entity_type=entity_type)
+        return {"verdict": outreach.verdict, "score": outreach.score,
+                "classification": outreach.classification}
+
+    results = await _run_batch(ids, _do_score, concurrency=1, client=client, entity_type=et)
+    ok, failed = _batch_summary(results)
+    verdict_counts: dict[str, int] = {}
+    for r in results:
+        if r.get("ok") and "verdict" in r:
+            v = r["verdict"]
             verdict_counts[v] = verdict_counts.get(v, 0) + 1
-            results.append({"id": init_id, "name": init.name, "ok": True,
-                            "verdict": v, "score": outreach.score,
-                            "classification": outreach.classification})
-            ok += 1
-        except Exception as exc:
-            s.rollback()
-            results.append({"id": init_id, "ok": False, "error": str(exc)[:120]})
-            failed += 1
-        finally:
-            s.close()
 
     return {"processed": len(ids), "succeeded": ok, "failed": failed,
             "results": results, "summary": verdict_counts}
@@ -931,120 +907,67 @@ async def process_queue(limit: int = 20, discover: bool = False, enrich: bool = 
         return {"enrichment": None, "scoring": None, "remaining_in_queue": 0,
                 "hint": f"Work queue is empty. All {_entity_cfg()['label_plural']} are processed."}
 
-    to_enrich = [item for item in queue if item["needs_enrichment"]]
-    to_score_only = [item for item in queue if item["needs_scoring"] and not item["needs_enrichment"]]
+    enrich_ids = [item["id"] for item in queue if item["needs_enrichment"]]
+    score_only_ids = [item["id"] for item in queue if item["needs_scoring"] and not item["needs_enrichment"]]
 
     discover_result = None
     enrich_result = None
-    enrich_failures: list[dict] = []
     score_result = None
 
     # Step 0: Discovery (serial, rate-limited)
-    if discover and to_enrich:
-        disc_ok = disc_skip = 0
-        for item in to_enrich:
-            s = get_session()
-            try:
-                init = s.execute(
-                    select(Initiative).where(Initiative.id == item["id"])
-                ).scalars().first()
-                if init:
-                    result = await services.run_discovery(s, init)
-                    s.commit()
-                    if result["urls_found"] > 0:
-                        disc_ok += 1
-                    else:
-                        disc_skip += 1
-                else:
-                    disc_skip += 1
-            except ImportError:
-                discover_result = {"skipped": True, "reason": "duckduckgo-search not installed"}
-                break
-            except Exception:
-                log.warning("process_queue discover failed for id=%s", item["id"], exc_info=True)
-                s.rollback()
-                disc_skip += 1
-            finally:
-                s.close()
-        if discover_result is None:
-            discover_result = {"processed": len(to_enrich), "urls_found": disc_ok, "no_new_urls": disc_skip}
+    if discover and enrich_ids:
+        async def _do_discover(s, init):
+            result = await services.run_discovery(s, init)
+            return {"urls_found": result["urls_found"]}
+
+        try:
+            disc_results = await _run_batch(enrich_ids, _do_discover, concurrency=1)
+            disc_ok = sum(1 for r in disc_results if r.get("ok") and r.get("urls_found", 0) > 0)
+            discover_result = {"processed": len(enrich_ids), "urls_found": disc_ok,
+                               "no_new_urls": len(enrich_ids) - disc_ok}
+        except ImportError:
+            discover_result = {"skipped": True, "reason": "duckduckgo-search not installed"}
 
     # Step 1: Enrich
-    if enrich and to_enrich:
-        enrich_ok = enrich_failed = 0
-        sem = asyncio.Semaphore(3)
-
-        async def _do_enrich(item: dict, crawler: object) -> None:
-            nonlocal enrich_ok, enrich_failed
-            async with sem:
-                s = get_session()
-                try:
-                    init = s.execute(
-                        select(Initiative).where(Initiative.id == item["id"])
-                    ).scalars().first()
-                    if init:
-                        new = await services.run_enrichment(s, init, crawler=crawler)
-                        s.commit()
-                        if new:
-                            enrich_ok += 1
-                        else:
-                            enrich_failed += 1
-                            enrich_failures.append({"id": item["id"], "name": item.get("name", "?"),
-                                                    "reason": "all sources returned empty"})
-                    else:
-                        enrich_failed += 1
-                except Exception as exc:
-                    log.warning("process_queue enrich failed for id=%s", item["id"], exc_info=True)
-                    s.rollback()
-                    enrich_failed += 1
-                    enrich_failures.append({"id": item["id"], "name": item.get("name", "?"),
-                                            "reason": str(exc)[:120]})
-                finally:
-                    s.close()
+    if enrich and enrich_ids:
+        async def _do_enrich(s, init, *, crawler=None):
+            new = await services.run_enrichment(s, init, crawler=crawler)
+            if new:
+                return {"sources": len(new)}
+            return {"ok": False, "reason": "all sources returned empty"}
 
         async with open_crawler() as crawler:
-            await asyncio.gather(*[_do_enrich(item, crawler) for item in to_enrich])
+            enrich_results = await _run_batch(enrich_ids, _do_enrich, concurrency=3, crawler=crawler)
 
-        enrich_result = {"processed": len(to_enrich), "succeeded": enrich_ok, "failed": enrich_failed}
+        enrich_ok, enrich_failed = _batch_summary(enrich_results)
+        enrich_result = {"processed": len(enrich_ids), "succeeded": enrich_ok, "failed": enrich_failed}
+        enrich_failures = [r for r in enrich_results if not r.get("ok")]
         if enrich_failures:
             enrich_result["failed_items"] = enrich_failures
+    else:
+        enrich_failures = []
 
     # After enrichment, freshly-enriched items now need scoring (skip failed enrichments)
-    failed_ids = {f["id"] for f in enrich_failures} if enrich and to_enrich else set()
-    score_ids = [item["id"] for item in to_score_only]
-    if enrich and to_enrich:
-        score_ids.extend(item["id"] for item in to_enrich if item["id"] not in failed_ids)
+    failed_ids = {f["id"] for f in enrich_failures}
+    score_ids = score_only_ids + [i for i in enrich_ids if i not in failed_ids] if enrich else score_only_ids
 
     # Step 2: Score
     if score and score_ids:
         client = LLMClient()
-        score_ok = score_failed = 0
-        score_results: list[dict] = []
-        verdict_counts: dict[str, int] = {}
 
-        for init_id in score_ids:
-            s = get_session()
-            try:
-                init = s.execute(
-                    select(Initiative).where(Initiative.id == init_id)
-                ).scalars().first()
-                if not init:
-                    score_failed += 1
-                    continue
-                outreach = await services.run_scoring(s, init, client, entity_type=et)
-                s.commit()
-                v = outreach.verdict
+        async def _do_score(s, init, *, client=None, entity_type="initiative"):
+            outreach = await services.run_scoring(s, init, client, entity_type=entity_type)
+            return {"verdict": outreach.verdict, "score": outreach.score,
+                    "classification": outreach.classification}
+
+        score_results = await _run_batch(score_ids, _do_score, concurrency=1,
+                                         client=client, entity_type=et)
+        score_ok, score_failed = _batch_summary(score_results)
+        verdict_counts: dict[str, int] = {}
+        for r in score_results:
+            if r.get("ok") and "verdict" in r:
+                v = r["verdict"]
                 verdict_counts[v] = verdict_counts.get(v, 0) + 1
-                score_results.append({"id": init_id, "name": init.name,
-                                      "verdict": v, "score": outreach.score,
-                                      "classification": outreach.classification})
-                score_ok += 1
-            except Exception:
-                log.warning("process_queue score failed for id=%s", init_id, exc_info=True)
-                s.rollback()
-                score_failed += 1
-            finally:
-                s.close()
 
         score_result = {"processed": len(score_ids), "succeeded": score_ok,
                         "failed": score_failed, "results": score_results,
