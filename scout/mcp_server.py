@@ -23,7 +23,8 @@ from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import (
     ENTITY_CONFIG, GRADE_MAP, VALID_GRADES, Grade,
     LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
-    create_score_from_grades, default_prompts_for, valid_classifications,
+    create_score_from_grades, default_prompts_for, get_entity_config,
+    valid_classifications,
 )
 from scout.utils import json_parse
 
@@ -42,11 +43,12 @@ def _entity_cfg() -> dict[str, str]:
 
 def _build_instructions(entity_type: str) -> str:
     """Compact instructions — details live in scout://overview resource."""
-    cfg = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])
+    cfg = get_entity_config(entity_type)
     return (
-        f"Scout: outreach intelligence for {cfg['context']}. "
+        f"Scout: sourcing, enrichment & scoring engine for {cfg['context']}. "
         "Read scout://overview for workflows, grading scale, and classifications. "
         "QUICK: get_overview() → get_work_queue() → process_queue(). "
+        "Use submit_enrichment() to store data you find via web search. "
         "All errors return {error, error_code, retryable, fix}."
     )
 
@@ -86,6 +88,50 @@ def _get_or_error(session, model, entity_id):
     if not obj:
         return None, _error(f"{model.__name__} {entity_id} not found", "NOT_FOUND")
     return obj, None
+
+
+def _seed_custom_prompts(entity_type: str, cfg: dict) -> None:
+    """Seed generic scoring prompts for a custom entity type."""
+    from scout.db import session_scope as _ss
+    from scout.models import ScoringPrompt
+    dims = cfg.get("dimensions", ["team", "tech", "opportunity"])
+    ctx = cfg.get("context", entity_type)
+    label = cfg.get("label", entity_type)
+    with _ss() as session:
+        for dim in dims:
+            existing = session.execute(
+                select(ScoringPrompt).where(ScoringPrompt.key == dim)
+            ).scalar_one_or_none()
+            if existing:
+                continue
+            is_last = dim == dims[-1]
+            extra_json = ""
+            if is_last:
+                extra_json = (
+                    ',\n  "classification": "<your classification>",\n'
+                    '  "contact_who": "<contact recommendation>",\n'
+                    '  "contact_channel": "<email|linkedin|event|website_form>",\n'
+                    '  "engagement_hook": "<specific opener>"'
+                )
+            prompt = (
+                f"You are evaluating the {dim.upper()} dimension of a {label} "
+                f"in the context of {ctx}.\n\n"
+                f"Assess quality and strength based on all available evidence.\n\n"
+                f"Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D\n"
+                f"(A+ = exceptional, D = no evidence)\n\n"
+                f"Respond with ONLY valid JSON:\n"
+                "{\n"
+                '  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",\n'
+                '  "reasoning": "<2-3 sentences explaining the grade>"'
+                f'{extra_json}\n'
+                "}\n"
+            )
+            session.add(ScoringPrompt(
+                key=dim,
+                label=dim.replace("_", " ").title(),
+                content=prompt,
+            ))
+        session.commit()
 
 
 def _check_api_key() -> dict | None:
@@ -280,23 +326,29 @@ def scout_overview() -> str:
     lp = cfg["label_plural"]
     et = get_entity_type()
     cls_list = sorted(valid_classifications(et))
+    ecfg = get_entity_config(et)
+    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
     return json.dumps({
-        "system": f"Scout — Outreach Intelligence for {cfg['context'].title()}",
+        "system": f"Scout — Sourcing, Enrichment & Scoring Engine for {cfg['context'].title()}",
         "entity_type": et,
         "description": (
-            f"Scout discovers, enriches, and scores {lp} "
-            "for outreach. Contains profiles with web/GitHub enrichment "
-            "data and LLM-powered outreach verdicts."
+            f"Scout discovers, enriches, and scores {lp}. "
+            "Contains profiles with enrichment data and LLM-powered scoring verdicts. "
+            "Use submit_enrichment() to store data you find via your own web search."
         ),
         "data_model": {
             cfg["label"]: f"A {cfg['label']} record with profile, enrichments, scores, and projects.",
-            "enrichment": "Web-scraped data from website, team page, GitHub, and extra links.",
+            "enrichment": (
+                "Data attached to an entity — from automated scrapers or submitted by the LLM "
+                "via submit_enrichment(). Source type is freeform (website, github, linkedin, "
+                "patent_data, news, etc.)."
+            ),
             "project": f"A sub-project within a {cfg['label']}. Can be scored independently.",
             "outreach_score": "LLM-generated verdict, score (1-5), classification, reasoning.",
         },
         "grading_scale": {
             "grades": {g: GRADE_MAP[g] for g in sorted(VALID_GRADES, key=lambda g: GRADE_MAP[g])},
-            "dimensions": ["team", "tech", "opportunity"],
+            "dimensions": dims,
             "verdict_thresholds": {
                 "reach_out_now": "avg_grade <= 1.7",
                 "reach_out_soon": "avg_grade <= 2.7",
@@ -320,6 +372,12 @@ def scout_overview() -> str:
                 "3. score_initiative(id) — LLM scoring (3 parallel dimensions).",
                 "4. get_initiative(id) — inspect full details.",
             ],
+            "llm_enrichment": [
+                "1. Search the web for information about the entity.",
+                "2. submit_enrichment(id, source_type='...', content='...') — store what you found.",
+                "3. Repeat for different sources (LinkedIn, news, patents, etc.).",
+                "4. score_initiative(id) — score with enriched data.",
+            ],
             "llm_free_scoring": [
                 "1. get_scoring_dossier(id) — get prompts + dossiers.",
                 "2. Evaluate each dimension per its prompt.",
@@ -329,6 +387,7 @@ def scout_overview() -> str:
         "tools_by_frequency": {
             "core": "list_initiatives, get_initiative, process_queue, get_work_queue, get_overview",
             "single_item": "enrich_initiative, score_initiative, manage_initiative",
+            "llm_enrichment": "submit_enrichment — store data you find via web search",
             "scoring": "get_scoring_dossier, submit_score",
             "search": "find_similar",
             "admin": "manage_project, manage_database, manage_settings",
@@ -559,8 +618,8 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         auto_discover = False
         if not discover:
             has_urls = bool(
-                (init.website or "").strip()
-                or (init.github_org or "").strip()
+                (init.field("website") or "").strip()
+                or (init.field("github_org") or "").strip()
                 or json_parse(init.extra_links_json)
             )
             if not has_urls:
@@ -591,11 +650,11 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         if extra:
             possible.update(k.removesuffix("_urls").removesuffix("_url") for k in extra if extra[k])
         not_configured = []
-        has_website = bool((init.website or "").strip())
-        has_github = bool((init.github_org or "").strip())
+        has_website = bool((init.field("website") or "").strip())
+        has_github = bool((init.field("github_org") or "").strip())
         if not has_website:
             not_configured.extend(["website", "structured_data", "tech_stack", "dns", "sitemap", "careers"])
-        if not (init.team_page or "").strip():
+        if not (init.field("team_page") or "").strip():
             not_configured.append("team_page")
         if not has_github:
             not_configured.extend(["github", "git_deep"])
@@ -614,6 +673,66 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         return _suggest(
             result,
             _next("score_initiative", "Score using enrichment data", initiative_id=init.id),
+        )
+
+
+@mcp.tool(annotations=_WRITE)
+def submit_enrichment(
+    entity_id: int,
+    source_type: str,
+    content: str,
+    source_url: str = "",
+    summary: str = "",
+) -> dict:
+    """Store enrichment data that you (the LLM) found via your own research.
+
+    Use this after you've searched the web, read documents, or gathered
+    information about an entity. This persists your findings so they
+    feed into dossiers and scoring.
+
+    WHEN: After using web search/URL reading to gather info about an entity.
+    WHY: Your findings become part of the scoring dossier automatically.
+
+    Args:
+        entity_id: Entity ID to enrich.
+        source_type: Category label (e.g. "web_research", "linkedin", "patent_data",
+            "citation_graph", "news", "funding", or any custom string).
+        content: The information you found (raw text, extracted data, etc.).
+        source_url: URL where you found it (recommended but optional).
+        summary: Brief summary (optional; auto-truncated from content if omitted).
+    """
+    if not content or not content.strip():
+        return _error("Content cannot be empty", "VALIDATION_ERROR")
+    if not source_type or not source_type.strip():
+        return _error("source_type cannot be empty", "VALIDATION_ERROR")
+
+    from datetime import datetime, UTC
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, entity_id)
+        if err:
+            return err
+
+        enrichment = Enrichment(
+            initiative_id=init.id,
+            source_type=source_type.strip(),
+            source_url=source_url.strip() if source_url else None,
+            raw_text=content.strip()[:15000],
+            summary=(summary.strip() if summary else content.strip()[:500]),
+            fetched_at=datetime.now(UTC),
+        )
+        session.add(enrichment)
+        session.commit()
+
+        return _suggest(
+            {
+                "entity_id": init.id,
+                "entity_name": init.name,
+                "enrichment_id": enrichment.id,
+                "source_type": enrichment.source_type,
+                "content_length": len(enrichment.raw_text),
+                "_db": _db_pulse(session),
+            },
+            _next("score_initiative", "Score with new enrichment data", initiative_id=init.id),
         )
 
 
@@ -1212,20 +1331,27 @@ def manage_database(
     action: str,
     name: str | None = None,
     entity_type: str = "initiative",
+    context: str = "",
+    dimensions: str = "",
 ) -> dict:
     """List, select, create, delete, or backup Scout databases.
 
     ACTIONS:
     - list: Show all databases and which is active.
     - select: Switch to a database (creates if needed). Requires name.
-    - create: Create a new empty database. Requires name.
+    - create: Create a new empty database. Requires name. Supports ANY entity type.
     - delete: Delete a database. Requires name. Cannot delete the active database.
     - backup: Create a timestamped backup copy. Requires name.
 
     Args:
         action: "list", "select", "create", "delete", or "backup".
         name: Database name (letters, numbers, hyphens, underscores). Required for select/create/delete/backup.
-        entity_type: For create: "initiative" or "professor". Default "initiative".
+        entity_type: For create: any entity type string (e.g. "initiative", "professor",
+            "company", "patent", "research_paper"). Default "initiative".
+        context: For create with custom entity types: description of the context
+            (e.g. "US patent applications", "Berlin startups"). Used in scoring prompts.
+        dimensions: For create with custom entity types: comma-separated scoring dimensions
+            (e.g. "novelty,commercial_potential,prior_art"). Defaults to "team,tech,opportunity".
     """
     action = (action or "").strip().lower()
 
@@ -1251,15 +1377,23 @@ def manage_database(
             name = validate_db_name(name)
         except ValueError as exc:
             return _error(str(exc), "VALIDATION_ERROR")
-        if entity_type not in ENTITY_CONFIG:
-            return _error(
-                f"Unknown entity_type: {entity_type!r}. Valid: {', '.join(sorted(ENTITY_CONFIG))}",
-                "VALIDATION_ERROR",
-            )
         try:
             create_database(name, entity_type=entity_type)
         except ValueError as exc:
             return _error(str(exc), "ALREADY_EXISTS")
+        # Store custom entity config for non-built-in types
+        if entity_type not in ENTITY_CONFIG:
+            from scout.db import set_entity_config_json
+            custom_cfg = {
+                "label": entity_type.replace("_", " "),
+                "label_plural": entity_type.replace("_", " ") + "s",
+                "context": context or entity_type.replace("_", " "),
+            }
+            if dimensions:
+                custom_cfg["dimensions"] = [d.strip() for d in dimensions.split(",") if d.strip()]
+            set_entity_config_json(custom_cfg)
+            # Seed scoring prompts for custom dimensions
+            _seed_custom_prompts(entity_type, custom_cfg)
         mcp._mcp_server.instructions = _build_instructions(entity_type)
         return {"current": current_db_name(), "entity_type": entity_type,
                 "message": f"Created and switched to '{name}'"}

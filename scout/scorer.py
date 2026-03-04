@@ -437,6 +437,7 @@ def _build_dossier(
 
     Args:
         obj: ORM object (Initiative or Project) to read attributes from.
+            Uses ``obj.field(attr)`` if available, else ``getattr(obj, attr)``.
         fields: List of (label, attr_name) pairs. For bool attrs, the label is
             used as-is when True (e.g. ``("GITHUB CI/CD: Present", "github_ci_present")``).
         enrichments: Optional enrichment records to include.
@@ -445,8 +446,12 @@ def _build_dossier(
         header: Initial header lines (e.g. ``["INITIATIVE: Foo", "UNIVERSITY: TUM"]``).
     """
     sections: list[str] = list(header or [])
+    _field = getattr(obj, "field", None)
     for label, attr in fields:
-        val = getattr(obj, attr, None)
+        if _field is not None:
+            val = _field(attr, default="")
+        else:
+            val = getattr(obj, attr, None)
         if val is None or val is False or val == "" or val == 0:
             continue
         if isinstance(val, bool):
@@ -465,19 +470,57 @@ def _build_dossier(
     return "\n".join(sections)
 
 
-ENTITY_CONFIG: dict[str, dict[str, str]] = {
-    "initiative": {"label": "initiative", "label_plural": "initiatives",
-                   "context": "Munich student initiatives"},
-    "professor": {"label": "professor", "label_plural": "professors",
-                  "context": "TUM professors"},
+ENTITY_CONFIG: dict[str, dict] = {
+    "initiative": {
+        "label": "initiative", "label_plural": "initiatives",
+        "context": "Munich student initiatives",
+        "enrichers": [
+            "website", "team_page", "github", "extra_links",
+            "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
+        ],
+        "dimensions": ["team", "tech", "opportunity"],
+    },
+    "professor": {
+        "label": "professor", "label_plural": "professors",
+        "context": "TUM professors",
+        "enrichers": [
+            "website", "extra_links", "structured_data", "dns", "sitemap",
+        ],
+        "dimensions": ["team", "tech", "opportunity"],
+    },
 }
 
 
+def get_entity_config(entity_type: str) -> dict:
+    """Return merged entity config: built-in defaults + any DB overrides."""
+    base = ENTITY_CONFIG.get(entity_type)
+    if base:
+        return base
+    # Unknown entity type — try DB-stored config, else build minimal default
+    try:
+        from scout.db import get_entity_config_json
+        db_cfg = get_entity_config_json()
+    except Exception:
+        db_cfg = {}
+    return {
+        "label": db_cfg.get("label", entity_type),
+        "label_plural": db_cfg.get("label_plural", entity_type + "s"),
+        "context": db_cfg.get("context", entity_type),
+        "enrichers": db_cfg.get("enrichers", ["website", "extra_links", "structured_data"]),
+        "dimensions": db_cfg.get("dimensions", ["team", "tech", "opportunity"]),
+    }
+
+
 def _initiative_header(init: Initiative, entity_type: str = "initiative") -> list[str]:
-    label = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])["label"].upper()
-    lines = [f"{label}: {init.name}", f"UNIVERSITY: {init.uni}"]
-    if init.faculty:
-        lines.append(f"FACULTY: {init.faculty}")
+    cfg = get_entity_config(entity_type)
+    label = cfg["label"].upper()
+    lines = [f"{label}: {init.name}"]
+    uni = init.field("uni")
+    if uni:
+        lines.append(f"UNIVERSITY: {uni}")
+    faculty = init.field("faculty")
+    if faculty:
+        lines.append(f"FACULTY: {faculty}")
     return lines
 
 
@@ -620,22 +663,25 @@ def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_ty
     """Identify missing data sources that could improve scoring."""
     gaps: list[str] = []
     source_types = {e.source_type for e in enrichments}
+    cfg = get_entity_config(entity_type)
+    configured_enrichers = set(cfg.get("enrichers", []))
     prof = entity_type == "professor"
-    if "website" not in source_types:
+
+    if "website" in configured_enrichers and "website" not in source_types:
         gaps.append("No website enrichment data available")
-    if "team_page" not in source_types:
+    if "team_page" in configured_enrichers and "team_page" not in source_types:
         gaps.append("No chair/group page data — research group assessment is limited" if prof
                      else "No team page data — team assessment is limited")
-    if "github" not in source_types:
+    if "github" in configured_enrichers and "github" not in source_types:
         gaps.append("No GitHub data — tech assessment is limited")
-    if "github" in source_types and "git_deep" not in source_types:
+    if "git_deep" in configured_enrichers and "github" in source_types and "git_deep" not in source_types:
         gaps.append("No deep git analysis — README, dependencies, releases not analyzed")
-    if not init.linkedin:
+    if not init.field("linkedin"):
         gaps.append("No LinkedIn URL — cannot verify academic network" if prof
                      else "No LinkedIn URL — cannot verify team backgrounds")
-    if not init.email:
+    if not init.field("email"):
         gaps.append("No contact email on file")
-    if "structured_data" not in source_types and "website" in source_types:
+    if "structured_data" in configured_enrichers and "structured_data" not in source_types and "website" in source_types:
         gaps.append("No structured data (JSON-LD/OpenGraph) extracted from website")
     return gaps
 
@@ -674,6 +720,9 @@ def create_score_from_grades(
         else f"Opportunity ({opp_g.letter}): externally evaluated",
     ]
 
+    # Store all dimension grades in flexible JSON
+    dim_grades = {k: {"letter": g.letter, "numeric": g.numeric} for k, g in grades.items()}
+
     return OutreachScore(
         initiative_id=initiative.id,
         project_id=None,
@@ -692,6 +741,7 @@ def create_score_from_grades(
         grade_tech_num=tech_g.numeric,
         grade_opportunity=opp_g.letter,
         grade_opportunity_num=opp_g.numeric,
+        dimension_grades_json=json.dumps(dim_grades),
         llm_model="external",
         scored_at=datetime.now(UTC),
     )
@@ -751,6 +801,15 @@ async def score_initiative(
     ]
     data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
 
+    dim_grades = {
+        "team": {"letter": team.grade.letter, "numeric": team.grade.numeric,
+                 "reasoning": team.reasoning},
+        "tech": {"letter": tech.grade.letter, "numeric": tech.grade.numeric,
+                 "reasoning": tech.reasoning},
+        "opportunity": {"letter": opp.grade.letter, "numeric": opp.grade.numeric,
+                        "reasoning": opp.reasoning},
+    }
+
     return OutreachScore(
         initiative_id=initiative.id,
         project_id=None,
@@ -769,6 +828,7 @@ async def score_initiative(
         grade_tech_num=tech.grade.numeric,
         grade_opportunity=opp.grade.letter,
         grade_opportunity_num=opp.grade.numeric,
+        dimension_grades_json=json.dumps(dim_grades),
         llm_model=client.model,
         scored_at=datetime.now(UTC),
     )

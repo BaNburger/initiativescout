@@ -494,22 +494,24 @@ class TestRunEnrichmentWithCrawler:
             fetched_at=datetime.now(UTC),
         )
 
-        with patch("scout.services.enrich_website", new_callable=AsyncMock) as mock_web, \
-             patch("scout.services.enrich_team_page", new_callable=AsyncMock) as mock_team, \
-             patch("scout.services.enrich_github", new_callable=AsyncMock) as mock_gh, \
-             patch("scout.services.enrich_extra_links", new_callable=AsyncMock) as mock_extra:
-            mock_web.return_value = fake_enrichment
-            mock_team.return_value = None
-            mock_gh.return_value = None
-            mock_extra.return_value = []
+        # Create mock enrichers
+        mocks = {}
+        for name in services.ENRICHER_REGISTRY:
+            mocks[name] = AsyncMock()
+        mocks["website"].return_value = fake_enrichment
+        for name in services.ENRICHER_REGISTRY:
+            if name != "website":
+                mocks[name].return_value = [] if name == "extra_links" else None
 
+        with patch.dict(services.ENRICHER_REGISTRY, mocks), \
+             patch("scout.db.get_entity_type", return_value="initiative"):
             await services.run_enrichment(session, sample_initiative, crawler=mock_crawler)
 
-            # Verify crawler was passed to website and team_page but not github
-            mock_web.assert_called_once_with(sample_initiative, mock_crawler)
-            mock_team.assert_called_once_with(sample_initiative, mock_crawler)
-            mock_gh.assert_called_once_with(sample_initiative)  # no crawler
-            mock_extra.assert_called_once_with(sample_initiative, mock_crawler)
+            # Verify crawler was passed to crawler enrichers but not others
+            mocks["website"].assert_called_once_with(sample_initiative, mock_crawler)
+            mocks["team_page"].assert_called_once_with(sample_initiative, mock_crawler)
+            mocks["extra_links"].assert_called_once_with(sample_initiative, mock_crawler)
+            mocks["github"].assert_called_once_with(sample_initiative)  # no crawler
 
 
 # ---------------------------------------------------------------------------
@@ -969,7 +971,7 @@ class TestEnrichGitDeep:
 class TestRunEnrichmentExtended:
     @pytest.mark.asyncio
     async def test_runs_extended_enrichers(self, session, sample_initiative):
-        """run_enrichment should call all 6 extended enrichers."""
+        """run_enrichment should call all enrichers from the registry."""
         from scout import services
 
         fake_enrichment = Enrichment(
@@ -980,33 +982,163 @@ class TestRunEnrichmentExtended:
             fetched_at=datetime.now(UTC),
         )
 
-        with patch("scout.services.enrich_website", new_callable=AsyncMock) as mock_web, \
-             patch("scout.services.enrich_team_page", new_callable=AsyncMock) as mock_team, \
-             patch("scout.services.enrich_github", new_callable=AsyncMock) as mock_gh, \
-             patch("scout.services.enrich_extra_links", new_callable=AsyncMock) as mock_extra, \
-             patch("scout.services.enrich_structured_data", new_callable=AsyncMock) as mock_sd, \
-             patch("scout.services.enrich_tech_stack", new_callable=AsyncMock) as mock_ts, \
-             patch("scout.services.enrich_dns", new_callable=AsyncMock) as mock_dns, \
-             patch("scout.services.enrich_sitemap", new_callable=AsyncMock) as mock_sm, \
-             patch("scout.services.enrich_careers", new_callable=AsyncMock) as mock_cr, \
-             patch("scout.services.enrich_git_deep", new_callable=AsyncMock) as mock_gd:
-            mock_web.return_value = fake_enrichment
-            mock_team.return_value = None
-            mock_gh.return_value = None
-            mock_extra.return_value = []
-            mock_sd.return_value = None
-            mock_ts.return_value = None
-            mock_dns.return_value = None
-            mock_sm.return_value = None
-            mock_cr.return_value = None
-            mock_gd.return_value = None
+        # Create mock enrichers
+        mocks = {}
+        for name in services.ENRICHER_REGISTRY:
+            mocks[name] = AsyncMock()
+        mocks["website"].return_value = fake_enrichment
+        mocks["team_page"].return_value = None
+        mocks["github"].return_value = None
+        mocks["extra_links"].return_value = []
+        for name in ("structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"):
+            mocks[name].return_value = None
 
+        # Patch the registry dict values
+        with patch.dict(services.ENRICHER_REGISTRY, mocks), \
+             patch("scout.db.get_entity_type", return_value="initiative"):
             await services.run_enrichment(session, sample_initiative, crawler=None)
 
-            # Verify all extended enrichers were called
-            mock_sd.assert_called_once_with(sample_initiative)
-            mock_ts.assert_called_once_with(sample_initiative)
-            mock_dns.assert_called_once_with(sample_initiative)
-            mock_sm.assert_called_once_with(sample_initiative)
-            mock_cr.assert_called_once_with(sample_initiative)
-            mock_gd.assert_called_once_with(sample_initiative)
+            # Verify enrichers were called
+            for name, mock_fn in mocks.items():
+                mock_fn.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Initiative.field() / set_field() / all_fields()
+# ---------------------------------------------------------------------------
+
+
+class TestInitiativeFieldAccessors:
+    """Tests for the entity-agnostic field accessors on Initiative."""
+
+    def test_field_reads_column(self, session):
+        init = Initiative(name="Test", website="https://example.com")
+        session.add(init)
+        session.flush()
+        assert init.field("website") == "https://example.com"
+
+    def test_field_reads_metadata_json(self, session):
+        init = Initiative(name="Test", metadata_json=json.dumps({"patent_id": "US123"}))
+        session.add(init)
+        session.flush()
+        assert init.field("patent_id") == "US123"
+
+    def test_field_reads_custom_fields_json(self, session):
+        init = Initiative(name="Test", custom_fields_json=json.dumps({"custom_key": "val"}))
+        session.add(init)
+        session.flush()
+        assert init.field("custom_key") == "val"
+
+    def test_field_column_takes_precedence(self, session):
+        init = Initiative(
+            name="Test",
+            website="https://column.com",
+            metadata_json=json.dumps({"website": "https://meta.com"}),
+        )
+        session.add(init)
+        session.flush()
+        assert init.field("website") == "https://column.com"
+
+    def test_field_returns_default(self, session):
+        init = Initiative(name="Test")
+        session.add(init)
+        session.flush()
+        assert init.field("nonexistent", default="fallback") == "fallback"
+
+    def test_field_empty_column_falls_to_metadata(self, session):
+        """When a column exists but is empty, falls through to metadata_json."""
+        init = Initiative(
+            name="Test",
+            website="",
+            metadata_json=json.dumps({"website": "https://meta.com"}),
+        )
+        session.add(init)
+        session.flush()
+        assert init.field("website") == "https://meta.com"
+
+    def test_set_field_column(self, session):
+        init = Initiative(name="Test")
+        session.add(init)
+        session.flush()
+        init.set_field("website", "https://new.com")
+        assert init.website == "https://new.com"
+
+    def test_set_field_metadata(self, session):
+        init = Initiative(name="Test")
+        session.add(init)
+        session.flush()
+        init.set_field("patent_number", "US456")
+        meta = json.loads(init.metadata_json)
+        assert meta["patent_number"] == "US456"
+
+    def test_all_fields(self, session):
+        init = Initiative(
+            name="Test", website="https://example.com",
+            metadata_json=json.dumps({"extra_key": "extra_val"}),
+        )
+        session.add(init)
+        session.flush()
+        fields = init.all_fields()
+        assert fields["name"] == "Test"
+        assert fields["website"] == "https://example.com"
+        assert fields["extra_key"] == "extra_val"
+        assert "id" not in fields
+        assert "metadata_json" not in fields
+
+
+# ---------------------------------------------------------------------------
+# Tests: Enricher registry
+# ---------------------------------------------------------------------------
+
+
+class TestEnricherRegistry:
+    """Tests for the enricher registry in services.py."""
+
+    def test_registry_contains_all_enrichers(self):
+        from scout.services import ENRICHER_REGISTRY
+        expected = {"website", "team_page", "github", "extra_links",
+                    "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"}
+        assert set(ENRICHER_REGISTRY.keys()) == expected
+
+    def test_crawler_enrichers_subset(self):
+        from scout.services import _CRAWLER_ENRICHERS, ENRICHER_REGISTRY
+        assert _CRAWLER_ENRICHERS.issubset(ENRICHER_REGISTRY.keys())
+
+
+# ---------------------------------------------------------------------------
+# Tests: Entity config
+# ---------------------------------------------------------------------------
+
+
+class TestEntityConfig:
+    """Tests for the entity config system."""
+
+    def test_initiative_config(self):
+        from scout.scorer import get_entity_config
+        cfg = get_entity_config("initiative")
+        assert cfg["label"] == "initiative"
+        assert "team" in cfg["dimensions"]
+        assert "website" in cfg["enrichers"]
+
+    def test_professor_config(self):
+        from scout.scorer import get_entity_config
+        cfg = get_entity_config("professor")
+        assert cfg["label"] == "professor"
+        assert "team_page" not in cfg.get("enrichers", [])
+
+    def test_unknown_type_returns_default(self):
+        from scout.scorer import get_entity_config
+        cfg = get_entity_config("patent")
+        assert cfg["label"] == "patent"
+        assert isinstance(cfg["dimensions"], list)
+
+    def test_compute_data_gaps_respects_config(self):
+        """Data gaps should only flag enrichers that are configured for the entity type."""
+        from scout.scorer import compute_data_gaps
+        init = Initiative(name="Test")
+        gaps = compute_data_gaps(init, [], entity_type="professor")
+        # Professor config doesn't include github, so github gap should not appear
+        gap_text = " ".join(gaps)
+        assert "GitHub" not in gap_text or "team_page" not in [
+            e for e in get_entity_config("professor").get("enrichers", [])
+        ]

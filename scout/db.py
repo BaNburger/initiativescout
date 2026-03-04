@@ -79,6 +79,11 @@ def _migrate_existing_db(engine) -> None:
             conn.execute(text(
                 "ALTER TABLE initiatives ADD COLUMN faculty VARCHAR(200) DEFAULT ''"
             ))
+    if "metadata_json" not in columns:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE initiatives ADD COLUMN metadata_json TEXT DEFAULT '{}'"
+            ))
     # Enrichment table migrations
     if inspector.has_table("enrichments"):
         ecols = {col["name"] for col in inspector.get_columns("enrichments")}
@@ -94,6 +99,14 @@ def _migrate_existing_db(engine) -> None:
             with engine.begin() as conn:
                 conn.execute(text(
                     "ALTER TABLE custom_columns ADD COLUMN database TEXT"
+                ))
+    # OutreachScore migrations
+    if inspector.has_table("outreach_scores"):
+        scols = {col["name"] for col in inspector.get_columns("outreach_scores")}
+        if "dimension_grades_json" not in scols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE outreach_scores ADD COLUMN dimension_grades_json TEXT DEFAULT '{}'"
                 ))
     # Ensure performance indexes exist (idempotent)
     with engine.begin() as conn:
@@ -259,6 +272,36 @@ def set_entity_type(entity_type: str) -> None:
         ), {"et": entity_type})
     with _lock:
         _cached_entity_type = entity_type
+
+
+def get_entity_config_json() -> dict:
+    """Read custom entity type config from _meta (if any)."""
+    import json as _json
+    with _lock:
+        engine = _engine
+    if engine is None:
+        return {}
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_config'")).scalar()
+    if row:
+        try:
+            return _json.loads(str(row))
+        except (ValueError, TypeError):
+            return {}
+    return {}
+
+
+def set_entity_config_json(config: dict) -> None:
+    """Store custom entity type config in _meta."""
+    import json as _json
+    with _lock:
+        engine = _engine
+    if engine is None:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT OR REPLACE INTO _meta (key, value) VALUES ('entity_config', :cfg)"
+        ), {"cfg": _json.dumps(config)})
 
 
 def _ensure_fts_table(engine) -> None:

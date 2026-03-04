@@ -15,8 +15,28 @@ from scout.enricher import (
     enrich_careers, enrich_git_deep,
 )
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
-from scout.scorer import LLMClient, score_initiative, score_project
+from scout.scorer import LLMClient, get_entity_config, score_initiative, score_project
 from scout.utils import json_parse
+
+# ---------------------------------------------------------------------------
+# Enricher registry — maps name to async callable
+# ---------------------------------------------------------------------------
+
+ENRICHER_REGISTRY: dict[str, Any] = {
+    "website": enrich_website,
+    "team_page": enrich_team_page,
+    "github": enrich_github,
+    "extra_links": enrich_extra_links,
+    "structured_data": enrich_structured_data,
+    "tech_stack": enrich_tech_stack,
+    "dns": enrich_dns,
+    "sitemap": enrich_sitemap,
+    "careers": enrich_careers,
+    "git_deep": enrich_git_deep,
+}
+
+# Enrichers that need a crawler argument
+_CRAWLER_ENRICHERS = {"website", "team_page", "extra_links"}
 
 log = logging.getLogger(__name__)
 
@@ -538,8 +558,8 @@ def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
     for row in rows:
         init = row[0]
         p = row[1]
-        has_web = bool((init.website or "").strip())
-        has_gh = bool((init.github_org or "").strip())
+        has_web = bool((init.field("website") or "").strip())
+        has_gh = bool((init.field("github_org") or "").strip())
         needs_enrich = p in (1, 3)
         needs_score = p in (1, 2)
         if needs_enrich:
@@ -625,54 +645,41 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
 async def run_enrichment(
     session: Session, init: Initiative, crawler: object | None = None,
 ) -> list[Enrichment]:
-    """Run all enrichers in parallel; only delete old enrichments if at least one succeeds.
+    """Run entity-type-aware enrichers in parallel; only delete old enrichments if at least one succeeds.
 
-    Args:
-        crawler: Optional AsyncWebCrawler instance for Crawl4AI.
-                 Pass ``None`` to use the httpx+lxml fallback.
+    Uses ENRICHER_REGISTRY + entity type config to determine which enrichers
+    to run. Enrichers that need a crawler get one; others are called directly.
 
     Returns new enrichments (caller must commit).
     """
-    # Standard enrichers (website returns list, others return single)
-    results = await asyncio.gather(
-        enrich_website(init, crawler),
-        enrich_team_page(init, crawler),
-        enrich_github(init),
-        return_exceptions=True,
-    )
+    from scout.db import get_entity_type
+    entity_type = get_entity_type()
+    cfg = get_entity_config(entity_type)
+    configured = set(cfg.get("enrichers", list(ENRICHER_REGISTRY.keys())))
+
+    # Build tasks from registry, respecting entity type config
+    tasks: list[tuple[str, Any]] = []
+    for name in ENRICHER_REGISTRY:
+        if name not in configured:
+            continue
+        fn = ENRICHER_REGISTRY[name]
+        if name in _CRAWLER_ENRICHERS:
+            tasks.append((name, fn(init, crawler)))
+        else:
+            tasks.append((name, fn(init)))
+
+    if not tasks:
+        return []
+
+    labels, coros = zip(*tasks)
+    results = await asyncio.gather(*coros, return_exceptions=True)
+
     new_enrichments: list[Enrichment] = []
-    labels = ("enrich_website", "enrich_team_page", "enrich_github")
     for label, result in zip(labels, results):
         if isinstance(result, Exception):
             log.warning("Enrichment failed (%s) for %s: %s", label, init.name, result)
         elif isinstance(result, list):
             new_enrichments.extend(result)
-        elif result:
-            new_enrichments.append(result)
-
-    # Extra links enrichment (crawl all URLs in extra_links_json)
-    try:
-        extras = await enrich_extra_links(init, crawler)
-        new_enrichments.extend(extras)
-    except Exception as exc:
-        log.warning("Extra links enrichment failed for %s: %s", init.name, exc)
-
-    # Extended enrichers — lightweight, no external APIs needed
-    extended_results = await asyncio.gather(
-        enrich_structured_data(init),
-        enrich_tech_stack(init),
-        enrich_dns(init),
-        enrich_sitemap(init),
-        enrich_careers(init),
-        enrich_git_deep(init),
-        return_exceptions=True,
-    )
-    extended_labels = (
-        "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
-    )
-    for label, result in zip(extended_labels, extended_results):
-        if isinstance(result, Exception):
-            log.warning("Extended enrichment failed (%s) for %s: %s", label, init.name, result)
         elif result:
             new_enrichments.append(result)
 

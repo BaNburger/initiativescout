@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
@@ -66,6 +67,9 @@ class Initiative(Base):
     linkedin_hits: Mapped[int] = mapped_column(Integer, default=0)
     researchgate_hits: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Flexible metadata for arbitrary entity types
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
     __table_args__ = (
         Index("ix_initiative_uni", "uni"),
     )
@@ -73,6 +77,54 @@ class Initiative(Base):
     enrichments: Mapped[list[Enrichment]] = relationship("Enrichment", back_populates="initiative", cascade="all, delete-orphan")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="initiative", cascade="all, delete-orphan")
     projects: Mapped[list[Project]] = relationship("Project", back_populates="initiative", cascade="all, delete-orphan")
+
+    # --- Field accessors for entity-type-agnostic access ---
+
+    _SKIP_FIELDS = frozenset({
+        "metadata_json", "custom_fields_json", "extra_links_json",
+        "enrichments", "scores", "projects",
+    })
+
+    def field(self, key: str, default=""):
+        """Read a field — checks column first, falls back to metadata_json.
+
+        Works for both hardcoded initiative columns AND arbitrary entity types
+        that store their data in metadata_json.
+        """
+        if key not in self._SKIP_FIELDS and key in self.__table__.columns:
+            val = getattr(self, key, None)
+            if val is not None and val != "" and val != 0 and val is not False:
+                return val
+        meta = json.loads(self.metadata_json or "{}")
+        val = meta.get(key)
+        if val is not None:
+            return val
+        custom = json.loads(self.custom_fields_json or "{}")
+        return custom.get(key, default)
+
+    def set_field(self, key: str, value) -> None:
+        """Set a field — direct column if it exists, else metadata_json."""
+        if key not in self._SKIP_FIELDS and key in self.__table__.columns:
+            setattr(self, key, value)
+        else:
+            meta = json.loads(self.metadata_json or "{}")
+            meta[key] = value
+            self.metadata_json = json.dumps(meta)
+
+    def all_fields(self) -> dict:
+        """Return all non-empty fields from columns + metadata_json + custom_fields_json."""
+        result = {}
+        for col in self.__table__.columns:
+            if col.name in self._SKIP_FIELDS or col.name == "id":
+                continue
+            val = getattr(self, col.name, None)
+            if val is not None and val != "" and val != 0 and val is not False:
+                result[col.name] = val
+        for src in (self.metadata_json, self.custom_fields_json):
+            for k, v in json.loads(src or "{}").items():
+                if v and k not in result:
+                    result[k] = v
+        return result
 
 
 class Enrichment(Base):
@@ -132,6 +184,8 @@ class OutreachScore(Base):
     grade_tech_num: Mapped[float] = mapped_column(Float, default=5.0)
     grade_opportunity: Mapped[str] = mapped_column(String(3), default="")
     grade_opportunity_num: Mapped[float] = mapped_column(Float, default=5.0)
+    # Flexible dimension grades for custom scoring dimensions
+    dimension_grades_json: Mapped[str] = mapped_column(Text, default="{}")
     llm_model: Mapped[str] = mapped_column(String(100), default="")
     scored_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

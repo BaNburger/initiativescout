@@ -194,7 +194,7 @@ async def enrich_website(
     Returns a list of enrichments: the main page plus any discovered subpages.
     Contact/imprint pages get source_type="contact".
     """
-    url = (initiative.website or "").strip()
+    url = (initiative.field("website") or "").strip()
     if not url:
         return []
     if not url.startswith(("http://", "https://")):
@@ -237,8 +237,8 @@ async def enrich_team_page(
     initiative: Initiative, crawler: object | None = None,
 ) -> Enrichment | None:
     """Fetch team page if different from main website."""
-    url = (initiative.team_page or "").strip()
-    if not url or url == (initiative.website or "").strip():
+    url = (initiative.field("team_page") or "").strip()
+    if not url or url == (initiative.field("website") or "").strip():
         return None
     return await _enrich_page(initiative, url, "team_page", crawler)
 
@@ -298,7 +298,7 @@ async def enrich_extra_links(
 
 async def enrich_github(initiative: Initiative) -> Enrichment | None:
     """Fetch GitHub org/repo metrics."""
-    org = (initiative.github_org or "").strip()
+    org = (initiative.field("github_org") or "").strip()
     if not org:
         return None
 
@@ -309,7 +309,7 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
     if not org:
         return None
 
-    repos_text = (initiative.key_repos or "").strip()
+    repos_text = (initiative.field("key_repos") or "").strip()
     repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
 
     token = os.environ.get("GITHUB_TOKEN", "")
@@ -461,8 +461,8 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
     if not _DDGS_AVAILABLE:
         raise ImportError("ddgs not installed. Install: pip install 'scout[crawl]'")
 
-    name = (initiative.name or "").strip()
-    uni = (initiative.uni or "").strip()
+    name = (initiative.field("name") or "").strip()
+    uni = (initiative.field("uni") or "").strip()
     if not name:
         return {}
 
@@ -479,7 +479,7 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
     # Also consider fields directly on the initiative as "known"
     known_domains: set[str] = set()
     for url_field in ("website", "team_page", "linkedin", "github_org"):
-        val = (getattr(initiative, url_field, "") or "").strip()
+        val = (initiative.field(url_field) or "").strip()
         if val:
             known_domains.add(val.lower())
 
@@ -577,7 +577,7 @@ async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
     This piggybacks on the website HTML — no extra HTTP request needed when
     called after enrich_website, but works standalone too.
     """
-    url = (initiative.website or "").strip()
+    url = (initiative.field("website") or "").strip()
     if not url:
         return None
     if not url.startswith(("http://", "https://")):
@@ -678,7 +678,7 @@ def _detect_tech_stack(raw_html: str) -> str | None:
 
 async def enrich_tech_stack(initiative: Initiative) -> Enrichment | None:
     """Detect the technology stack from the initiative's website HTML."""
-    url = (initiative.website or "").strip()
+    url = (initiative.field("website") or "").strip()
     if not url:
         return None
     if not url.startswith(("http://", "https://")):
@@ -785,7 +785,7 @@ async def _dns_lookup(domain: str) -> str | None:
 
 async def enrich_dns(initiative: Initiative) -> Enrichment | None:
     """Look up DNS records (MX, TXT) for the initiative's domain."""
-    url = (initiative.website or "").strip()
+    url = (initiative.field("website") or "").strip()
     if not url:
         return None
     if not url.startswith(("http://", "https://")):
@@ -818,7 +818,7 @@ async def enrich_dns(initiative: Initiative) -> Enrichment | None:
 
 async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
     """Parse robots.txt and sitemap.xml for site structure signals."""
-    url = (initiative.website or "").strip()
+    url = (initiative.field("website") or "").strip()
     if not url:
         return None
     if not url.startswith(("http://", "https://")):
@@ -904,7 +904,7 @@ _CAREER_PATH_PATTERNS = [
 
 async def enrich_careers(initiative: Initiative) -> Enrichment | None:
     """Discover and parse career/job pages for growth signals."""
-    url = (initiative.website or "").strip()
+    url = (initiative.field("website") or "").strip()
     if not url:
         return None
     if not url.startswith(("http://", "https://")):
@@ -956,7 +956,7 @@ async def enrich_careers(initiative: Initiative) -> Enrichment | None:
 
 async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
     """Extract deeper GitHub signals: README, deps, license, releases."""
-    org = (initiative.github_org or "").strip()
+    org = (initiative.field("github_org") or "").strip()
     if not org:
         return None
 
@@ -966,7 +966,7 @@ async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
     if not org:
         return None
 
-    repos_text = (initiative.key_repos or "").strip()
+    repos_text = (initiative.field("key_repos") or "").strip()
     repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
 
     token = os.environ.get("GITHUB_TOKEN", "")
