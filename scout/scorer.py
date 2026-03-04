@@ -348,6 +348,19 @@ class LLMClient:
                     retryable=False,
                 )
             self._client = anthropic.AsyncAnthropic(api_key=key)
+        elif self.provider == "gemini":
+            import openai
+            self.model = self.model or "gemini-3.1-flash-lite"
+            key = self._api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+            if not key:
+                raise LLMCallError(
+                    "GOOGLE_API_KEY (or GEMINI_API_KEY) not set. Export it in your environment.",
+                    retryable=False,
+                )
+            self._client = openai.AsyncOpenAI(
+                api_key=key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
         elif self.provider in ("openai", "openai_compatible"):
             import openai
             self.model = self.model or "gpt-5-mini"

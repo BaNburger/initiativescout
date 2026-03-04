@@ -181,8 +181,8 @@ def initiative_detail(init: Initiative) -> dict:
     base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
     base["extra_links"] = json_parse(init.extra_links_json)
     base["enrichments"] = [
-        {"id": e.id, "source_type": e.source_type, "summary": e.summary,
-         "fetched_at": e.fetched_at.isoformat()}
+        {"id": e.id, "source_type": e.source_type, "source_url": e.source_url,
+         "summary": e.summary, "fetched_at": e.fetched_at.isoformat()}
         for e in init.enrichments
     ]
     base["projects"] = [project_summary(p) for p in init.projects]
@@ -564,23 +564,28 @@ def _column_dict(col: CustomColumn) -> dict:
     return {
         "id": col.id, "key": col.key, "label": col.label,
         "col_type": col.col_type, "show_in_list": col.show_in_list,
-        "sort_order": col.sort_order,
+        "sort_order": col.sort_order, "database": col.database,
     }
 
 
 def create_custom_column(
     session: Session, key: str, label: str,
     col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+    database: str | None = None,
 ) -> dict | None:
-    """Create a custom column. Returns None if key already exists."""
-    existing = session.execute(
-        select(CustomColumn).where(CustomColumn.key == key)
-    ).scalars().first()
+    """Create a custom column. Returns None if key already exists in this database."""
+    stmt = select(CustomColumn).where(CustomColumn.key == key)
+    if database is not None:
+        stmt = stmt.where(
+            (CustomColumn.database == database) | (CustomColumn.database.is_(None))
+        )
+    existing = session.execute(stmt).scalars().first()
     if existing:
         return None
     col = CustomColumn(
         key=key, label=label, col_type=col_type,
         show_in_list=show_in_list, sort_order=sort_order,
+        database=database,
     )
     session.add(col)
     session.flush()
@@ -626,7 +631,7 @@ async def run_enrichment(
 
     Returns new enrichments (caller must commit).
     """
-    # Standard enrichers (website, team_page use crawler; github uses REST API)
+    # Standard enrichers (website returns list, others return single)
     results = await asyncio.gather(
         enrich_website(init, crawler),
         enrich_team_page(init, crawler),
@@ -638,6 +643,8 @@ async def run_enrichment(
     for label, result in zip(labels, results):
         if isinstance(result, Exception):
             log.warning("Enrichment failed (%s) for %s: %s", label, init.name, result)
+        elif isinstance(result, list):
+            new_enrichments.extend(result)
         elif result:
             new_enrichments.append(result)
 
@@ -823,11 +830,17 @@ def compute_aggregations(session: Session) -> dict:
     }
 
 
-def get_custom_columns(session: Session) -> list[dict]:
-    """Fetch custom column definitions for the current database."""
-    cols = session.execute(
-        select(CustomColumn).order_by(CustomColumn.sort_order)
-    ).scalars().all()
+def get_custom_columns(session: Session, database: str | None = None) -> list[dict]:
+    """Fetch custom column definitions for a specific database (or all if None).
+
+    Returns columns where database matches OR database is NULL (global).
+    """
+    stmt = select(CustomColumn).order_by(CustomColumn.sort_order)
+    if database is not None:
+        stmt = stmt.where(
+            (CustomColumn.database == database) | (CustomColumn.database.is_(None))
+        )
+    cols = session.execute(stmt).scalars().all()
     return [_column_dict(c) for c in cols]
 
 

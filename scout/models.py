@@ -81,6 +81,7 @@ class Enrichment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     initiative_id: Mapped[int] = mapped_column(Integer, ForeignKey("initiatives.id"), nullable=False)
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "website" | "github" | "team_page"
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_text: Mapped[str] = mapped_column(Text, default="")
     summary: Mapped[str] = mapped_column(Text, default="")
     fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -152,6 +153,7 @@ class CustomColumn(Base):
     col_type: Mapped[str] = mapped_column(String(20), default="text")
     show_in_list: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    database: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ScoringPrompt(Base):

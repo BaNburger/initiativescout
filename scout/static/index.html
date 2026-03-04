@@ -13,16 +13,18 @@
   <div class="header-left">
     <h1>Scout</h1>
     <select class="filter-select" id="db-selector" onchange="switchDatabase(this.value)"></select>
-    <button class="btn btn-sm" onclick="showCreateDb()" title="Create new database">add base</button>
+    <button class="btn btn-sm" onclick="showCreateDb()" title="Create new database" data-icon="plus">New</button>
+    <button class="btn btn-sm" onclick="backupDatabase()" title="Backup current database" data-icon="download">Backup</button>
+    <button class="btn btn-sm btn-muted" onclick="deleteDatabase()" title="Delete current database" data-icon="trash">Delete</button>
   </div>
   <div class="header-actions">
-    <button class="btn btn-sm" onclick="showImport()">Import XLSX</button>
-    <a class="btn btn-sm" id="export-link" href="/api/export?include_scores=true&include_enrichments=true">Export XLSX</a>
-    <button class="btn btn-sm" onclick="showPrompts()">Prompts</button>
-    <button class="btn btn-sm" onclick="showMcpSetup()">MCP Setup</button>
-    <button class="btn btn-sm" id="btn-enrich-all" onclick="enrichBatch()" disabled>Enrich All</button>
-    <button class="btn btn-sm" id="btn-score-unscored" onclick="scoreUnscored()" disabled>Score Unscored</button>
-    <button class="btn btn-sm btn-muted" id="btn-rescore-all" onclick="rescoreAll()" disabled>Rescore All</button>
+    <button class="btn btn-sm" onclick="showImport()" data-icon="upload">Import</button>
+    <a class="btn btn-sm" id="export-link" href="/api/export?include_scores=true&include_enrichments=true" data-icon="download">Export</a>
+    <button class="btn btn-sm" onclick="showPrompts()" data-icon="sliders">Prompts</button>
+    <button class="btn btn-sm" onclick="showMcpSetup()" data-icon="terminal">MCP</button>
+    <button class="btn btn-sm" id="btn-enrich-all" onclick="enrichBatch()" disabled data-icon="sparkles">Enrich All</button>
+    <button class="btn btn-sm" id="btn-score-unscored" onclick="scoreUnscored()" disabled data-icon="target">Score Unscored</button>
+    <button class="btn btn-sm btn-muted" id="btn-rescore-all" onclick="rescoreAll()" disabled data-icon="refresh">Rescore All</button>
   </div>
 </div>
 
@@ -70,7 +72,7 @@
     <div class="empty-state" id="empty-state" style="display:none;">
       <h2>No data loaded</h2>
       <p>Import data or use MCP tools to get started</p>
-      <button class="btn btn-primary" onclick="showImport()">Import XLSX</button>
+      <button class="btn btn-primary" onclick="showImport()" data-icon="upload">Import XLSX</button>
     </div>
   </div>
 
@@ -86,8 +88,8 @@
   <div class="progress-label" id="progress-label">Processing...</div>
   <div class="progress-bar"><div class="fill" id="progress-fill" style="width:0%"></div></div>
   <div class="progress-actions" id="progress-actions">
-    <button class="btn btn-xs" id="btn-batch-pause" onclick="batchPause()" title="Pause">Pause</button>
-    <button class="btn btn-xs btn-danger" id="btn-batch-cancel" onclick="batchCancel()" title="Cancel">Cancel</button>
+    <button class="btn btn-xs" id="btn-batch-pause" onclick="batchPause()" title="Pause" data-icon="pause">Pause</button>
+    <button class="btn btn-xs btn-danger" id="btn-batch-cancel" onclick="batchCancel()" title="Cancel" data-icon="x">Cancel</button>
   </div>
 </div>
 
@@ -96,7 +98,7 @@
   <div class="import-box" id="import-box">
     <h2>Import Enrichment Data</h2>
     <p>Drag and drop your .xlsx file here, or click to browse</p>
-    <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">Choose File</button>
+    <button class="btn btn-primary" onclick="document.getElementById('file-input').click()" data-icon="upload">Choose File</button>
     <input type="file" id="file-input" accept=".xlsx">
     <p class="import-hint">Press Escape to cancel</p>
   </div>
@@ -107,7 +109,7 @@
   <div class="prompt-editor-box">
     <div class="prompt-header">
       <h2>Scoring Prompts</h2>
-      <button class="btn btn-sm" onclick="hidePrompts()">Close</button>
+      <button class="btn btn-sm" onclick="hidePrompts()" data-icon="x">Close</button>
     </div>
     <p class="prompt-description">
       Each dimension is evaluated by an LLM using these system prompts. Edit to customize scoring criteria.

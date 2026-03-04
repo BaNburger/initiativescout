@@ -7,6 +7,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from lxml import etree, html as lxml_html
@@ -100,6 +101,7 @@ async def _enrich_page(
         url = "https://" + url
 
     text = None
+    raw_html = None
 
     # Try Crawl4AI first
     if _CRAWL4AI_AVAILABLE and crawler is not None:
@@ -121,18 +123,112 @@ async def _enrich_page(
     return Enrichment(
         initiative_id=initiative.id,
         source_type=source_type,
+        source_url=url,
         raw_text=text[:_MAX_TEXT],
         summary=summary,
         fetched_at=datetime.now(UTC),
     )
 
 
+# Keywords that indicate important subpages worth scraping
+_IMPORTANT_LINK_KEYWORDS = re.compile(
+    r"(?i)\b(about|team|members|people|contact|imprint|impressum|"
+    r"projects|portfolio|research|partners|products|services|"
+    r"what.we.do|our.work|ueber.uns|angebot)\b"
+)
+_CONTACT_LINK_KEYWORDS = re.compile(
+    r"(?i)\b(contact|imprint|impressum|kontakt)\b"
+)
+_MAX_SUBPAGES = 5
+
+
+def _extract_important_links(raw_html: str, base_url: str) -> list[str]:
+    """Extract internal links from HTML that match important subpage keywords."""
+    try:
+        cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
+        tree = lxml_html.fromstring(cleaned)
+    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
+        return []
+
+    base_domain = urlparse(base_url).netloc
+    seen: set[str] = set()
+    links: list[str] = []
+
+    for anchor in tree.xpath("//a[@href]"):
+        href = (anchor.get("href") or "").strip()
+        text = (anchor.text_content() or "").strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        absolute = urljoin(base_url, href)
+        parsed = urlparse(absolute)
+        # Only follow internal links (same domain)
+        if parsed.netloc and parsed.netloc != base_domain:
+            continue
+        # Check if href path or link text matches important keywords
+        combined = f"{parsed.path} {text}"
+        if not _IMPORTANT_LINK_KEYWORDS.search(combined):
+            continue
+        normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+        if normalized in seen or normalized.rstrip("/") == base_url.rstrip("/"):
+            continue
+        seen.add(normalized)
+        links.append(absolute)
+        if len(links) >= _MAX_SUBPAGES:
+            break
+
+    return links
+
+
+def _is_contact_link(url: str) -> bool:
+    """Check if a URL looks like a contact/imprint page."""
+    return bool(_CONTACT_LINK_KEYWORDS.search(urlparse(url).path))
+
+
 async def enrich_website(
     initiative: Initiative, crawler: object | None = None,
-) -> Enrichment | None:
-    """Fetch initiative website, extract text content."""
+) -> list[Enrichment]:
+    """Fetch initiative website + important subpages, extract text content.
+
+    Returns a list of enrichments: the main page plus any discovered subpages.
+    Contact/imprint pages get source_type="contact".
+    """
     url = (initiative.website or "").strip()
-    return await _enrich_page(initiative, url, "website", crawler) if url else None
+    if not url:
+        return []
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    # Fetch main page
+    main = await _enrich_page(initiative, url, "website", crawler)
+    if main is None:
+        return []
+
+    results: list[Enrichment] = [main]
+
+    # Try to discover important subpages from the raw HTML
+    try:
+        raw_html = await _fetch_url(url)
+    except Exception:
+        return results
+
+    subpage_urls = _extract_important_links(raw_html, url)
+    if not subpage_urls:
+        return results
+
+    # Fetch subpages in parallel
+    sub_tasks = []
+    for sub_url in subpage_urls:
+        stype = "contact" if _is_contact_link(sub_url) else "website_subpage"
+        sub_tasks.append(_enrich_page(initiative, sub_url, stype, crawler))
+
+    sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
+    for sub_url, result in zip(subpage_urls, sub_results):
+        if isinstance(result, Exception):
+            log.warning("Subpage enrichment failed for %s: %s", sub_url, result)
+        elif result is not None:
+            results.append(result)
+
+    return results
 
 
 async def enrich_team_page(
@@ -260,6 +356,7 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
     return Enrichment(
         initiative_id=initiative.id,
         source_type="github",
+        source_url=f"https://github.com/{org}",
         raw_text=text,
         summary=text[:500],
         fetched_at=datetime.now(UTC),

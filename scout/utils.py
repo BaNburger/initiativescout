@@ -23,7 +23,11 @@ def json_parse(value: str | None, default: Any = _MISSING) -> Any:
 
 
 # LLM env vars that can be sourced from .mcp.json
-_LLM_ENV_KEYS = {"LLM_PROVIDER", "LLM_MODEL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"}
+_LLM_ENV_KEYS = {
+    "LLM_PROVIDER", "LLM_MODEL", "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY", "OPENAI_BASE_URL",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY",
+}
 
 
 def load_llm_env() -> None:

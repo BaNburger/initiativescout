@@ -79,6 +79,22 @@ def _migrate_existing_db(engine) -> None:
             conn.execute(text(
                 "ALTER TABLE initiatives ADD COLUMN faculty VARCHAR(200) DEFAULT ''"
             ))
+    # Enrichment table migrations
+    if inspector.has_table("enrichments"):
+        ecols = {col["name"] for col in inspector.get_columns("enrichments")}
+        if "source_url" not in ecols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE enrichments ADD COLUMN source_url TEXT"
+                ))
+    # Custom columns table migrations
+    if inspector.has_table("custom_columns"):
+        ccols = {col["name"] for col in inspector.get_columns("custom_columns")}
+        if "database" not in ccols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE custom_columns ADD COLUMN database TEXT"
+                ))
     # Ensure performance indexes exist (idempotent)
     with engine.begin() as conn:
         for stmt in (
@@ -154,6 +170,30 @@ def create_database(name: str, entity_type: str = "initiative") -> None:
         raise ValueError(f"Database '{name}' already exists")
     init_db(db_path)
     set_entity_type(entity_type)
+
+
+def delete_database(name: str) -> None:
+    """Delete a database file. Cannot delete the currently active database."""
+    db_path = _safe_db_path(name)
+    if not db_path.exists():
+        raise ValueError(f"Database '{name}' not found")
+    if _current_db_path is not None and db_path.resolve() == _current_db_path.resolve():
+        raise ValueError("Cannot delete the currently active database. Switch to another database first.")
+    db_path.unlink()
+
+
+def backup_database(name: str) -> str:
+    """Copy a database file to a timestamped backup. Returns the backup filename."""
+    import shutil
+    from datetime import datetime
+    db_path = _safe_db_path(name)
+    if not db_path.exists():
+        raise ValueError(f"Database '{name}' not found")
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_name = f"{name}-backup-{ts}"
+    backup_path = DATA_DIR / f"{backup_name}.db"
+    shutil.copy2(db_path, backup_path)
+    return backup_name
 
 
 def _ensure_revision_tracking(engine) -> None:

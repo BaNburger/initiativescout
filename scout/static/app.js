@@ -16,6 +16,40 @@ const state = {
 const _COL_KEY_RE = /^[a-zA-Z0-9_-]+$/;
 
 // ---------------------------------------------------------------------------
+// Inline Lucide SVG icons (no dependency needed)
+// ---------------------------------------------------------------------------
+function _svg(size, inner) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+
+const _ICONS = {
+  sparkles: _svg(14, '<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/>'),
+  target:   _svg(14, '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>'),
+  users:    _svg(14, '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
+  plus:     _svg(14, '<path d="M5 12h14"/><path d="M12 5v14"/>'),
+  pencil:   _svg(14, '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>'),
+  trash:    _svg(14, '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'),
+  save:     _svg(14, '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'),
+  copy:     _svg(14, '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'),
+  x:        _svg(14, '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  pause:    _svg(12, '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>'),
+  play:     _svg(12, '<polygon points="6 3 20 12 6 21 6 3"/>'),
+  download: _svg(14, '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>'),
+  upload:   _svg(14, '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>'),
+  sliders:  _svg(14, '<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>'),
+  terminal: _svg(14, '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>'),
+  refresh:  _svg(14, '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'),
+};
+
+function _icon(name) { return _ICONS[name] || ''; }
+
+// Inject icons into static HTML elements with data-icon attributes
+document.querySelectorAll('[data-icon]').forEach(function(el) {
+  var svg = _ICONS[el.dataset.icon];
+  if (svg) el.insertAdjacentHTML('afterbegin', svg);
+});
+
+// ---------------------------------------------------------------------------
 // Revision polling (live UI updates from MCP / other processes)
 // ---------------------------------------------------------------------------
 let _lastRevision = null;
@@ -298,17 +332,17 @@ function showDetailSkeleton() {
 function btnLoading(btn, loading) {
   if (loading) {
     btn.disabled = true;
-    btn._origText = btn.textContent.trim();
-    // Clear and rebuild button content safely
-    btn.textContent = '';
+    btn._origHTML = btn.innerHTML;
+    var label = btn.textContent.trim();
+    btn.innerHTML = '';
     var spinner = document.createElement('span');
     spinner.className = 'spinner';
     btn.appendChild(spinner);
-    btn.appendChild(document.createTextNode(btn._origText));
-  } else if (btn._origText !== undefined) {
-    btn.textContent = btn._origText;
+    btn.appendChild(document.createTextNode(label));
+  } else if (btn._origHTML !== undefined) {
+    btn.innerHTML = btn._origHTML;
     btn.disabled = false;
-    delete btn._origText;
+    delete btn._origHTML;
   }
 }
 
@@ -333,17 +367,21 @@ async function loadInitiatives() {
 
 async function loadStats() {
   const stats = await api('GET', '/api/stats');
-  document.getElementById('stat-total').textContent = stats.total;
-  document.getElementById('stat-enriched').textContent = stats.enriched;
-  document.getElementById('stat-scored').textContent = stats.scored;
-  document.getElementById('stat-now').textContent = `${stats.by_verdict.reach_out_now || 0} reach out now`;
-  document.getElementById('stat-soon').textContent = `${stats.by_verdict.reach_out_soon || 0} soon`;
-  document.getElementById('stat-monitor').textContent = `${stats.by_verdict.monitor || 0} monitor`;
-  document.getElementById('btn-enrich-all').disabled = stats.total === 0;
+  if (!stats || stats.error) return;
+  const _s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const _d = (id, v) => { const el = document.getElementById(id); if (el) el.disabled = v; };
+  _s('stat-total', stats.total);
+  _s('stat-enriched', stats.enriched);
+  _s('stat-scored', stats.scored);
+  _s('stat-now', `${stats.by_verdict.reach_out_now || 0} reach out now`);
+  _s('stat-soon', `${stats.by_verdict.reach_out_soon || 0} soon`);
+  _s('stat-monitor', `${stats.by_verdict.monitor || 0} monitor`);
+  _d('btn-enrich-all', stats.total === 0);
   const unscored = stats.total - stats.scored;
-  document.getElementById('btn-score-unscored').disabled = unscored === 0;
-  document.getElementById('btn-score-unscored').textContent = unscored > 0 ? `Score ${unscored} Unscored` : 'All Scored';
-  document.getElementById('btn-rescore-all').disabled = stats.total === 0;
+  _d('btn-score-unscored', unscored === 0);
+  const scoreBtn = document.getElementById('btn-score-unscored');
+  if (scoreBtn) scoreBtn.innerHTML = _icon('target') + (unscored > 0 ? `Score ${unscored} Unscored` : 'All Scored');
+  _d('btn-rescore-all', stats.total === 0);
 }
 
 let _loadDetailInFlight = false;
@@ -750,7 +788,10 @@ function renderDetail(d) {
       const label = esc(humanize(e.source_type));
       const date = esc(e.fetched_at.split('T')[0]);
       html += `<div class="enrichment-card">`;
-      html += `<div class="enrichment-card-header"><span class="enrichment-source">${label}</span><span class="enrichment-date">${date}</span></div>`;
+      const srcLink = e.source_url
+        ? `<a href="${escAttr(safeUrl(e.source_url))}" target="_blank" rel="noopener" class="enrichment-source">${label}</a>`
+        : `<span class="enrichment-source">${label}</span>`;
+      html += `<div class="enrichment-card-header">${srcLink}<span class="enrichment-date">${date}</span></div>`;
       if (e.summary) {
         const short = e.summary.length > 300;
         const text = short ? e.summary.slice(0, 300) + '\u2026' : e.summary;
@@ -843,9 +884,9 @@ function renderDetail(d) {
       html += `<div class="project-card-header">`;
       html += `<h4>${esc(p.name)} ${pvLabel ? `<span class="verdict-badge verdict-${esc(pv)} ml-2 text-xs">${pvLabel}</span>` : ''}</h4>`;
       html += `<div class="project-card-actions">`;
-      html += `<button class="btn btn-sm" onclick="scoreProject(${parseInt(p.id)})" title="Score">Score</button>`;
-      html += `<button class="btn btn-sm" onclick="showProjectForm(${parseInt(d.id)}, ${parseInt(p.id)})" title="Edit">Edit</button>`;
-      html += `<button class="btn btn-sm text-red" onclick="deleteProject(${parseInt(p.id)}, ${parseInt(d.id)})" title="Delete">Del</button>`;
+      html += `<button class="btn btn-sm" onclick="scoreProject(${parseInt(p.id)})" title="Score">${_icon('target')}Score</button>`;
+      html += `<button class="btn btn-sm" onclick="showProjectForm(${parseInt(d.id)}, ${parseInt(p.id)})" title="Edit">${_icon('pencil')}Edit</button>`;
+      html += `<button class="btn btn-sm text-red" onclick="deleteProject(${parseInt(p.id)}, ${parseInt(d.id)})" title="Delete">${_icon('trash')}Del</button>`;
       html += `</div></div>`;
       const meta = [];
       if (p.description) meta.push(p.description);
@@ -872,15 +913,15 @@ function renderDetail(d) {
   } else {
     html += `<div class="card card--dashed">No projects yet — click below to add one</div>`;
   }
-  html += `<button class="btn btn-sm mt-2" onclick="showProjectForm(${parseInt(d.id)})">+ Add Project</button>`;
+  html += `<button class="btn btn-sm mt-2" onclick="showProjectForm(${parseInt(d.id)})">${_icon('plus')}Add Project</button>`;
   html += `</div>`;
 
   // Actions
   html += `
     <div class="detail-actions">
-      <button class="btn btn-sm" id="btn-enrich-one" onclick="enrichOne(${parseInt(d.id)})">Enrich</button>
-      <button class="btn btn-sm btn-primary" id="btn-score-one" onclick="scoreOne(${parseInt(d.id)})">Score</button>
-      <button class="btn btn-sm" id="btn-find-similar" onclick="findSimilar(${parseInt(d.id)})">Find Similar</button>
+      <button class="btn btn-sm" id="btn-enrich-one" onclick="enrichOne(${parseInt(d.id)})">${_icon('sparkles')}Enrich</button>
+      <button class="btn btn-sm btn-primary" id="btn-score-one" onclick="scoreOne(${parseInt(d.id)})">${_icon('target')}Score</button>
+      <button class="btn btn-sm" id="btn-find-similar" onclick="findSimilar(${parseInt(d.id)})">${_icon('users')}Find Similar</button>
     </div>`;
 
   el.innerHTML = html;
@@ -1031,7 +1072,7 @@ async function streamBatch(url, body) {
   container.classList.add('active');
   fill.style.width = '0%';
   if (actions) actions.style.display = 'flex';
-  if (pauseBtn) { pauseBtn.textContent = 'Pause'; pauseBtn.disabled = false; }
+  if (pauseBtn) { pauseBtn.innerHTML = _icon('pause') + 'Pause'; pauseBtn.disabled = false; }
   _batchPaused = false;
   _batchCancelled = false;
   let gotComplete = false;
@@ -1105,14 +1146,14 @@ async function streamBatch(url, body) {
     if (dbSelector) dbSelector.disabled = false;
     _revisionPaused = false;
     await refreshUI();
-    setTimeout(() => container.classList.remove('active'), 3000);
+    setTimeout(() => container.classList.remove('active'), _batchCancelled ? 0 : 3000);
   }
 }
 
 function batchPause() {
   _batchPaused = !_batchPaused;
   const btn = document.getElementById('btn-batch-pause');
-  if (btn) btn.textContent = _batchPaused ? 'Resume' : 'Pause';
+  if (btn) btn.innerHTML = _batchPaused ? _icon('play') + 'Resume' : _icon('pause') + 'Pause';
 }
 
 function batchCancel() {
@@ -1325,7 +1366,7 @@ function showProjectForm(initiativeId, projectId) {
       <div class="pf-row"><label class="card-label">GitHub URL</label><input id="pf-github" value="${escAttr(p.github_url)}"></div>
       <div class="pf-row"><label class="card-label">Team</label><input id="pf-team" value="${escAttr(p.team)}"></div>
       <div class="pf-actions">
-        <button class="btn btn-sm btn-primary" onclick="submitProject(${parseInt(initiativeId)}, ${projectId ? parseInt(projectId) : 'null'})">${projectId ? 'Update' : 'Create'}</button>
+        <button class="btn btn-sm btn-primary" onclick="submitProject(${parseInt(initiativeId)}, ${projectId ? parseInt(projectId) : 'null'})">${_icon('save')}${projectId ? 'Update' : 'Create'}</button>
         <button class="btn btn-sm" onclick="document.getElementById('project-form-slot').innerHTML=''">Cancel</button>
       </div>
     </div>`;
@@ -1390,6 +1431,16 @@ function _resetDetailPanel() {
   document.getElementById('detail-empty').style.display = 'flex';
 }
 
+async function _activateDb(dbName) {
+  state.currentDb = dbName;
+  localStorage.setItem('scout-selected-db', dbName);
+  _lastRevision = null;
+  _resetDetailPanel();
+  loadColumnOrder();
+  await loadCustomColumns();
+  await refreshUI();
+}
+
 async function loadDatabases() {
   const data = await api('GET', '/api/databases');
   const sel = document.getElementById('db-selector');
@@ -1403,14 +1454,8 @@ async function loadDatabases() {
 async function switchDatabase(name) {
   try {
     const result = await api('POST', '/api/databases/select', { name });
-    state.currentDb = result.current;
-    _lastRevision = null;
-    _resetDetailPanel();
-    loadColumnOrder();
-    await loadCustomColumns();
-    await refreshUI();
+    await _activateDb(result.current);
   } catch (err) {
-    // Revert dropdown to the actual current DB
     document.getElementById('db-selector').value = state.currentDb;
     showToast('Switch failed: ' + err.message, 'error');
   }
@@ -1427,15 +1472,51 @@ async function showCreateDb() {
   const et = (entityType || 'initiative').trim().toLowerCase();
   try {
     const result = await api('POST', '/api/databases/create', { name, entity_type: et });
-    state.currentDb = result.current;
-    _lastRevision = null;
-    _resetDetailPanel();
-    loadColumnOrder();
     await loadDatabases();
-    await loadCustomColumns();
-    await refreshUI();
+    await _activateDb(result.current);
   } catch (err) {
     showToast('Failed: ' + err.message, 'error');
+  }
+}
+
+async function deleteDatabase() {
+  const name = state.currentDb;
+  if (!name) return;
+  const sel = document.getElementById('db-selector');
+  const allDbs = Array.from(sel.options).map(o => o.value);
+  const fallback = allDbs.find(d => d !== name);
+  if (!fallback) {
+    showToast('Cannot delete the only database.', 'error');
+    return;
+  }
+  const typed = await showPromptModal(
+    'Delete Database',
+    `Type "${name}" to confirm deletion. This cannot be undone.`,
+    name,
+  );
+  if (typed !== name) {
+    if (typed !== null) showToast('Name did not match. Deletion cancelled.', 'error');
+    return;
+  }
+  try {
+    await api('POST', '/api/databases/select', { name: fallback });
+    await api('POST', '/api/databases/delete', { name });
+    await loadDatabases();
+    await _activateDb(fallback);
+    showToast(`Database "${name}" deleted`, 'success');
+  } catch (err) {
+    showToast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+async function backupDatabase() {
+  const name = state.currentDb;
+  if (!name) return;
+  try {
+    const result = await api('POST', '/api/databases/backup', { name });
+    showToast(`Backup created: ${result.backup}`, 'success');
+  } catch (err) {
+    showToast('Backup failed: ' + err.message, 'error');
   }
 }
 
@@ -1503,7 +1584,7 @@ async function showPrompts() {
       <div class="prompt-section" data-prompt-key="${escAttr(p.key)}">
         <div class="prompt-section-header">
           <label class="card-label">${esc(p.label)}</label>
-          <button class="btn btn-sm" onclick="savePrompt('${escAttr(p.key)}')">Save</button>
+          <button class="btn btn-sm" onclick="savePrompt('${escAttr(p.key)}')">${_icon('save')}Save</button>
         </div>
         <textarea class="prompt-textarea" id="prompt-${escAttr(p.key)}">${esc(p.content)}</textarea>
       </div>
@@ -1676,7 +1757,7 @@ function switchMcpTab(btn, toolKey) {
     if (s.code) {
       var id = 'mcp-code-' + i;
       html += '<div class="mcp-code-block" id="' + id + '">' + esc(s.code);
-      html += '<button class="mcp-copy-btn" onclick="copyMcpCode(\'' + id + '\')">Copy</button></div>';
+      html += '<button class="mcp-copy-btn" onclick="copyMcpCode(\'' + id + '\')">' + _icon('copy') + 'Copy</button></div>';
     }
     html += '</div>';
   });
@@ -1695,8 +1776,8 @@ function copyMcpCode(blockId) {
   navigator.clipboard.writeText(text).then(function() {
     var btn = block.querySelector('.mcp-copy-btn');
     if (btn) {
-      btn.textContent = 'Copied!';
-      setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+      btn.innerHTML = _icon('copy') + 'Copied!';
+      setTimeout(function() { btn.innerHTML = _icon('copy') + 'Copy'; }, 1500);
     }
   });
 }
@@ -1706,6 +1787,11 @@ function copyMcpCode(blockId) {
 // ---------------------------------------------------------------------------
 async function initApp() {
   await loadDatabases();
+  // Restore last selected database from localStorage
+  const savedDb = localStorage.getItem('scout-selected-db');
+  if (savedDb && savedDb !== state.currentDb) {
+    try { await switchDatabase(savedDb); } catch (_) { /* fallback to default */ }
+  }
   await loadCustomColumns();
   await loadInitiatives();
   populateFacultyFilter();

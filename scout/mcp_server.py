@@ -14,7 +14,8 @@ from sqlalchemy import and_, delete, func, select
 
 from scout import services
 from scout.db import (
-    create_database, current_db_name, get_entity_type, get_session, init_db,
+    backup_database, create_database, current_db_name, delete_database,
+    get_entity_type, get_session, init_db,
     list_databases, session_scope, switch_db, validate_db_name,
 )
 from scout.enricher import open_crawler
@@ -99,6 +100,12 @@ def _check_api_key() -> dict | None:
     if provider in ("openai", "openai_compatible") and not os.environ.get("OPENAI_API_KEY"):
         return _error(
             "OPENAI_API_KEY not set.",
+            "CONFIG_ERROR",
+            fix="Use get_scoring_dossier() + submit_score() for API-key-free scoring.",
+        )
+    if provider == "gemini" and not (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")):
+        return _error(
+            "GOOGLE_API_KEY (or GEMINI_API_KEY) not set.",
             "CONFIG_ERROR",
             fix="Use get_scoring_dossier() + submit_score() for API-key-free scoring.",
         )
@@ -1201,16 +1208,18 @@ def manage_database(
     name: str | None = None,
     entity_type: str = "initiative",
 ) -> dict:
-    """List, select, or create Scout databases.
+    """List, select, create, delete, or backup Scout databases.
 
     ACTIONS:
     - list: Show all databases and which is active.
     - select: Switch to a database (creates if needed). Requires name.
     - create: Create a new empty database. Requires name.
+    - delete: Delete a database. Requires name. Cannot delete the active database.
+    - backup: Create a timestamped backup copy. Requires name.
 
     Args:
-        action: "list", "select", or "create".
-        name: Database name (letters, numbers, hyphens, underscores). Required for select/create.
+        action: "list", "select", "create", "delete", or "backup".
+        name: Database name (letters, numbers, hyphens, underscores). Required for select/create/delete/backup.
         entity_type: For create: "initiative" or "professor". Default "initiative".
     """
     action = (action or "").strip().lower()
@@ -1250,7 +1259,28 @@ def manage_database(
         return {"current": current_db_name(), "entity_type": entity_type,
                 "message": f"Created and switched to '{name}'"}
 
-    return _error(f"Unknown action: {action!r}. Use list, select, or create.", "VALIDATION_ERROR")
+    if action == "delete":
+        if not name:
+            return _error("name required for delete", "VALIDATION_ERROR")
+        try:
+            name = validate_db_name(name)
+            delete_database(name)
+        except ValueError as exc:
+            return _error(str(exc), "VALIDATION_ERROR")
+        return {"ok": True, "deleted": name, "current": current_db_name()}
+
+    if action == "backup":
+        if not name:
+            return _error("name required for backup", "VALIDATION_ERROR")
+        try:
+            name = validate_db_name(name)
+            backup_name = backup_database(name)
+        except ValueError as exc:
+            return _error(str(exc), "VALIDATION_ERROR")
+        return {"ok": True, "backup": backup_name}
+
+    return _error(f"Unknown action: {action!r}. Use list, select, create, delete, or backup.",
+                  "VALIDATION_ERROR")
 
 
 # ---------------------------------------------------------------------------
@@ -1273,8 +1303,11 @@ async def manage_settings(
     school: str | None = None, limit: int = 50,
     # Prompt list param
     compact: bool = False,
+    # LLM config params
+    provider: str | None = None, model: str | None = None,
+    api_key: str | None = None, base_url: str | None = None,
 ) -> dict | list:
-    """Admin operations: custom columns, scoring prompts, export, embeddings, TUM scraper.
+    """Admin operations: custom columns, scoring prompts, LLM config, export, embeddings, TUM scraper.
 
     ACTIONS:
     - list_columns: Show custom column definitions.
@@ -1283,6 +1316,8 @@ async def manage_settings(
     - delete_column: Delete column. Requires column_id.
     - list_prompts: Show scoring prompt definitions.
     - update_prompt: Update prompt. Requires key ("team"/"tech"/"opportunity"), content.
+    - configure_llm: Set LLM provider/model/api_key at runtime. All params optional.
+    - show_llm_config: Show current LLM configuration (keys masked).
     - export: Export to XLSX. Optional verdict, uni filters.
     - rebuild_embeddings: Rebuild all dense embeddings.
     - scrape_tum: Scrape TUM professor directory. Optional school filter, limit.
@@ -1304,12 +1339,47 @@ async def manage_settings(
         school: TUM school filter (CIT, ED, LS, MGT, MED, NAT).
         limit: Scraper limit.
         compact: For list_prompts, return only key/label/updated_at.
+        provider: LLM provider (anthropic, openai, openai_compatible, gemini).
+        model: LLM model name.
+        api_key: API key for the provider.
+        base_url: Custom base URL (for openai_compatible).
     """
     action = (action or "").strip().lower()
 
-    if school:
-        professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
-    professors = professors[:max(1, min(limit, 1000))]
+    if action == "show_llm_config":
+        p = os.environ.get("LLM_PROVIDER", "anthropic")
+        m = os.environ.get("LLM_MODEL", "")
+        has_key = bool(
+            os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+        )
+        return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
+                "base_url": os.environ.get("OPENAI_BASE_URL", "")}
+
+    if action == "configure_llm":
+        if provider:
+            os.environ["LLM_PROVIDER"] = provider
+        if model:
+            os.environ["LLM_MODEL"] = model
+        if api_key:
+            p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
+            if p == "anthropic":
+                os.environ["ANTHROPIC_API_KEY"] = api_key
+            elif p == "gemini":
+                os.environ["GOOGLE_API_KEY"] = api_key
+            else:
+                os.environ["OPENAI_API_KEY"] = api_key
+        if base_url:
+            os.environ["OPENAI_BASE_URL"] = base_url
+        return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
+                "model": os.environ.get("LLM_MODEL", "") or "(default)",
+                "api_key_set": bool(api_key or _check_api_key() is None)}
+
+    if action == "list_columns":
+        with session_scope() as session:
+            return services.get_custom_columns(session, database=current_db_name())
 
     if action == "create_column":
         if not key or not label:
@@ -1318,6 +1388,7 @@ async def manage_settings(
             result = services.create_custom_column(
                 session, key=key, label=label, col_type=col_type,
                 show_in_list=show_in_list, sort_order=sort_order,
+                database=current_db_name(),
             )
             if result is None:
                 return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")

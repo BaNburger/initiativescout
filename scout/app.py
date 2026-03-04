@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 
 from scout import services
 from scout.db import (
-    create_database, current_db_name, get_entity_type, get_revision,
+    backup_database, create_database, current_db_name, delete_database,
+    get_entity_type, get_revision,
     get_session, init_db, list_databases, session_generator, switch_db,
     validate_db_name,
 )
@@ -485,6 +486,32 @@ async def create_database_route(body: dict[str, Any]):
     return {"current": current_db_name(), "entity_type": entity_type}
 
 
+@app.post("/api/databases/delete", tags=["Databases"], summary="Delete a database")
+async def delete_database_route(body: dict[str, Any]):
+    try:
+        name = validate_db_name(body.get("name") or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        delete_database(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "deleted": name, "current": current_db_name()}
+
+
+@app.post("/api/databases/backup", tags=["Databases"], summary="Backup a database")
+async def backup_database_route(body: dict[str, Any]):
+    try:
+        name = validate_db_name(body.get("name") or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        backup_name = backup_database(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "backup": backup_name}
+
+
 # ---------------------------------------------------------------------------
 # Routes: Custom Columns
 # ---------------------------------------------------------------------------
@@ -492,7 +519,7 @@ async def create_database_route(body: dict[str, Any]):
 
 @app.get("/api/custom-columns", tags=["Databases"], summary="List custom column definitions")
 async def list_custom_columns(session: Session = Depends(db_session)):
-    return services.get_custom_columns(session)
+    return services.get_custom_columns(session, database=current_db_name())
 
 
 @app.post("/api/custom-columns", tags=["Databases"], status_code=201,
@@ -501,6 +528,7 @@ async def create_custom_column(body: CustomColumnCreate, session: Session = Depe
     result = services.create_custom_column(
         session, key=body.key, label=body.label, col_type=body.col_type,
         show_in_list=body.show_in_list, sort_order=body.sort_order,
+        database=current_db_name(),
     )
     if result is None:
         raise HTTPException(409, f"Column key '{body.key}' already exists")
