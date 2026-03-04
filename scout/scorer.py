@@ -55,6 +55,26 @@ GRADE_MAP = {
 }
 VALID_GRADES = set(GRADE_MAP.keys())
 
+
+@dataclass(frozen=True)
+class Grade:
+    """Parsed, validated grade — always holds a valid letter + numeric.
+
+    Follows "Parse, Don't Validate": construction either succeeds with a
+    valid grade or falls back to a safe default. Downstream code never
+    needs to re-validate.
+    """
+    letter: str
+    numeric: float
+
+    @classmethod
+    def parse(cls, raw: Any, default: str = "C") -> Grade:
+        g = str(raw or default).strip().upper().replace(" ", "")
+        if g not in VALID_GRADES:
+            log.warning("Unrecognizable grade %r, defaulting to %s", raw, default)
+            g = default
+        return cls(letter=g, numeric=GRADE_MAP[g])
+
 # ---------------------------------------------------------------------------
 # Default prompts (editable via API / frontend)
 # ---------------------------------------------------------------------------
@@ -544,28 +564,16 @@ def build_full_dossier(init: Initiative, enrichments: list[Enrichment], entity_t
 @dataclass
 class DimensionResult:
     """Result from a single dimension LLM call."""
-    grade: str
-    grade_num: float
+    grade: Grade
     reasoning: str
     extras: dict[str, Any]  # classification, contact_who, etc. from opportunity
-
-
-def _validate_grade(val: Any) -> str:
-    """Normalize a grade string to a valid grade."""
-    g = str(val or "C").strip().upper().replace(" ", "")
-    if g not in VALID_GRADES:
-        log.warning("Unrecognizable grade %r, defaulting to C", val)
-        return "C"
-    return g
 
 
 async def _score_dimension(client: LLMClient, system_prompt: str, dossier: str) -> DimensionResult:
     """Call LLM for a single dimension, return parsed result."""
     raw = await client.call(system_prompt, dossier)
-    grade = _validate_grade(raw.get("grade"))
     return DimensionResult(
-        grade=grade,
-        grade_num=GRADE_MAP[grade],
+        grade=Grade.parse(raw.get("grade")),
         reasoning=str(raw.get("reasoning", "")),
         extras={k: v for k, v in raw.items() if k not in ("grade", "reasoning")},
     )
@@ -613,6 +621,63 @@ def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_ty
     return gaps
 
 
+def create_score_from_grades(
+    initiative: Initiative,
+    enrichments: list[Enrichment],
+    grades: dict[str, Grade],
+    *,
+    classification: str = "",
+    contact_who: str = "",
+    contact_channel: str = "website_form",
+    engagement_hook: str = "",
+    reasoning: str = "",
+    entity_type: str = "initiative",
+) -> OutreachScore:
+    """Build an OutreachScore from pre-evaluated grades (no LLM call).
+
+    Use this when the calling LLM has already evaluated the dossiers
+    (e.g. via get_scoring_dossier + submit_score).
+    """
+    avg = sum(g.numeric for g in grades.values()) / len(grades)
+    verdict = compute_verdict(avg)
+    score = compute_score(avg)
+    classification = _normalize_classification(classification, entity_type)
+    data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
+
+    team_g = grades.get("team", Grade.parse("C"))
+    tech_g = grades.get("tech", Grade.parse("C"))
+    opp_g = grades.get("opportunity", Grade.parse("C"))
+
+    key_evidence = [
+        f"Team ({team_g.letter}): externally evaluated",
+        f"Tech ({tech_g.letter}): externally evaluated",
+        f"Opportunity ({opp_g.letter}): {reasoning}" if reasoning
+        else f"Opportunity ({opp_g.letter}): externally evaluated",
+    ]
+
+    return OutreachScore(
+        initiative_id=initiative.id,
+        project_id=None,
+        verdict=verdict,
+        score=score,
+        classification=classification,
+        reasoning=reasoning,
+        contact_who=contact_who,
+        contact_channel=contact_channel,
+        engagement_hook=engagement_hook,
+        key_evidence_json=json.dumps(key_evidence),
+        data_gaps_json=json.dumps(data_gaps),
+        grade_team=team_g.letter,
+        grade_team_num=team_g.numeric,
+        grade_tech=tech_g.letter,
+        grade_tech_num=tech_g.numeric,
+        grade_opportunity=opp_g.letter,
+        grade_opportunity_num=opp_g.numeric,
+        llm_model="external",
+        scored_at=datetime.now(UTC),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Score one initiative (3 parallel dimension calls)
 # ---------------------------------------------------------------------------
@@ -651,7 +716,7 @@ async def score_initiative(
         _score_dimension(client, opp_prompt, full_dossier),
     )
 
-    avg_grade = (team.grade_num + tech.grade_num + opp.grade_num) / 3
+    avg_grade = (team.grade.numeric + tech.grade.numeric + opp.grade.numeric) / 3
     verdict = compute_verdict(avg_grade)
     score = compute_score(avg_grade)
 
@@ -661,9 +726,9 @@ async def score_initiative(
 
     defaults = default_prompts_for(entity_type)
     key_evidence = [
-        f"{defaults['team'][0]} ({team.grade}): {team.reasoning}",
-        f"{defaults['tech'][0]} ({tech.grade}): {tech.reasoning}",
-        f"{defaults['opportunity'][0]} ({opp.grade}): {opp.reasoning}",
+        f"{defaults['team'][0]} ({team.grade.letter}): {team.reasoning}",
+        f"{defaults['tech'][0]} ({tech.grade.letter}): {tech.reasoning}",
+        f"{defaults['opportunity'][0]} ({opp.grade.letter}): {opp.reasoning}",
     ]
     data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
 
@@ -679,12 +744,12 @@ async def score_initiative(
         engagement_hook=str(opp.extras.get("engagement_hook", "")),
         key_evidence_json=json.dumps(key_evidence),
         data_gaps_json=json.dumps(data_gaps),
-        grade_team=team.grade,
-        grade_team_num=team.grade_num,
-        grade_tech=tech.grade,
-        grade_tech_num=tech.grade_num,
-        grade_opportunity=opp.grade,
-        grade_opportunity_num=opp.grade_num,
+        grade_team=team.grade.letter,
+        grade_team_num=team.grade.numeric,
+        grade_tech=tech.grade.letter,
+        grade_tech_num=tech.grade.numeric,
+        grade_opportunity=opp.grade.letter,
+        grade_opportunity_num=opp.grade.numeric,
         llm_model=client.model,
         scored_at=datetime.now(UTC),
     )
@@ -776,9 +841,9 @@ def _validate_project_response(raw: dict[str, Any], entity_type: str = "initiati
         data_gaps = []
     data_gaps = [str(g) for g in data_gaps[:5]]
 
-    team_grade = _validate_grade(raw.get("team_grade"))
-    tech_grade = _validate_grade(raw.get("tech_grade"))
-    opportunity_grade = _validate_grade(raw.get("opportunity_grade"))
+    team_grade = Grade.parse(raw.get("team_grade"))
+    tech_grade = Grade.parse(raw.get("tech_grade"))
+    opportunity_grade = Grade.parse(raw.get("opportunity_grade"))
 
     return {
         "verdict": verdict, "score": score, "classification": classification,
@@ -787,8 +852,8 @@ def _validate_project_response(raw: dict[str, Any], entity_type: str = "initiati
         "contact_channel": str(raw.get("contact_channel", "website_form")),
         "engagement_hook": str(raw.get("engagement_hook", "")),
         "key_evidence": key_evidence, "data_gaps": data_gaps,
-        "team_grade": team_grade, "tech_grade": tech_grade,
-        "opportunity_grade": opportunity_grade,
+        "team_grade": team_grade.letter, "tech_grade": tech_grade.letter,
+        "opportunity_grade": opportunity_grade.letter,
     }
 
 

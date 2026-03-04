@@ -237,11 +237,7 @@ async def update_initiative(initiative_id: int, body: InitiativeUpdate, session:
         existing.update(body.custom_fields)
         existing = {k: v for k, v in existing.items() if v is not None}
         init.custom_fields_json = json.dumps(existing)
-    session.flush()
-    try:
-        services.sync_fts_update(session, init)
-    except Exception:
-        log.debug("FTS sync failed for initiative %s", initiative_id)
+    session.flush()  # triggers after_update → FTS sync automatically
     session.commit()
     return services.initiative_detail(init)
 

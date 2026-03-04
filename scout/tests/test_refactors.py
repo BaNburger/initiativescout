@@ -685,12 +685,15 @@ class TestScorerDeterministic:
         assert len(gaps) >= 3  # website, team_page, github missing at minimum
 
     def test_validate_grade(self):
-        from scout.scorer import _validate_grade
-        assert _validate_grade("A+") == "A+"
-        assert _validate_grade("a-") == "A-"
-        assert _validate_grade("invalid") == "C"
-        assert _validate_grade(None) == "C"
-        assert _validate_grade("  B  ") == "B"
+        from scout.scorer import Grade
+        assert Grade.parse("A+").letter == "A+"
+        assert Grade.parse("a-").letter == "A-"
+        assert Grade.parse("invalid").letter == "C"
+        assert Grade.parse(None).letter == "C"
+        assert Grade.parse("  B  ").letter == "B"
+        # Numeric values
+        assert Grade.parse("A+").numeric == 1.0
+        assert Grade.parse("D").numeric == 4.0
 
 
 # =========================================================================

@@ -22,6 +22,14 @@ from scout.models import Base, Enrichment, Initiative, OutreachScore, ScoringPro
 def engine():
     eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(eng)
+    # Create FTS5 table (normally done by init_db / _ensure_fts_table)
+    with eng.begin() as conn:
+        conn.execute(__import__("sqlalchemy").text(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS initiative_fts USING fts5("
+            "name, description, sector, technology_domains, "
+            "categories, market_domains, faculty, "
+            "content='initiatives', content_rowid='id')"
+        ))
     return eng
 
 
@@ -81,6 +89,7 @@ def _patch_db(SessionFactory):
 
     with (
         patch("scout.mcp_server.session_scope", _test_session_scope),
+        patch("scout.mcp_server.get_session", SessionFactory),
         patch("scout.db.get_session", SessionFactory),
     ):
         yield
