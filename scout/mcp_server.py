@@ -1307,10 +1307,9 @@ async def manage_settings(
     """
     action = (action or "").strip().lower()
 
-    # --- Custom Columns ---
-    if action == "list_columns":
-        with session_scope() as session:
-            return services.get_custom_columns(session)
+    if school:
+        professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
+    professors = professors[:max(1, min(limit, 1000))]
 
     if action == "create_column":
         if not key or not label:
