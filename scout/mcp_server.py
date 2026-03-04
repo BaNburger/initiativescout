@@ -539,9 +539,11 @@ def manage_initiative(
 
 @mcp.tool(annotations=_WRITE)
 async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
-    """Fetch enrichment data from website, team page, GitHub, and extra links.
+    """Fetch enrichment data from website, GitHub, extra links, plus extended sources.
 
-    WHAT: Scrapes all known URLs. Takes 2-10s. Auto-enables discovery when no URLs are configured.
+    WHAT: Scrapes all known URLs + extracts structured data (JSON-LD/OpenGraph), tech stack,
+    DNS records, sitemap structure, career pages, and deep git analysis (README, deps, releases).
+    Takes 5-20s. Auto-enables discovery when no URLs are configured.
     WHEN: Before score_initiative(). Discovery finds LinkedIn, GitHub, HuggingFace URLs via DuckDuckGo.
 
     Args:
@@ -583,17 +585,20 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         session.commit()
 
         succeeded = [e.source_type for e in new]
-        possible = {"website", "team_page", "github"}
+        possible = {"website", "team_page", "github",
+                    "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"}
         extra = json_parse(init.extra_links_json)
         if extra:
             possible.update(k.removesuffix("_urls").removesuffix("_url") for k in extra if extra[k])
         not_configured = []
-        if not (init.website or "").strip():
-            not_configured.append("website")
+        has_website = bool((init.website or "").strip())
+        has_github = bool((init.github_org or "").strip())
+        if not has_website:
+            not_configured.extend(["website", "structured_data", "tech_stack", "dns", "sitemap", "careers"])
         if not (init.team_page or "").strip():
             not_configured.append("team_page")
-        if not (init.github_org or "").strip():
-            not_configured.append("github")
+        if not has_github:
+            not_configured.extend(["github", "git_deep"])
         failed = sorted(possible - set(succeeded) - set(not_configured))
 
         result = {

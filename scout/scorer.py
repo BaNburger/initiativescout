@@ -539,6 +539,7 @@ def build_team_dossier(init: Initiative, enrichments: list[Enrichment], entity_t
         source_filter={
             "team_page": 5000, "website": 3000, "github": 3000,
             "linkedin": 3000, "instagram": 2000, "facebook": 2000,
+            "careers": 3000, "structured_data": 2000,
         },
         header=_initiative_header(init, entity_type),
     )
@@ -554,6 +555,7 @@ def build_tech_dossier(init: Initiative, enrichments: list[Enrichment], entity_t
             "huggingface": 3000, "researchgate": 3000,
             "openalex": 3000, "semantic_scholar": 3000,
             "google_scholar": 3000, "orcid": 3000,
+            "git_deep": 4000, "tech_stack": 2000,
         },
         header=_initiative_header(init, entity_type),
     )
@@ -626,11 +628,15 @@ def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_ty
                      else "No team page data — team assessment is limited")
     if "github" not in source_types:
         gaps.append("No GitHub data — tech assessment is limited")
+    if "github" in source_types and "git_deep" not in source_types:
+        gaps.append("No deep git analysis — README, dependencies, releases not analyzed")
     if not init.linkedin:
         gaps.append("No LinkedIn URL — cannot verify academic network" if prof
                      else "No LinkedIn URL — cannot verify team backgrounds")
     if not init.email:
         gaps.append("No contact email on file")
+    if "structured_data" not in source_types and "website" in source_types:
+        gaps.append("No structured data (JSON-LD/OpenGraph) extracted from website")
     return gaps
 
 

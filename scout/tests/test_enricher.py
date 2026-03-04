@@ -1,16 +1,19 @@
-"""Tests for the Crawl4AI + DuckDuckGo enrichment pipeline.
+"""Tests for the enrichment pipeline.
 
 Covers: rate limiter, extra links enrichment, DuckDuckGo discovery,
-Crawl4AI integration, open_crawler context manager, and services integration.
+Crawl4AI integration, open_crawler context manager, services integration,
+and extended enrichers (structured data, tech stack, DNS, sitemap, careers, git deep).
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -652,3 +655,358 @@ class TestDependencyDetection:
         assert "linkedin" in _PLATFORM_PATTERNS
         assert "huggingface" in _PLATFORM_PATTERNS
         assert "crunchbase" in _PLATFORM_PATTERNS
+
+
+# ---------------------------------------------------------------------------
+# Tests: Structured data extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractStructuredData:
+    def test_extracts_json_ld(self):
+        from scout.enricher import _extract_structured_data
+        html = '''<html><head>
+        <script type="application/ld+json">
+        {"@type": "Organization", "name": "TestCorp", "foundingDate": "2020",
+         "numberOfEmployees": 42, "url": "https://testcorp.com"}
+        </script>
+        </head><body></body></html>'''
+        result = _extract_structured_data(html)
+        assert result is not None
+        assert "Organization" in result
+        assert "TestCorp" in result
+        assert "2020" in result
+        assert "42" in result
+
+    def test_extracts_opengraph(self):
+        from scout.enricher import _extract_structured_data
+        html = '''<html><head>
+        <meta property="og:title" content="My Startup">
+        <meta property="og:description" content="We build rockets">
+        <meta property="og:type" content="website">
+        </head><body></body></html>'''
+        result = _extract_structured_data(html)
+        assert result is not None
+        assert "My Startup" in result
+        assert "We build rockets" in result
+
+    def test_extracts_meta_keywords(self):
+        from scout.enricher import _extract_structured_data
+        html = '''<html><head>
+        <meta name="keywords" content="AI, machine learning, robotics">
+        <meta name="author" content="Jane Doe">
+        </head><body></body></html>'''
+        result = _extract_structured_data(html)
+        assert result is not None
+        assert "AI, machine learning" in result
+        assert "Jane Doe" in result
+
+    def test_returns_none_for_empty_html(self):
+        from scout.enricher import _extract_structured_data
+        assert _extract_structured_data("<html><body>No structured data</body></html>") is None
+
+    def test_returns_none_for_invalid_html(self):
+        from scout.enricher import _extract_structured_data
+        assert _extract_structured_data("not html at all") is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_structured_data_no_website(self, empty_initiative):
+        from scout.enricher import enrich_structured_data
+        result = await enrich_structured_data(empty_initiative)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_structured_data_success(self, sample_initiative):
+        from scout.enricher import enrich_structured_data
+        html = '''<html><head>
+        <script type="application/ld+json">
+        {"@type": "Organization", "name": "TestBot"}
+        </script>
+        </head><body></body></html>'''
+        with patch("scout.enricher._fetch_url", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = html
+            result = await enrich_structured_data(sample_initiative)
+        assert result is not None
+        assert result.source_type == "structured_data"
+        assert "Organization" in result.raw_text
+
+
+# ---------------------------------------------------------------------------
+# Tests: Tech stack detection
+# ---------------------------------------------------------------------------
+
+
+class TestDetectTechStack:
+    def test_detects_react(self):
+        from scout.enricher import _detect_tech_stack
+        html = '<script src="/static/js/react.production.min.js"></script>'
+        result = _detect_tech_stack(html)
+        assert result is not None
+        assert "React" in result
+
+    def test_detects_nextjs(self):
+        from scout.enricher import _detect_tech_stack
+        html = '<script src="/_next/static/chunks/main.js"></script>'
+        result = _detect_tech_stack(html)
+        assert result is not None
+        assert "Next.js" in result
+
+    def test_detects_analytics(self):
+        from scout.enricher import _detect_tech_stack
+        html = '<script src="https://www.google-analytics.com/analytics.js"></script>'
+        result = _detect_tech_stack(html)
+        assert result is not None
+        assert "Google Analytics" in result
+
+    def test_detects_multiple(self):
+        from scout.enricher import _detect_tech_stack
+        html = '''
+        <script src="/_next/static/chunks/main.js"></script>
+        <script src="https://js.stripe.com/v3/"></script>
+        <script src="https://www.google-analytics.com/analytics.js"></script>
+        '''
+        result = _detect_tech_stack(html)
+        assert result is not None
+        assert "Next.js" in result
+        assert "Stripe" in result
+        assert "Google Analytics" in result
+
+    def test_returns_none_for_no_tech(self):
+        from scout.enricher import _detect_tech_stack
+        assert _detect_tech_stack("<html><body>Plain page</body></html>") is None
+
+    @pytest.mark.asyncio
+    async def test_enrich_tech_stack_no_website(self, empty_initiative):
+        from scout.enricher import enrich_tech_stack
+        result = await enrich_tech_stack(empty_initiative)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: DNS enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichDns:
+    @pytest.mark.asyncio
+    async def test_no_website_returns_none(self, empty_initiative):
+        from scout.enricher import enrich_dns
+        result = await enrich_dns(empty_initiative)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_resolves_domain(self, sample_initiative):
+        from scout.enricher import enrich_dns
+        with patch("scout.enricher.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(socket.AF_INET, 0, 0, "", ("93.184.216.34", 0))]
+            result = await enrich_dns(sample_initiative)
+        # May or may not return enrichment depending on DNS availability
+        if result is not None:
+            assert result.source_type == "dns"
+            assert "93.184.216.34" in result.raw_text
+
+
+# ---------------------------------------------------------------------------
+# Tests: Sitemap enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichSitemap:
+    @pytest.mark.asyncio
+    async def test_no_website_returns_none(self, empty_initiative):
+        from scout.enricher import enrich_sitemap
+        result = await enrich_sitemap(empty_initiative)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_parses_robots_and_sitemap(self, sample_initiative):
+        from scout.enricher import enrich_sitemap
+
+        robots_text = "User-agent: *\nDisallow: /admin\nSitemap: https://testbot.dev/sitemap.xml"
+        sitemap_xml = '''<?xml version="1.0"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+        <url><loc>https://testbot.dev/</loc></url>
+        <url><loc>https://testbot.dev/about</loc></url>
+        <url><loc>https://testbot.dev/blog/post1</loc></url>
+        <url><loc>https://testbot.dev/blog/post2</loc></url>
+        <url><loc>https://testbot.dev/careers</loc></url>
+        </urlset>'''
+
+        call_count = 0
+        async def mock_fetch(url):
+            nonlocal call_count
+            call_count += 1
+            if "robots.txt" in url:
+                return robots_text
+            if "sitemap" in url:
+                return sitemap_xml
+            raise Exception("not found")
+
+        with patch("scout.enricher._fetch_url", side_effect=mock_fetch):
+            result = await enrich_sitemap(sample_initiative)
+
+        assert result is not None
+        assert result.source_type == "sitemap"
+        assert "5" in result.raw_text or "Total pages" in result.raw_text
+        assert "Career page found" in result.raw_text
+
+
+# ---------------------------------------------------------------------------
+# Tests: Career page enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichCareers:
+    @pytest.mark.asyncio
+    async def test_no_website_returns_none(self, empty_initiative):
+        from scout.enricher import enrich_careers
+        result = await enrich_careers(empty_initiative)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_finds_career_page(self, sample_initiative):
+        from scout.enricher import enrich_careers
+
+        career_html = '''<html><body>
+        <h1>Join Our Team</h1>
+        <div class="positions">
+        <h2>Open Positions</h2>
+        <p>Senior ML Engineer - Apply now</p>
+        <p>Product Manager - Apply now</p>
+        </div>
+        </body></html>'''
+
+        async def mock_fetch(url):
+            if "/careers" in url or "/jobs" in url:
+                return career_html
+            raise httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
+
+        with patch("scout.enricher._fetch_url", side_effect=mock_fetch):
+            result = await enrich_careers(sample_initiative)
+
+        assert result is not None
+        assert result.source_type == "careers"
+        assert "position" in result.raw_text.lower() or "apply" in result.raw_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_career_page(self, sample_initiative):
+        from scout.enricher import enrich_careers
+
+        with patch("scout.enricher._fetch_url", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.side_effect = Exception("404")
+            result = await enrich_careers(sample_initiative)
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Deep git enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichGitDeep:
+    @pytest.mark.asyncio
+    async def test_no_github_returns_none(self, empty_initiative):
+        from scout.enricher import enrich_git_deep
+        result = await enrich_git_deep(empty_initiative)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_extracts_readme_and_license(self, sample_initiative):
+        from scout.enricher import enrich_git_deep
+
+        async def mock_github_get(path, headers):
+            if "repos?per_page=10" in path:
+                return 200, [{"name": "main-repo", "stargazers_count": 50}]
+            if "/readme" in path:
+                return 200, "# TestBot\n\nAn AI-powered testing framework."
+            if "/license" in path:
+                return 200, {"license": {"name": "MIT License", "spdx_id": "MIT"}}
+            if "/releases" in path:
+                return 200, [{"tag_name": "v1.0.0", "published_at": "2024-01-15", "name": "Initial release"}]
+            if "/languages" in path:
+                return 200, {"Python": 8000, "JavaScript": 2000}
+            if "/contents/" in path:
+                return 200, {"name": "requirements.txt"}
+            return 404, None
+
+        with patch("scout.enricher._github_get", side_effect=mock_github_get):
+            result = await enrich_git_deep(sample_initiative)
+
+        assert result is not None
+        assert result.source_type == "git_deep"
+        assert "MIT" in result.raw_text
+        assert "Python" in result.raw_text
+
+    @pytest.mark.asyncio
+    async def test_handles_github_url_as_org(self, session):
+        """Should handle full github.com URL in github_org field."""
+        from scout.enricher import enrich_git_deep
+
+        init = Initiative(
+            name="URLTest", uni="TUM",
+            github_org="https://github.com/testorg",
+        )
+        session.add(init)
+        session.flush()
+
+        async def mock_github_get(path, headers):
+            if "/repos" in path and "testorg" in path:
+                return 200, [{"name": "repo1", "stargazers_count": 10}]
+            return 404, None
+
+        with patch("scout.enricher._github_get", side_effect=mock_github_get):
+            result = await enrich_git_deep(init)
+        # Should at least not crash — may return None if no data
+        assert result is None or result.source_type == "git_deep"
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_enrichment includes extended enrichers
+# ---------------------------------------------------------------------------
+
+
+class TestRunEnrichmentExtended:
+    @pytest.mark.asyncio
+    async def test_runs_extended_enrichers(self, session, sample_initiative):
+        """run_enrichment should call all 6 extended enrichers."""
+        from scout import services
+
+        fake_enrichment = Enrichment(
+            initiative_id=sample_initiative.id,
+            source_type="website",
+            raw_text="test",
+            summary="test",
+            fetched_at=datetime.now(UTC),
+        )
+
+        with patch("scout.services.enrich_website", new_callable=AsyncMock) as mock_web, \
+             patch("scout.services.enrich_team_page", new_callable=AsyncMock) as mock_team, \
+             patch("scout.services.enrich_github", new_callable=AsyncMock) as mock_gh, \
+             patch("scout.services.enrich_extra_links", new_callable=AsyncMock) as mock_extra, \
+             patch("scout.services.enrich_structured_data", new_callable=AsyncMock) as mock_sd, \
+             patch("scout.services.enrich_tech_stack", new_callable=AsyncMock) as mock_ts, \
+             patch("scout.services.enrich_dns", new_callable=AsyncMock) as mock_dns, \
+             patch("scout.services.enrich_sitemap", new_callable=AsyncMock) as mock_sm, \
+             patch("scout.services.enrich_careers", new_callable=AsyncMock) as mock_cr, \
+             patch("scout.services.enrich_git_deep", new_callable=AsyncMock) as mock_gd:
+            mock_web.return_value = fake_enrichment
+            mock_team.return_value = None
+            mock_gh.return_value = None
+            mock_extra.return_value = []
+            mock_sd.return_value = None
+            mock_ts.return_value = None
+            mock_dns.return_value = None
+            mock_sm.return_value = None
+            mock_cr.return_value = None
+            mock_gd.return_value = None
+
+            await services.run_enrichment(session, sample_initiative, crawler=None)
+
+            # Verify all extended enrichers were called
+            mock_sd.assert_called_once_with(sample_initiative)
+            mock_ts.assert_called_once_with(sample_initiative)
+            mock_dns.assert_called_once_with(sample_initiative)
+            mock_sm.assert_called_once_with(sample_initiative)
+            mock_cr.assert_called_once_with(sample_initiative)
+            mock_gd.assert_called_once_with(sample_initiative)

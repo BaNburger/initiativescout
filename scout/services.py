@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from scout.enricher import (
     discover_urls, enrich_extra_links, enrich_github, enrich_team_page, enrich_website,
+    enrich_structured_data, enrich_tech_stack, enrich_dns, enrich_sitemap,
+    enrich_careers, enrich_git_deep,
 )
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
 from scout.scorer import LLMClient, score_initiative, score_project
@@ -654,6 +656,25 @@ async def run_enrichment(
         new_enrichments.extend(extras)
     except Exception as exc:
         log.warning("Extra links enrichment failed for %s: %s", init.name, exc)
+
+    # Extended enrichers — lightweight, no external APIs needed
+    extended_results = await asyncio.gather(
+        enrich_structured_data(init),
+        enrich_tech_stack(init),
+        enrich_dns(init),
+        enrich_sitemap(init),
+        enrich_careers(init),
+        enrich_git_deep(init),
+        return_exceptions=True,
+    )
+    extended_labels = (
+        "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
+    )
+    for label, result in zip(extended_labels, extended_results):
+        if isinstance(result, Exception):
+            log.warning("Extended enrichment failed (%s) for %s: %s", label, init.name, result)
+        elif result:
+            new_enrichments.append(result)
 
     if new_enrichments:
         session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))

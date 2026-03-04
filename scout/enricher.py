@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json as json_mod
 import logging
 import os
 import re
+import socket
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -494,6 +496,571 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
                 break
 
     return discovered
+
+
+# ---------------------------------------------------------------------------
+# Structured data extraction (JSON-LD, OpenGraph, meta tags)
+# ---------------------------------------------------------------------------
+
+
+def _extract_structured_data(raw_html: str) -> str | None:
+    """Extract JSON-LD, OpenGraph, and meta tags from HTML.
+
+    Returns a text summary of structured data found, or None.
+    """
+    try:
+        cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
+        tree = lxml_html.fromstring(cleaned)
+    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
+        return None
+
+    lines: list[str] = []
+
+    # JSON-LD (Schema.org)
+    for script in tree.xpath('//script[@type="application/ld+json"]'):
+        text = (script.text or "").strip()
+        if not text:
+            continue
+        try:
+            data = json_mod.loads(text)
+            items = data if isinstance(data, list) else [data]
+            for item in items[:3]:
+                if not isinstance(item, dict):
+                    continue
+                ld_type = item.get("@type", "")
+                if ld_type:
+                    lines.append(f"Schema.org type: {ld_type}")
+                for key in ("name", "description", "url", "foundingDate",
+                            "numberOfEmployees", "address", "sameAs",
+                            "founder", "email", "telephone", "logo",
+                            "areaServed", "knowsAbout", "memberOf"):
+                    val = item.get(key)
+                    if val:
+                        if isinstance(val, list):
+                            val = ", ".join(str(v) for v in val[:5])
+                        elif isinstance(val, dict):
+                            val = val.get("name") or val.get("value") or str(val)[:200]
+                        lines.append(f"  {key}: {str(val)[:300]}")
+        except (json_mod.JSONDecodeError, TypeError):
+            continue
+
+    # OpenGraph tags
+    og_tags = tree.xpath('//meta[starts-with(@property, "og:")]')
+    for tag in og_tags:
+        prop = (tag.get("property") or "")[3:]  # strip "og:"
+        content = (tag.get("content") or "").strip()
+        if prop and content:
+            lines.append(f"OG {prop}: {content[:300]}")
+
+    # Twitter card tags
+    tw_tags = tree.xpath('//meta[starts-with(@name, "twitter:")]')
+    for tag in tw_tags:
+        name = (tag.get("name") or "")[8:]  # strip "twitter:"
+        content = (tag.get("content") or "").strip()
+        if name and content and name not in ("card",):
+            lines.append(f"Twitter {name}: {content[:300]}")
+
+    # Additional meta tags
+    for meta_name in ("author", "keywords", "generator", "geo.region",
+                      "geo.placename", "geo.position"):
+        vals = tree.xpath(f'//meta[@name="{meta_name}"]/@content')
+        for val in vals:
+            if val and val.strip():
+                lines.append(f"Meta {meta_name}: {val.strip()[:200]}")
+
+    return "\n".join(lines) if lines else None
+
+
+async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
+    """Extract JSON-LD, OpenGraph, and meta tags from the initiative's website.
+
+    This piggybacks on the website HTML — no extra HTTP request needed when
+    called after enrich_website, but works standalone too.
+    """
+    url = (initiative.website or "").strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    try:
+        raw_html = await _fetch_url(url)
+    except Exception as exc:
+        log.warning("Structured data fetch failed for %s: %s", url, exc)
+        return None
+
+    text = _extract_structured_data(raw_html)
+    if not text:
+        return None
+
+    return Enrichment(
+        initiative_id=initiative.id,
+        source_type="structured_data",
+        source_url=url,
+        raw_text=text[:_MAX_TEXT],
+        summary=text[:1500],
+        fetched_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Technology stack detection (DIY BuiltWith)
+# ---------------------------------------------------------------------------
+
+# Maps regex patterns to technology names — checked against HTML source
+_TECH_FINGERPRINTS: list[tuple[str, str, str]] = [
+    # (category, name, pattern)
+    # Frameworks
+    ("framework", "React", r'react(?:\.production|\.development|dom)'),
+    ("framework", "Next.js", r'(?:_next/static|__next|next/dist)'),
+    ("framework", "Vue.js", r'(?:vue\.(?:min\.)?js|__vue__|v-cloak)'),
+    ("framework", "Nuxt.js", r'(?:_nuxt/|__nuxt)'),
+    ("framework", "Angular", r'(?:ng-version|angular(?:\.min)?\.js)'),
+    ("framework", "Svelte", r'(?:svelte-[\w]+|__svelte)'),
+    ("framework", "WordPress", r'(?:wp-content|wp-includes|wordpress)'),
+    ("framework", "Shopify", r'(?:cdn\.shopify\.com|Shopify\.theme)'),
+    ("framework", "Webflow", r'(?:webflow\.com|wf-page)'),
+    ("framework", "Wix", r'(?:wix\.com|wixstatic\.com)'),
+    ("framework", "Squarespace", r'(?:squarespace\.com|sqsp)'),
+    ("framework", "Ghost", r'(?:ghost\.(?:io|org)|ghost-(?:url|api))'),
+    ("framework", "Hugo", r'(?:gohugo\.io|powered.*hugo)'),
+    ("framework", "Gatsby", r'gatsby'),
+    ("framework", "Django", r'(?:csrfmiddlewaretoken|django)'),
+    ("framework", "Ruby on Rails", r'(?:csrf-token.*authenticity|rails-ujs)'),
+    ("framework", "Laravel", r'(?:laravel|XSRF-TOKEN)'),
+    # Analytics
+    ("analytics", "Google Analytics", r'(?:google-analytics\.com|gtag|googletagmanager)'),
+    ("analytics", "Plausible", r'plausible\.io'),
+    ("analytics", "Matomo", r'(?:matomo|piwik)'),
+    ("analytics", "Mixpanel", r'mixpanel'),
+    ("analytics", "Hotjar", r'hotjar'),
+    ("analytics", "PostHog", r'posthog'),
+    # Marketing & engagement
+    ("marketing", "HubSpot", r'(?:hubspot|hs-scripts|hbspt)'),
+    ("marketing", "Intercom", r'(?:intercom|intercomSettings)'),
+    ("marketing", "Drift", r'drift\.com'),
+    ("marketing", "Crisp", r'crisp\.chat'),
+    ("marketing", "Mailchimp", r'mailchimp'),
+    ("marketing", "Typeform", r'typeform'),
+    # Payments
+    ("payments", "Stripe", r'(?:stripe\.com/v|Stripe\()'),
+    ("payments", "PayPal", r'paypal'),
+    # Infrastructure
+    ("infrastructure", "Cloudflare", r'(?:cloudflare|cf-ray)'),
+    ("infrastructure", "Vercel", r'(?:vercel|\.vercel\.app)'),
+    ("infrastructure", "Netlify", r'(?:netlify)'),
+    ("infrastructure", "Heroku", r'heroku'),
+    ("infrastructure", "Firebase", r'(?:firebase|firebaseapp)'),
+]
+
+
+def _detect_tech_stack(raw_html: str) -> str | None:
+    """Detect technologies from HTML source code fingerprints."""
+    if not raw_html:
+        return None
+
+    found: dict[str, list[str]] = {}  # category -> [names]
+    html_lower = raw_html.lower()
+
+    for category, name, pattern in _TECH_FINGERPRINTS:
+        if re.search(pattern, html_lower, re.IGNORECASE):
+            found.setdefault(category, []).append(name)
+
+    if not found:
+        return None
+
+    lines: list[str] = ["DETECTED TECHNOLOGY STACK:"]
+    for category, names in sorted(found.items()):
+        lines.append(f"  {category}: {', '.join(names)}")
+
+    return "\n".join(lines)
+
+
+async def enrich_tech_stack(initiative: Initiative) -> Enrichment | None:
+    """Detect the technology stack from the initiative's website HTML."""
+    url = (initiative.website or "").strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    try:
+        raw_html = await _fetch_url(url)
+    except Exception as exc:
+        log.warning("Tech stack detection failed for %s: %s", url, exc)
+        return None
+
+    text = _detect_tech_stack(raw_html)
+    if not text:
+        return None
+
+    return Enrichment(
+        initiative_id=initiative.id,
+        source_type="tech_stack",
+        source_url=url,
+        raw_text=text[:_MAX_TEXT],
+        summary=text[:1500],
+        fetched_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# DNS enrichment (MX records, TXT records)
+# ---------------------------------------------------------------------------
+
+
+async def _dns_lookup(domain: str) -> str | None:
+    """Perform DNS lookups for MX and TXT records using socket.
+
+    Uses asyncio.to_thread for non-blocking resolution.
+    """
+    lines: list[str] = [f"DNS ENRICHMENT: {domain}"]
+
+    # MX records via socket.getaddrinfo doesn't do MX, use asyncio DNS
+    try:
+        loop = asyncio.get_running_loop()
+
+        # A record — check if domain resolves
+        try:
+            addrs = await asyncio.to_thread(socket.getaddrinfo, domain, None, socket.AF_INET)
+            if addrs:
+                ips = {a[4][0] for a in addrs}
+                lines.append(f"  Resolves to: {', '.join(sorted(ips)[:3])}")
+        except socket.gaierror:
+            lines.append("  Domain does not resolve (no A record)")
+            return "\n".join(lines) if len(lines) > 1 else None
+
+        # Try to detect mail provider via common MX patterns
+        try:
+            import dns.resolver  # type: ignore[import-untyped]
+            mx_records = await asyncio.to_thread(
+                lambda: list(dns.resolver.resolve(domain, "MX"))
+            )
+            mx_hosts = [str(r.exchange).rstrip(".").lower() for r in mx_records]
+            lines.append(f"  MX records: {', '.join(mx_hosts[:5])}")
+            # Identify email provider
+            mx_str = " ".join(mx_hosts)
+            if "google" in mx_str or "gmail" in mx_str:
+                lines.append("  Email provider: Google Workspace")
+            elif "outlook" in mx_str or "microsoft" in mx_str:
+                lines.append("  Email provider: Microsoft 365")
+            elif "zoho" in mx_str:
+                lines.append("  Email provider: Zoho Mail")
+            elif "protonmail" in mx_str or "proton" in mx_str:
+                lines.append("  Email provider: ProtonMail")
+        except ImportError:
+            pass  # dnspython not installed — skip MX
+        except Exception:
+            pass  # domain may not have MX
+
+        # TXT records (SPF, verification tokens)
+        try:
+            import dns.resolver  # type: ignore[import-untyped]
+            txt_records = await asyncio.to_thread(
+                lambda: list(dns.resolver.resolve(domain, "TXT"))
+            )
+            for rdata in txt_records[:10]:
+                txt = str(rdata).strip('"')
+                if txt.startswith("v=spf"):
+                    lines.append(f"  SPF: {txt[:200]}")
+                elif "google-site-verification" in txt:
+                    lines.append("  Verified: Google Search Console")
+                elif "facebook-domain-verification" in txt:
+                    lines.append("  Verified: Facebook/Meta")
+                elif "MS=" in txt:
+                    lines.append("  Verified: Microsoft")
+                elif "_dmarc" in txt or "v=DMARC" in txt.upper():
+                    lines.append("  DMARC: configured")
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    except Exception as exc:
+        log.debug("DNS lookup failed for %s: %s", domain, exc)
+        return None
+
+    return "\n".join(lines) if len(lines) > 1 else None
+
+
+async def enrich_dns(initiative: Initiative) -> Enrichment | None:
+    """Look up DNS records (MX, TXT) for the initiative's domain."""
+    url = (initiative.website or "").strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    domain = urlparse(url).netloc
+    if not domain:
+        return None
+    # Strip www prefix
+    if domain.startswith("www."):
+        domain = domain[4:]
+
+    text = await _dns_lookup(domain)
+    if not text:
+        return None
+
+    return Enrichment(
+        initiative_id=initiative.id,
+        source_type="dns",
+        source_url=url,
+        raw_text=text[:_MAX_TEXT],
+        summary=text[:1500],
+        fetched_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sitemap / robots.txt enrichment
+# ---------------------------------------------------------------------------
+
+
+async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
+    """Parse robots.txt and sitemap.xml for site structure signals."""
+    url = (initiative.website or "").strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    lines: list[str] = [f"SITE STRUCTURE: {parsed.netloc}"]
+
+    # robots.txt
+    try:
+        robots_text = await _fetch_url(f"{base}/robots.txt")
+        if robots_text and "user-agent" in robots_text.lower():
+            disallowed = re.findall(r"Disallow:\s*(\S+)", robots_text, re.IGNORECASE)
+            sitemaps = re.findall(r"Sitemap:\s*(\S+)", robots_text, re.IGNORECASE)
+            if disallowed:
+                lines.append(f"  Disallowed paths: {len(disallowed)}")
+                for p in disallowed[:10]:
+                    lines.append(f"    {p}")
+            if sitemaps:
+                lines.append(f"  Sitemap URLs declared: {len(sitemaps)}")
+    except Exception:
+        pass
+
+    # sitemap.xml
+    sitemap_urls = [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml"]
+    page_count = 0
+    page_types: dict[str, int] = {}  # path prefix -> count
+
+    for sitemap_url in sitemap_urls:
+        try:
+            sitemap_text = await _fetch_url(sitemap_url)
+            if not sitemap_text or "<urlset" not in sitemap_text.lower() and "<sitemapindex" not in sitemap_text.lower():
+                continue
+            # Count URLs in sitemap
+            urls_found = re.findall(r"<loc>([^<]+)</loc>", sitemap_text)
+            page_count += len(urls_found)
+            # Categorize by path prefix
+            for found_url in urls_found[:500]:
+                path = urlparse(found_url).path.strip("/")
+                prefix = path.split("/")[0] if path else "root"
+                page_types[prefix] = page_types.get(prefix, 0) + 1
+            break  # got a valid sitemap
+        except Exception:
+            continue
+
+    if page_count:
+        lines.append(f"  Total pages in sitemap: {page_count}")
+        if page_types:
+            # Top sections by page count
+            sorted_types = sorted(page_types.items(), key=lambda x: x[1], reverse=True)
+            lines.append("  Site sections:")
+            for prefix, count in sorted_types[:10]:
+                lines.append(f"    /{prefix}: {count} pages")
+
+    # Identify career/job pages
+    for found_url in re.findall(r"<loc>([^<]+)</loc>", sitemap_text if page_count else ""):
+        path_lower = found_url.lower()
+        if any(kw in path_lower for kw in ("career", "job", "stellen", "hiring", "join")):
+            lines.append(f"  Career page found: {found_url}")
+            break
+
+    return Enrichment(
+        initiative_id=initiative.id,
+        source_type="sitemap",
+        source_url=f"{base}/sitemap.xml",
+        raw_text="\n".join(lines)[:_MAX_TEXT],
+        summary="\n".join(lines)[:1500],
+        fetched_at=datetime.now(UTC),
+    ) if len(lines) > 1 else None
+
+
+# ---------------------------------------------------------------------------
+# Career/job page enrichment
+# ---------------------------------------------------------------------------
+
+_CAREER_PATH_PATTERNS = [
+    "/careers", "/jobs", "/join", "/join-us", "/hiring",
+    "/karriere", "/stellen", "/work-with-us", "/open-positions",
+    "/team/join", "/about/careers",
+]
+
+
+async def enrich_careers(initiative: Initiative) -> Enrichment | None:
+    """Discover and parse career/job pages for growth signals."""
+    url = (initiative.website or "").strip()
+    if not url:
+        return None
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    # Try common career page paths
+    for path in _CAREER_PATH_PATTERNS:
+        career_url = f"{base}{path}"
+        try:
+            raw_html = await _fetch_url(career_url)
+            if not raw_html:
+                continue
+            text = _extract_text(raw_html)
+            if not text or len(text) < 50:
+                continue
+
+            # Basic validation: does it look like a careers page?
+            text_lower = text.lower()
+            if not any(kw in text_lower for kw in (
+                "position", "role", "apply", "job", "career",
+                "hiring", "team", "stelle", "bewerb",
+            )):
+                continue
+
+            lines = [f"CAREER PAGE: {career_url}", text[:_MAX_TEXT - 200]]
+            full_text = "\n".join(lines)
+
+            return Enrichment(
+                initiative_id=initiative.id,
+                source_type="careers",
+                source_url=career_url,
+                raw_text=full_text[:_MAX_TEXT],
+                summary=full_text[:1500],
+                fetched_at=datetime.now(UTC),
+            )
+        except Exception:
+            continue
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Deep Git enrichment (README, dependencies, releases, license)
+# ---------------------------------------------------------------------------
+
+
+async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
+    """Extract deeper GitHub signals: README, deps, license, releases."""
+    org = (initiative.github_org or "").strip()
+    if not org:
+        return None
+
+    if "github.com" in org:
+        parts = org.split("github.com")[-1].strip("/").split("/")
+        org = parts[0] if parts else ""
+    if not org:
+        return None
+
+    repos_text = (initiative.key_repos or "").strip()
+    repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": _USER_AGENT}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    lines: list[str] = [f"DEEP GIT ANALYSIS: {org}"]
+
+    # If no specific repo, find the most starred one
+    if not repo:
+        status, repos_data = await _github_get(f"/orgs/{org}/repos?per_page=10&sort=stars", headers)
+        if status == 404:
+            status, repos_data = await _github_get(f"/users/{org}/repos?per_page=10&sort=stars", headers)
+        if status == 200 and isinstance(repos_data, list) and repos_data:
+            repo = repos_data[0].get("name", "")
+
+    if not repo:
+        return None
+
+    # Parallel fetch: README, license, releases, languages, package files
+    readme_task = _github_get(f"/repos/{org}/{repo}/readme", {**headers, "Accept": "application/vnd.github.raw"})
+    license_task = _github_get(f"/repos/{org}/{repo}/license", headers)
+    releases_task = _github_get(f"/repos/{org}/{repo}/releases?per_page=10", headers)
+    langs_task = _github_get(f"/repos/{org}/{repo}/languages", headers)
+
+    (s_readme, readme), (s_lic, lic), (s_rel, releases), (s_lang, langs) = await asyncio.gather(
+        readme_task, license_task, releases_task, langs_task,
+    )
+
+    # README content
+    if s_readme == 200 and readme:
+        readme_text = str(readme) if not isinstance(readme, (dict, list)) else ""
+        if isinstance(readme, dict):
+            readme_text = readme.get("content", "") or readme.get("body", "")
+            # GitHub raw returns the text directly when Accept: raw
+        if readme_text:
+            lines.append(f"\nREADME ({org}/{repo}):")
+            lines.append(readme_text[:3000])
+
+    # License
+    if s_lic == 200 and isinstance(lic, dict):
+        lic_info = lic.get("license", {})
+        lic_name = lic_info.get("name") or lic_info.get("spdx_id") or "Unknown"
+        lines.append(f"\nLicense: {lic_name}")
+
+    # Releases
+    if s_rel == 200 and isinstance(releases, list) and releases:
+        lines.append(f"\nReleases: {len(releases)} (showing latest)")
+        for rel in releases[:3]:
+            tag = rel.get("tag_name", "?")
+            date = (rel.get("published_at") or "")[:10]
+            name = rel.get("name", "")
+            lines.append(f"  {tag} ({date}): {name[:100]}")
+
+    # Languages
+    if s_lang == 200 and isinstance(langs, dict) and langs:
+        total = sum(langs.values())
+        lang_pcts = [(k, round(v / total * 100, 1)) for k, v in
+                     sorted(langs.items(), key=lambda x: x[1], reverse=True)[:5]]
+        lines.append(f"\nLanguages: {', '.join(f'{k} ({v}%)' for k, v in lang_pcts)}")
+
+    # Dependency files — check for common package manifests
+    dep_files = [
+        ("package.json", "Node.js"),
+        ("requirements.txt", "Python"),
+        ("pyproject.toml", "Python"),
+        ("Cargo.toml", "Rust"),
+        ("go.mod", "Go"),
+        ("pom.xml", "Java/Maven"),
+        ("build.gradle", "Java/Gradle"),
+        ("Gemfile", "Ruby"),
+    ]
+    found_deps: list[str] = []
+    dep_tasks = [_github_get(f"/repos/{org}/{repo}/contents/{f}", headers) for f, _ in dep_files]
+    dep_results = await asyncio.gather(*dep_tasks, return_exceptions=True)
+    for (filename, ecosystem), result in zip(dep_files, dep_results):
+        if isinstance(result, tuple) and result[0] == 200:
+            found_deps.append(f"{ecosystem} ({filename})")
+    if found_deps:
+        lines.append(f"\nDependency ecosystems: {', '.join(found_deps)}")
+
+    if len(lines) <= 1:
+        return None
+
+    text = "\n".join(lines)
+    return Enrichment(
+        initiative_id=initiative.id,
+        source_type="git_deep",
+        source_url=f"https://github.com/{org}/{repo}",
+        raw_text=text[:_MAX_TEXT],
+        summary=text[:1500],
+        fetched_at=datetime.now(UTC),
+    )
 
 
 # ---------------------------------------------------------------------------
