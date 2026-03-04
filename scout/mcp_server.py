@@ -6,7 +6,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -22,7 +22,6 @@ from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import (
     ENTITY_CONFIG, GRADE_MAP, VALID_GRADES, Grade,
     LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
-    compute_data_gaps, compute_score, compute_verdict,
     create_score_from_grades, default_prompts_for, valid_classifications,
 )
 from scout.utils import json_parse
@@ -929,7 +928,7 @@ async def process_queue(
         enrich_failures = []
 
     failed_ids = {f["id"] for f in enrich_failures}
-    score_ids = score_only_ids + [i for i in enrich_ids if i not in failed_ids] if enrich else score_only_ids
+    score_ids = (score_only_ids + [i for i in enrich_ids if i not in failed_ids]) if enrich else score_only_ids
 
     # Step 2: Score
     if score and score_ids:
@@ -1196,7 +1195,7 @@ async def manage_project(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_DESTRUCTIVE)
+@mcp.tool(annotations=_WRITE)
 def manage_database(
     action: str,
     name: str | None = None,

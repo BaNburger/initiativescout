@@ -95,6 +95,16 @@ def _patch_db(SessionFactory):
         yield
 
 
+@pytest.fixture()
+def _patch_llm():
+    """Patch LLMClient and set a fake API key for tests that trigger scoring."""
+    with (
+        patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
+        patch("scout.mcp_server.LLMClient"),
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # _check_api_key tests
 # ---------------------------------------------------------------------------
@@ -323,7 +333,7 @@ class TestBatchScore:
         assert "ANTHROPIC_API_KEY" in result["error"]
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_compact_response_no_reasoning(self, enriched_initiatives):
         """Results should NOT contain reasoning, evidence, or contact details."""
         from scout.mcp_server import batch_score
@@ -331,10 +341,7 @@ class TestBatchScore:
         async def _fake_run_scoring(session, init, client=None, **kwargs):
             return _fake_score(init.id)
 
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
-            patch("scout.mcp_server.services.run_scoring", side_effect=_fake_run_scoring),
-        ):
+        with patch("scout.mcp_server.services.run_scoring", side_effect=_fake_run_scoring):
             ids_str = ",".join(str(i.id) for i in enriched_initiatives[:1])
             result = await batch_score(initiative_ids=ids_str, limit=20)
 
@@ -349,22 +356,19 @@ class TestBatchScore:
         assert "engagement_hook" not in item
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_auto_select_empty_queue(self):
         """When no items need scoring, returns early."""
         from scout.mcp_server import batch_score
 
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
-            patch("scout.mcp_server.services.get_work_queue", return_value=[]),
-        ):
+        with patch("scout.mcp_server.services.get_work_queue", return_value=[]):
             result = await batch_score(initiative_ids=None, limit=20)
 
         assert result["processed"] == 0
         assert "hint" in result
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_verdict_summary(self, enriched_initiatives):
         """Result should include a summary of verdict counts."""
         from scout.mcp_server import batch_score
@@ -378,10 +382,7 @@ class TestBatchScore:
             call_idx[0] += 1
             return _fake_score(init.id, verdict=v, score=s)
 
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
-            patch("scout.mcp_server.services.run_scoring", side_effect=_varied_scoring),
-        ):
+        with patch("scout.mcp_server.services.run_scoring", side_effect=_varied_scoring):
             ids_str = ",".join(str(i.id) for i in enriched_initiatives)
             result = await batch_score(initiative_ids=ids_str, limit=20)
 
@@ -391,7 +392,7 @@ class TestBatchScore:
         assert result["summary"]["monitor"] == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_error_isolation(self, enriched_initiatives):
         """One scoring failure should not stop the batch."""
         from scout.mcp_server import batch_score
@@ -404,10 +405,7 @@ class TestBatchScore:
                 raise RuntimeError("API rate limited")
             return _fake_score(init.id)
 
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
-            patch("scout.mcp_server.services.run_scoring", side_effect=_flaky_scoring),
-        ):
+        with patch("scout.mcp_server.services.run_scoring", side_effect=_flaky_scoring):
             ids_str = ",".join(str(i.id) for i in enriched_initiatives)
             result = await batch_score(initiative_ids=ids_str, limit=20)
 
@@ -466,13 +464,12 @@ class TestProcessQueue:
         assert "warning" in result
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_empty_queue(self):
         """Empty queue returns immediately."""
         from scout.mcp_server import process_queue
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
             patch("scout.mcp_server.services.get_work_queue", return_value=[]),
             patch("scout.mcp_server.services.compute_stats", return_value={
                 "total": 10, "scored": 10, "enriched": 10,
@@ -486,7 +483,7 @@ class TestProcessQueue:
         assert "empty" in result["hint"].lower()
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_enrich_then_score(self, three_initiatives):
         """Items needing enrichment should be enriched first, then scored."""
         from scout.mcp_server import process_queue
@@ -498,7 +495,6 @@ class TestProcessQueue:
             return _fake_score(init.id, verdict="monitor", score=2.5)
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
             patch("scout.mcp_server.services.get_work_queue", return_value=[
                 {"id": three_initiatives[0].id, "name": "Alpha",
                  "needs_enrichment": True, "needs_scoring": True},
@@ -555,7 +551,7 @@ class TestProcessQueue:
         assert result["scoring"] is None
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("_patch_db")
+    @pytest.mark.usefixtures("_patch_db", "_patch_llm")
     async def test_enrich_only_when_needed(self, enriched_initiatives):
         """Items already enriched should go straight to scoring."""
         from scout.mcp_server import process_queue
@@ -564,7 +560,6 @@ class TestProcessQueue:
             return _fake_score(init.id)
 
         with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}),
             patch("scout.mcp_server.services.get_work_queue", return_value=[
                 {"id": enriched_initiatives[0].id, "name": "Alpha",
                  "needs_enrichment": False, "needs_scoring": True},
