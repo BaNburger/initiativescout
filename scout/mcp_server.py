@@ -391,7 +391,7 @@ def scout_overview() -> str:
             "llm_enrichment": "submit_enrichment — store data you find via web search",
             "scoring": "get_scoring_dossier, submit_score",
             "search": "find_similar",
-            "admin": "manage_project, manage_database, manage_settings",
+            "admin": "manage_project, manage_database, list_scoring_prompts, update_scoring_prompt, get_custom_columns, create_custom_column, export_initiatives, embed_all_tool, show_llm_config, configure_llm",
         },
         "performance": {
             "enrichment": f"2-10s per {cfg['label']} (web scraping).",
@@ -1272,7 +1272,7 @@ def find_similar(
         if not results:
             return _suggest(
                 {"results": []},
-                _next("manage_settings", "Build embeddings first", action="rebuild_embeddings"),
+                _next("embed_all_tool", "Build embeddings first"),
             )
 
         ids = [r[0] for r in results]
@@ -1502,215 +1502,269 @@ def manage_database(
 
 
 # ---------------------------------------------------------------------------
-# Tools: Manage Settings
+# Tools: Scoring Prompts
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_DESTRUCTIVE)
-async def manage_settings(
-    action: str,
-    # Column params
-    column_id: int | None = None, key: str | None = None, label: str | None = None,
-    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
-    # Prompt params
-    content: str | None = None,
-    # Export params
-    verdict: str | None = None, uni: str | None = None,
-    include_enrichments: bool = True, include_scores: bool = True, include_extras: bool = False,
-    # Scraper params
-    school: str | None = None, limit: int = 50,
-    # Prompt list param
-    compact: bool = False,
-    # LLM config params
-    provider: str | None = None, model: str | None = None,
-    api_key: str | None = None, base_url: str | None = None,
-) -> dict | list:
-    """Admin operations: custom columns, scoring prompts, LLM config, export, embeddings, TUM scraper.
-
-    ACTIONS:
-    - list_columns: Show custom column definitions.
-    - create_column: Create column. Requires key, label.
-    - update_column: Update column. Requires column_id.
-    - delete_column: Delete column. Requires column_id.
-    - list_prompts: Show scoring prompt definitions.
-    - update_prompt: Update prompt. Requires key ("team"/"tech"/"opportunity"), content.
-    - configure_llm: Set LLM provider/model/api_key at runtime. All params optional.
-    - show_llm_config: Show current LLM configuration (keys masked).
-    - export: Export to XLSX. Optional verdict, uni filters.
-    - rebuild_embeddings: Rebuild all dense embeddings.
-    - scrape_tum: Scrape TUM professor directory. Optional school filter, limit.
+@mcp.tool(annotations=_READ)
+def list_scoring_prompts(compact: bool = False) -> list:
+    """List scoring prompt definitions.
 
     Args:
-        action: The operation to perform (see above).
-        column_id: Custom column ID (for update_column/delete_column).
-        key: Column key or prompt key.
-        label: Column display label.
+        compact: If True, return only key/label/updated_at (omit full content).
+    """
+    with session_scope() as session:
+        prompts_list = services.get_scoring_prompts(session)
+        if compact:
+            return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
+                    for p in prompts_list]
+        return prompts_list
+
+
+@mcp.tool(annotations=_WRITE)
+def update_scoring_prompt(key: str, content: str) -> dict:
+    """Update a scoring prompt's content.
+
+    Args:
+        key: Prompt key (e.g. "team", "tech", "opportunity").
+        content: New prompt content text.
+    """
+    with session_scope() as session:
+        result = services.update_scoring_prompt(session, key, content)
+        if result is None:
+            return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
+        session.commit()
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Tools: Custom Columns
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READ)
+def get_custom_columns() -> list:
+    """List custom column definitions for the current database."""
+    with session_scope() as session:
+        return services.get_custom_columns(session, database=current_db_name())
+
+
+@mcp.tool(annotations=_WRITE)
+def create_custom_column(
+    key: str, label: str,
+    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+) -> dict:
+    """Create a custom column definition.
+
+    Args:
+        key: Unique column key (e.g. "funding_stage").
+        label: Display label (e.g. "Funding Stage").
         col_type: Column type: text, number, boolean, url.
         show_in_list: Show column in list view.
         sort_order: Column display order.
-        content: New prompt content (for update_prompt).
-        verdict: Export filter (comma-separated).
-        uni: Export filter (comma-separated).
-        include_enrichments: Include enrichments in export.
-        include_scores: Include scores in export.
-        include_extras: Include extra fields in export.
-        school: TUM school filter (CIT, ED, LS, MGT, MED, NAT).
-        limit: Scraper limit.
-        compact: For list_prompts, return only key/label/updated_at.
+    """
+    with session_scope() as session:
+        result = services.create_custom_column(
+            session, key=key, label=label, col_type=col_type,
+            show_in_list=show_in_list, sort_order=sort_order,
+            database=current_db_name(),
+        )
+        if result is None:
+            return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
+        session.commit()
+        return result
+
+
+@mcp.tool(annotations=_WRITE)
+def update_custom_column(
+    column_id: int,
+    label: str | None = None, col_type: str | None = None,
+    show_in_list: bool | None = None, sort_order: int | None = None,
+) -> dict:
+    """Update a custom column definition.
+
+    Args:
+        column_id: The column ID to update.
+        label: New display label.
+        col_type: New column type.
+        show_in_list: New visibility setting.
+        sort_order: New display order.
+    """
+    kwargs = {}
+    if label is not None:
+        kwargs["label"] = label
+    if col_type is not None:
+        kwargs["col_type"] = col_type
+    if show_in_list is not None:
+        kwargs["show_in_list"] = show_in_list
+    if sort_order is not None:
+        kwargs["sort_order"] = sort_order
+    with session_scope() as session:
+        result = services.update_custom_column(session, column_id, **kwargs)
+        if result is None:
+            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+        session.commit()
+        return result
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def delete_custom_column(column_id: int) -> dict:
+    """Delete a custom column definition.
+
+    Args:
+        column_id: The column ID to delete.
+    """
+    with session_scope() as session:
+        if not services.delete_custom_column(session, column_id):
+            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+        session.commit()
+        return {"ok": True, "deleted_column_id": column_id}
+
+
+# ---------------------------------------------------------------------------
+# Tools: Export
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READ)
+def export_initiatives(
+    verdict: str | None = None, uni: str | None = None,
+    include_enrichments: bool = True, include_scores: bool = True,
+    include_extras: bool = False,
+) -> dict:
+    """Export entities to XLSX file.
+
+    Args:
+        verdict: Filter by verdict (comma-separated, e.g. "reach_out_now,reach_out_soon").
+        uni: Filter by university (comma-separated).
+        include_enrichments: Include enrichment summary column.
+        include_scores: Include score columns.
+        include_extras: Include extra profile fields.
+    """
+    from scout.db import DATA_DIR
+    from scout.exporter import export_xlsx
+
+    with session_scope() as session:
+        buf = export_xlsx(
+            session, verdict=verdict, uni=uni,
+            include_enrichments=include_enrichments,
+            include_scores=include_scores, include_extras=include_extras,
+        )
+    db_name = current_db_name()
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"scout-{db_name}-{ts}.xlsx"
+    out_path = DATA_DIR / filename
+    out_path.write_bytes(buf.getvalue())
+    return {"ok": True, "file": str(out_path), "filename": filename}
+
+
+# ---------------------------------------------------------------------------
+# Tools: Embeddings
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+def embed_all_tool() -> dict:
+    """Build or rebuild dense embeddings for all entities (enables semantic search)."""
+    from scout.embedder import embed_all
+    with session_scope() as session:
+        try:
+            count = embed_all(session)
+        except Exception as exc:
+            return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
+        return _suggest(
+            {"ok": True, "embedded": count},
+            _next("find_similar", "Try semantic search", query=""),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tools: LLM Configuration
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READ)
+def show_llm_config() -> dict:
+    """Show current LLM provider configuration (API keys masked)."""
+    p = os.environ.get("LLM_PROVIDER", "anthropic")
+    m = os.environ.get("LLM_MODEL", "")
+    has_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+    )
+    return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
+            "base_url": os.environ.get("OPENAI_BASE_URL", "")}
+
+
+@mcp.tool(annotations=_WRITE)
+def configure_llm(
+    provider: str | None = None, model: str | None = None,
+    api_key: str | None = None, base_url: str | None = None,
+) -> dict:
+    """Set LLM provider/model/api_key at runtime.
+
+    Args:
         provider: LLM provider (anthropic, openai, openai_compatible, gemini).
         model: LLM model name.
         api_key: API key for the provider.
         base_url: Custom base URL (for openai_compatible).
     """
-    action = (action or "").strip().lower()
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider
+    if model:
+        os.environ["LLM_MODEL"] = model
+    if api_key:
+        p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
+        if p == "anthropic":
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+        elif p == "gemini":
+            os.environ["GOOGLE_API_KEY"] = api_key
+        else:
+            os.environ["OPENAI_API_KEY"] = api_key
+    if base_url:
+        os.environ["OPENAI_BASE_URL"] = base_url
+    return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
+            "model": os.environ.get("LLM_MODEL", "") or "(default)",
+            "api_key_set": bool(api_key or _check_api_key() is None)}
 
-    if action == "show_llm_config":
-        p = os.environ.get("LLM_PROVIDER", "anthropic")
-        m = os.environ.get("LLM_MODEL", "")
-        has_key = bool(
-            os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or os.environ.get("GOOGLE_API_KEY")
-            or os.environ.get("GEMINI_API_KEY")
-        )
-        return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
-                "base_url": os.environ.get("OPENAI_BASE_URL", "")}
 
-    if action == "configure_llm":
-        if provider:
-            os.environ["LLM_PROVIDER"] = provider
-        if model:
-            os.environ["LLM_MODEL"] = model
-        if api_key:
-            p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
-            if p == "anthropic":
-                os.environ["ANTHROPIC_API_KEY"] = api_key
-            elif p == "gemini":
-                os.environ["GOOGLE_API_KEY"] = api_key
-            else:
-                os.environ["OPENAI_API_KEY"] = api_key
-        if base_url:
-            os.environ["OPENAI_BASE_URL"] = base_url
-        return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
-                "model": os.environ.get("LLM_MODEL", "") or "(default)",
-                "api_key_set": bool(api_key or _check_api_key() is None)}
+# ---------------------------------------------------------------------------
+# Tools: TUM Scraper
+# ---------------------------------------------------------------------------
 
-    if action == "list_columns":
-        with session_scope() as session:
-            return services.get_custom_columns(session, database=current_db_name())
 
-    if action == "create_column":
-        if not key or not label:
-            return _error("key and label required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            result = services.create_custom_column(
-                session, key=key, label=label, col_type=col_type,
-                show_in_list=show_in_list, sort_order=sort_order,
-                database=current_db_name(),
-            )
-            if result is None:
-                return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
-            session.commit()
-            return result
+@mcp.tool(annotations=_WRITE)
+async def scrape_tum_professors(school: str | None = None, limit: int = 50) -> dict:
+    """Scrape TUM professor directory and import into the current database.
 
-    if action == "update_column":
-        if column_id is None:
-            return _error("column_id required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            result = services.update_custom_column(
-                session, column_id, label=label, col_type=col_type,
-                show_in_list=show_in_list, sort_order=sort_order,
-            )
-            if result is None:
-                return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-            session.commit()
-            return result
+    Args:
+        school: Filter by TUM school (CIT, ED, LS, MGT, MED, NAT).
+        limit: Maximum professors to import (default 50, max 500).
+    """
+    try:
+        from scout.scrapers import scrape_tum_professors as _scrape
+    except ImportError as exc:
+        return _error(f"Scraper dependency missing: {exc}", "DEPENDENCY_MISSING")
 
-    if action == "delete_column":
-        if column_id is None:
-            return _error("column_id required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            if not services.delete_custom_column(session, column_id):
-                return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-            session.commit()
-            return {"ok": True, "deleted_column_id": column_id}
+    try:
+        professors = await _scrape()
+    except Exception as exc:
+        return _error(f"Scrape failed: {exc}", "SCRAPE_ERROR", retryable=True)
 
-    # --- Scoring Prompts ---
-    if action == "list_prompts":
-        with session_scope() as session:
-            prompts_list = services.get_scoring_prompts(session)
-            if compact:
-                return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
-                        for p in prompts_list]
-            return prompts_list
+    if school:
+        professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
+    professors = professors[:max(1, min(limit, 500))]
 
-    if action == "update_prompt":
-        if not key or not content:
-            return _error("key and content required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            result = services.update_scoring_prompt(session, key, content)
-            if result is None:
-                return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
-            session.commit()
-            return result
+    with session_scope() as session:
+        result = services.import_scraped_entities(session, professors)
+        session.commit()
 
-    # --- Export ---
-    if action == "export":
-        from scout.db import DATA_DIR
-        from scout.exporter import export_xlsx
-
-        with session_scope() as session:
-            buf = export_xlsx(
-                session, verdict=verdict, uni=uni,
-                include_enrichments=include_enrichments,
-                include_scores=include_scores, include_extras=include_extras,
-            )
-        db_name = current_db_name()
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"scout-{db_name}-{ts}.xlsx"
-        out_path = DATA_DIR / filename
-        out_path.write_bytes(buf.getvalue())
-        return {"ok": True, "file": str(out_path), "filename": filename}
-
-    # --- Embeddings ---
-    if action == "rebuild_embeddings":
-        from scout.embedder import embed_all
-        with session_scope() as session:
-            try:
-                count = embed_all(session)
-            except Exception as exc:
-                return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
-            return _suggest(
-                {"ok": True, "embedded": count},
-                _next("find_similar", "Try semantic search", query=""),
-            )
-
-    # --- TUM Scraper ---
-    if action == "scrape_tum":
-        try:
-            from scout.scrapers import scrape_tum_professors as _scrape
-        except ImportError as exc:
-            return _error(f"Scraper dependency missing: {exc}", "DEPENDENCY_MISSING")
-
-        try:
-            professors = await _scrape()
-        except Exception as exc:
-            return _error(f"Scrape failed: {exc}", "SCRAPE_ERROR", retryable=True)
-
-        if school:
-            professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
-        professors = professors[:max(1, min(limit, 500))]
-
-        with session_scope() as session:
-            result = services.import_scraped_entities(session, professors)
-            session.commit()
-
-        return _suggest(
-            {**result, "total_found": len(professors)},
-            _next("process_queue", "Enrich and score imported professors"),
-        )
-
-    return _error(f"Unknown action: {action!r}.", "VALIDATION_ERROR")
+    return _suggest(
+        {**result, "total_found": len(professors)},
+        _next("process_queue", "Enrich and score imported professors"),
+    )
 
 
 # ---------------------------------------------------------------------------
