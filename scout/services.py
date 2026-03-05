@@ -207,10 +207,10 @@ def initiative_detail(init: Initiative) -> dict:
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=True),
     )
-    # Add detail fields, skipping empty defaults to keep output clean
+    # Add detail fields, skipping None/empty-string but keeping 0 and False
     for f in DETAIL_FIELDS:
         val = getattr(init, f)
-        if val is not None and val != "" and val != 0 and val is not False:
+        if val is not None and val != "":
             base[f] = val
     extra = json_parse(init.extra_links_json)
     if extra:
@@ -655,6 +655,61 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
     session.delete(col)
     session.flush()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Import helpers
+# ---------------------------------------------------------------------------
+
+
+def import_scraped_entities(
+    session: Session, entities: list[dict[str, str]],
+) -> dict[str, int]:
+    """Import a list of scraped entity dicts, deduplicating by name.
+
+    Each dict should have at least 'name', plus optional 'uni', 'faculty', 'website'.
+    Returns {"created": N, "skipped_duplicates": N}.
+    """
+    created = skipped = 0
+    for ent in entities:
+        existing = session.execute(
+            select(Initiative).where(Initiative.name == ent["name"])
+        ).scalars().first()
+        if existing:
+            skipped += 1
+            continue
+        session.add(Initiative(
+            name=ent["name"], uni=ent.get("uni", ""),
+            faculty=ent.get("faculty", ""), website=ent.get("website", ""),
+        ))
+        created += 1
+    session.flush()
+    return {"created": created, "skipped_duplicates": skipped}
+
+
+def build_similarity_id_mask(
+    session: Session,
+    uni: str | None = None,
+    verdict: str | None = None,
+) -> set[int] | None:
+    """Build an ID mask for similarity search pre-filtering.
+
+    Returns None if no filters are applied, or a set of matching initiative IDs.
+    """
+    if not uni and not verdict:
+        return None
+    q_filter = select(Initiative.id)
+    if uni:
+        us = {u.strip().upper() for u in uni.split(",")}
+        q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
+    if verdict:
+        ls = _latest_score_subquery()
+        vs = {v.strip().lower() for v in verdict.split(",")}
+        q_filter = q_filter.join(
+            ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
+        ).where(ls.c.verdict.in_(vs))
+    rows = session.execute(q_filter).scalars().all()
+    return set(rows)
 
 
 # ---------------------------------------------------------------------------

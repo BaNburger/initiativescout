@@ -1260,22 +1260,9 @@ def find_similar(
     from scout.embedder import find_similar as _find_similar
 
     with session_scope() as session:
-        id_mask = None
-        if uni or verdict:
-            q_filter = select(Initiative.id)
-            if uni:
-                us = {u.strip().upper() for u in uni.split(",")}
-                q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
-            if verdict:
-                ls = services._latest_score_subquery()
-                vs = {v.strip().lower() for v in verdict.split(",")}
-                q_filter = q_filter.join(
-                    ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
-                ).where(ls.c.verdict.in_(vs))
-            rows = session.execute(q_filter).scalars().all()
-            id_mask = set(rows)
-            if not id_mask:
-                return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
+        id_mask = services.build_similarity_id_mask(session, uni=uni, verdict=verdict)
+        if id_mask is not None and not id_mask:
+            return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
 
         results = _find_similar(
             query_text=query, initiative_id=initiative_id,
@@ -1714,26 +1701,12 @@ async def manage_settings(
             professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
         professors = professors[:max(1, min(limit, 500))]
 
-        created = 0
-        skipped = 0
         with session_scope() as session:
-            for prof in professors:
-                existing = session.execute(
-                    select(Initiative).where(Initiative.name == prof["name"])
-                ).scalars().first()
-                if existing:
-                    skipped += 1
-                    continue
-                init = Initiative(
-                    name=prof["name"], uni=prof.get("uni", "TUM"),
-                    faculty=prof.get("faculty", ""), website=prof.get("website", ""),
-                )
-                session.add(init)
-                created += 1
+            result = services.import_scraped_entities(session, professors)
             session.commit()
 
         return _suggest(
-            {"created": created, "skipped_duplicates": skipped, "total_found": len(professors)},
+            {**result, "total_found": len(professors)},
             _next("process_queue", "Enrich and score imported professors"),
         )
 

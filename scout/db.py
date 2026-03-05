@@ -44,13 +44,16 @@ def init_db(db_path: str | Path | None = None) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{db_path}"
         new_engine = create_engine(url, connect_args={"check_same_thread": False})
-        # Performance PRAGMAs — must run before any schema operations
-        with new_engine.begin() as conn:
-            conn.execute(text("PRAGMA journal_mode=WAL"))
-            conn.execute(text("PRAGMA synchronous=NORMAL"))
-            conn.execute(text("PRAGMA cache_size=10000"))      # ~40MB page cache
-            conn.execute(text("PRAGMA mmap_size=30000000"))    # 30MB memory-mapped I/O
-            conn.execute(text("PRAGMA temp_store=MEMORY"))
+
+        @event.listens_for(new_engine, "connect")
+        def _set_pragmas(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA cache_size=10000")       # ~40MB page cache
+            cursor.execute("PRAGMA mmap_size=30000000")     # 30MB memory-mapped I/O
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.close()
         Base.metadata.create_all(new_engine)
         new_factory = sessionmaker(bind=new_engine, autoflush=False, expire_on_commit=False)
         _migrate_existing_db(new_engine)
@@ -115,6 +118,7 @@ def _migrate_existing_db(engine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_enrichment_initiative ON enrichments(initiative_id)",
             "CREATE INDEX IF NOT EXISTS ix_score_initiative_scored ON outreach_scores(initiative_id, scored_at)",
             "CREATE INDEX IF NOT EXISTS ix_score_project_id ON outreach_scores(project_id)",
+            "CREATE INDEX IF NOT EXISTS ix_project_initiative ON projects(initiative_id)",
         ):
             conn.execute(text(stmt))
     _ensure_fts_table(engine)
@@ -213,7 +217,7 @@ def _ensure_revision_tracking(engine) -> None:
     """Create the _meta table and triggers that bump a revision counter on data changes."""
     with engine.begin() as conn:
         conn.execute(text(
-            "CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)"
+            "CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '0')"
         ))
         conn.execute(text(
             "INSERT OR IGNORE INTO _meta (key, value) VALUES ('revision', 0)"
@@ -332,16 +336,26 @@ def _fts_insert(connection, initiative) -> None:
     ), params)
 
 
-def _fts_delete(connection, initiative_id: int) -> None:
-    """Remove a single initiative from the FTS index."""
+def _fts_delete_by_values(connection, initiative_id: int, field_values: dict[str, str]) -> None:
+    """Remove a single initiative from the FTS index using provided field values.
+
+    FTS5 content-sync tables require the exact old values for delete operations.
+    Using a SELECT from the content table is wrong in after_update handlers
+    because the row already contains the new values at that point.
+    """
+    params = {"id": initiative_id}
+    params.update(field_values)
     connection.execute(text(
         "INSERT INTO initiative_fts(initiative_fts, rowid, name, description, sector, "
         "technology_domains, categories, market_domains, faculty) "
-        "SELECT 'delete', id, COALESCE(name,''), COALESCE(description,''), "
-        "COALESCE(sector,''), COALESCE(technology_domains,''), "
-        "COALESCE(categories,''), COALESCE(market_domains,''), "
-        "COALESCE(faculty,'') FROM initiatives WHERE id = :id"
-    ), {"id": initiative_id})
+        "VALUES ('delete', :id, :name, :description, :sector, "
+        ":technology_domains, :categories, :market_domains, :faculty)"
+    ), params)
+
+
+def _fts_field_values(initiative) -> dict[str, str]:
+    """Extract current FTS field values from an Initiative ORM object."""
+    return {f: getattr(initiative, f, "") or "" for f in _FTS_FIELDS}
 
 
 @event.listens_for(Initiative, "after_insert")
@@ -352,10 +366,27 @@ def _on_initiative_insert(mapper, connection, target):
         log.warning("FTS auto-sync insert failed for %s", target.name, exc_info=True)
 
 
+@event.listens_for(Initiative, "before_update")
+def _on_initiative_before_update(mapper, connection, target):
+    """Capture old FTS field values before the UPDATE overwrites them."""
+    from sqlalchemy import inspect as orm_inspect
+    state = orm_inspect(target)
+    old_vals = {}
+    for f in _FTS_FIELDS:
+        hist = state.attrs[f].history
+        # history.deleted contains old value(s) if the field changed
+        if hist.deleted:
+            old_vals[f] = hist.deleted[0] or ""
+        else:
+            old_vals[f] = getattr(target, f, "") or ""
+    target._fts_old_values = old_vals
+
+
 @event.listens_for(Initiative, "after_update")
 def _on_initiative_update(mapper, connection, target):
     try:
-        _fts_delete(connection, target.id)
+        old_vals = getattr(target, "_fts_old_values", _fts_field_values(target))
+        _fts_delete_by_values(connection, target.id, old_vals)
         _fts_insert(connection, target)
     except Exception:
         log.warning("FTS auto-sync update failed for %s", target.name, exc_info=True)
@@ -364,7 +395,7 @@ def _on_initiative_update(mapper, connection, target):
 @event.listens_for(Initiative, "after_delete")
 def _on_initiative_delete(mapper, connection, target):
     try:
-        _fts_delete(connection, target.id)
+        _fts_delete_by_values(connection, target.id, _fts_field_values(target))
     except Exception:
         log.warning("FTS auto-sync delete failed for id %d", target.id, exc_info=True)
 

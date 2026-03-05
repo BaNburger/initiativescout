@@ -180,6 +180,10 @@ class Project(Base):
     extra_links_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    __table_args__ = (
+        Index("ix_project_initiative", "initiative_id"),
+    )
+
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="projects")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="project", cascade="all, delete-orphan")
 
