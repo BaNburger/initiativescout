@@ -735,7 +735,7 @@ def _dossier_has_substance(dossier: str, min_lines: int = 5) -> bool:
     A dossier with only header lines (INITIATIVE: X, UNIVERSITY: Y) and no
     enrichment data or field values is not worth sending to an LLM.
     """
-    lines = [l for l in dossier.strip().splitlines() if l.strip()]
+    lines = [line for line in dossier.strip().splitlines() if line.strip()]
     return len(lines) >= min_lines
 
 
@@ -980,7 +980,6 @@ async def score_initiative(
     verdict = compute_verdict(avg_grade)
     score = compute_score(avg_grade)
 
-    defaults = default_prompts_for(entity_type)
     key_evidence = [
         f"{defaults['team'][0]} ({team.grade.letter}): {team.reasoning}",
         f"{defaults['tech'][0]} ({tech.grade.letter}): {tech.reasoning}",

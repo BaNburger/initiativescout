@@ -730,10 +730,9 @@ def _detect_tech_stack(raw_html: str) -> str | None:
         return None
 
     found: dict[str, list[str]] = {}  # category -> [names]
-    html_lower = raw_html.lower()
 
     for category, name, pattern in _TECH_FINGERPRINTS:
-        if re.search(pattern, html_lower, re.IGNORECASE):
+        if re.search(pattern, raw_html, re.IGNORECASE):
             found.setdefault(category, []).append(name)
 
     if not found:
@@ -786,10 +785,7 @@ async def _dns_lookup(domain: str) -> str | None:
     """
     lines: list[str] = [f"DNS ENRICHMENT: {domain}"]
 
-    # MX records via socket.getaddrinfo doesn't do MX, use asyncio DNS
     try:
-        loop = asyncio.get_running_loop()
-
         # A record — check if domain resolves
         try:
             addrs = await asyncio.to_thread(socket.getaddrinfo, domain, None, socket.AF_INET)
@@ -917,6 +913,7 @@ async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
     sitemap_urls = [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml"]
     page_count = 0
     page_types: dict[str, int] = {}  # path prefix -> count
+    sitemap_text = ""
 
     for sitemap_url in sitemap_urls:
         try:

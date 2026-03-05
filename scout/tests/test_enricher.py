@@ -6,7 +6,6 @@ and extended enrichers (structured data, tech stack, DNS, sitemap, careers, git 
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import socket
 import time
@@ -15,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from scout.models import Base, Enrichment, Initiative
@@ -1142,14 +1141,14 @@ class TestEntityConfig:
 
     def test_compute_data_gaps_respects_config(self):
         """Data gaps should only flag enrichers that are configured for the entity type."""
-        from scout.scorer import compute_data_gaps
+        from scout.scorer import compute_data_gaps, get_entity_config
         init = Initiative(name="Test")
         gaps = compute_data_gaps(init, [], entity_type="professor")
-        # Professor config doesn't include github, so github gap should not appear
         gap_text = " ".join(gaps)
-        assert "GitHub" not in gap_text or "team_page" not in [
-            e for e in get_entity_config("professor").get("enrichers", [])
-        ]
+        # Professor config doesn't include github, so github gap should not appear
+        prof_enrichers = get_entity_config("professor").get("enrichers", [])
+        if "github" not in prof_enrichers:
+            assert "GitHub" not in gap_text
 
 
 class TestCustomEntityDossier:
@@ -1172,7 +1171,7 @@ class TestCustomEntityDossier:
         init = Initiative(name="Test Init", uni="TUM")
         dossier = build_team_dossier(init, [], "initiative")
         # Metadata is empty, so nothing extra should appear
-        assert "METADATA" not in dossier.upper() or True  # no metadata section
+        assert "METADATA" not in dossier.upper()
 
     def test_enrichments_unfiltered_for_custom_type(self):
         """Custom entity types should include ALL enrichments in dimension dossiers."""
