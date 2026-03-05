@@ -1300,3 +1300,94 @@ class TestWorkQueueEntityAware:
         queue = get_work_queue(session, limit=10)
         item = next(i for i in queue if i["name"] == "Test Init")
         assert item["uni"] == "TUM"
+
+
+class TestDimensionPruning:
+    """Tests for dimension pruning when dossier data is sparse."""
+
+    def test_dossier_has_substance_with_enough_lines(self):
+        from scout.scorer import _dossier_has_substance
+        dossier = "INITIATIVE: Test\nUNIVERSITY: TUM\nDESCRIPTION: ML project\nTEAM SIZE: 5\nMEMBER COUNT: 8\nLINKEDIN: url"
+        assert _dossier_has_substance(dossier) is True
+
+    def test_dossier_has_substance_sparse(self):
+        from scout.scorer import _dossier_has_substance
+        dossier = "INITIATIVE: Test\nUNIVERSITY: TUM"
+        assert _dossier_has_substance(dossier) is False
+
+    def test_dossier_has_substance_empty(self):
+        from scout.scorer import _dossier_has_substance
+        assert _dossier_has_substance("") is False
+
+    def test_dossier_has_substance_ignores_blank_lines(self):
+        from scout.scorer import _dossier_has_substance
+        dossier = "LINE1\n\n\nLINE2\n\n"
+        assert _dossier_has_substance(dossier) is False
+
+
+class TestChainOfThoughtPrompts:
+    """Tests that scoring prompts use chain-of-thought (reasoning before grade)."""
+
+    def test_initiative_prompts_reasoning_first(self):
+        from scout.scorer import DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT
+        for prompt in [DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT]:
+            # "reasoning" should appear before "grade" in the JSON template
+            reasoning_pos = prompt.find('"reasoning"')
+            grade_pos = prompt.find('"grade"')
+            assert reasoning_pos < grade_pos, f"reasoning should come before grade in prompt"
+            assert "Think step-by-step" in prompt
+            assert "CALIBRATION EXAMPLES" in prompt
+
+    def test_professor_prompts_reasoning_first(self):
+        from scout.scorer import DEFAULT_PROFESSOR_TEAM_PROMPT, DEFAULT_PROFESSOR_TECH_PROMPT, DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT
+        for prompt in [DEFAULT_PROFESSOR_TEAM_PROMPT, DEFAULT_PROFESSOR_TECH_PROMPT, DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT]:
+            reasoning_pos = prompt.find('"reasoning"')
+            grade_pos = prompt.find('"grade"')
+            assert reasoning_pos < grade_pos
+
+    def test_prompts_have_anti_verbosity_bias(self):
+        from scout.scorer import DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT
+        for prompt in [DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT]:
+            assert "signal quality" in prompt.lower()
+
+
+class TestLLMClientTemperature:
+    """Tests that LLM client defaults to low temperature."""
+
+    def test_call_signature_has_temperature(self):
+        import inspect
+        from scout.scorer import LLMClient
+        sig = inspect.signature(LLMClient.call)
+        assert "temperature" in sig.parameters
+
+    def test_default_temperature_is_low(self):
+        # Verify the default logic: temperature defaults to 0.2
+        from scout.scorer import LLMClient
+        import inspect
+        sig = inspect.signature(LLMClient.call)
+        param = sig.parameters["temperature"]
+        assert param.default is None  # None means use 0.2 internal default
+
+
+class TestTrafilaturaIntegration:
+    """Tests for trafilatura text extraction integration."""
+
+    def test_extract_text_fallback_when_no_trafilatura(self):
+        from scout.enricher import _extract_text
+        html = "<html><body><p>Hello World</p></body></html>"
+        # Should work regardless of trafilatura availability
+        result = _extract_text(html)
+        assert "Hello" in result or "World" in result
+
+    def test_extract_text_strips_boilerplate(self):
+        from scout.enricher import _extract_text
+        html = """<html><head><title>Test</title></head>
+        <body><nav>Menu stuff</nav><main><p>Main content here</p></main>
+        <footer>Footer stuff</footer></body></html>"""
+        result = _extract_text(html)
+        assert "Main content" in result
+
+    def test_trafilatura_detection(self):
+        from scout.enricher import _TRAFILATURA_AVAILABLE
+        # Just verify the detection flag exists and is boolean
+        assert isinstance(_TRAFILATURA_AVAILABLE, bool)

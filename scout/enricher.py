@@ -43,6 +43,13 @@ try:
 except ImportError:
     DDGS = None  # type: ignore[assignment,misc]
 
+_TRAFILATURA_AVAILABLE = False
+try:
+    import trafilatura  # noqa: F401
+    _TRAFILATURA_AVAILABLE = True
+except ImportError:
+    trafilatura = None  # type: ignore[assignment]
+
 # ddgs v9+ no longer exposes a RatelimitException; use a generic fallback.
 RatelimitException: type[Exception] = Exception  # type: ignore[assignment,misc]
 
@@ -1080,9 +1087,28 @@ async def _fetch_url(url: str) -> str:
 
 
 def _extract_text(raw_html: str) -> str:
-    """Extract all visible text from HTML, stripping navigation and boilerplate."""
+    """Extract main content text from HTML.
+
+    Uses trafilatura (F1=0.958) as primary extractor for superior boilerplate
+    removal, falling back to lxml-based extraction if trafilatura is unavailable
+    or returns empty.
+    """
+    # Try trafilatura first — much better at extracting main content
+    if _TRAFILATURA_AVAILABLE:
+        try:
+            text = trafilatura.extract(
+                raw_html,
+                include_comments=False,
+                include_tables=True,
+                favor_recall=True,
+            )
+            if text and text.strip():
+                return text.strip()[:_MAX_TEXT]
+        except Exception:
+            pass  # fall through to lxml
+
+    # Fallback: lxml-based extraction
     try:
-        # Strip XML declaration — lxml.html chokes on XHTML prologues like <?xml ...?>
         cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
         tree = lxml_html.fromstring(cleaned)
     except (etree.ParserError, etree.XMLSyntaxError, ValueError):
@@ -1090,7 +1116,6 @@ def _extract_text(raw_html: str) -> str:
     title = " ".join(tree.xpath("//title//text()")).strip()
     meta = " ".join(tree.xpath("//meta[@name='description']/@content")).strip()
 
-    # Strip noise elements before extracting visible text
     for el in tree.xpath("//script | //style | //nav | //footer | //header | //noscript"):
         el.getparent().remove(el)
 

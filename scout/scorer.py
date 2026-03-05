@@ -92,14 +92,23 @@ Assess the quality and readiness of the founding / core team based on:
 
 Be opinionated. A strong team has clear leadership, technical talent, and \
 business sense. A weak team is a group of friends with no defined roles.
+Judge based on signal quality, not quantity of available data.
 
 Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
 (A+ = exceptional founding team, D = no evidence of team quality)
 
-Respond with ONLY valid JSON:
+CALIBRATION EXAMPLES:
+- A: "Team of 8 with defined CTO, CEO, COO roles. Multiple LinkedIn profiles \
+show prior startup experience. Won TUM IDEAward."
+- C: "3-person team listed on website. No role descriptions. Generic LinkedIn \
+profiles with only student experience."
+- D: "No team page, no member names anywhere. Cannot assess team quality."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
 {
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "reasoning": "<2-3 sentences explaining the grade>"
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
 }
 """
 
@@ -116,14 +125,24 @@ Assess technical depth and differentiation based on:
 
 Be opinionated. Strong tech means active development of novel technology with \
 measurable output. Weak tech means a landing page with no code or research.
+Judge based on signal quality, not quantity of available data.
 
 Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
 (A+ = deep tech with strong GitHub + research presence, D = no technical evidence)
 
-Respond with ONLY valid JSON:
+CALIBRATION EXAMPLES:
+- A: "12 GitHub repos, 45 contributors, 200+ commits in 90 days. CI/CD present. \
+Published HuggingFace model with 500+ downloads. Active ML research."
+- C: "2 GitHub repos with sporadic commits. Single contributor. No research \
+output. Basic web app with standard frameworks."
+- D: "No GitHub organization. No code repositories. No research publications. \
+Only a marketing website."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
 {
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "reasoning": "<2-3 sentences explaining the grade>"
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
 }
 """
 
@@ -146,6 +165,7 @@ Also provide:
 
 Be opinionated. A strong opportunity has a large addressable market with clear \
 timing advantages. A weak opportunity is a solution looking for a problem.
+Judge based on signal quality, not quantity of available data.
 
 CLASSIFICATION (assign exactly one):
 - deep_tech: Novel hardware, software, or deep research with application potential
@@ -157,10 +177,19 @@ CLASSIFICATION (assign exactly one):
 Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
 (A+ = massive timely opportunity, D = no market opportunity)
 
-Respond with ONLY valid JSON:
+CALIBRATION EXAMPLES:
+- A: "AI-powered drug discovery startup from TUM. €500K pre-seed raised. \
+Clear product-market fit in growing pharma-AI market. Strong IP from lab."
+- C: "Student consulting club offering generic strategy advice. Competitive \
+space with no differentiation. No commercial product or revenue."
+- D: "Last social media post 18 months ago. Website domain expired. No \
+evidence of any current activity."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
 {
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
   "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "reasoning": "<2-3 sentences explaining the grade>",
   "classification": "<deep_tech|student_venture|applied_research|student_club|dormant>",
   "contact_who": "<specific person/role + channel for outreach>",
   "contact_channel": "<email|linkedin|event|website_form>",
@@ -186,14 +215,23 @@ Assess the quality and activity of the professor's research group based on:
 Be opinionated. A strong research group has active members, clear structure, \
 and evidence of producing results. A weak signal is a professor with no \
 visible group activity.
+Judge based on signal quality, not quantity of available data.
 
 Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
 (A+ = exceptional research group, D = no evidence of group quality)
 
-Respond with ONLY valid JSON:
+CALIBRATION EXAMPLES:
+- A: "Group of 15+ with 3 postdocs, 8 PhD students. Multiple alumni now at \
+Google/DeepMind. Active LinkedIn profiles show strong publication records."
+- C: "Small group page lists 4 PhD students. No alumni tracking. Limited \
+online presence for group members."
+- D: "No group page found. No team members listed anywhere."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
 {
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "reasoning": "<2-3 sentences explaining the grade>"
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
 }
 """
 
@@ -211,14 +249,23 @@ Assess research depth and technical impact based on:
 Be opinionated. Strong research output means active publication with \
 reproducible artifacts and open-source impact. Weak means no visible \
 publications or code.
+Judge based on signal quality, not quantity of available data.
 
 Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
 (A+ = prolific researcher with open-source impact, D = no research evidence)
 
-Respond with ONLY valid JSON:
+CALIBRATION EXAMPLES:
+- A: "50+ papers in top venues (NeurIPS, ICML). 3 GitHub repos with 500+ \
+stars. Published HuggingFace datasets. H-index > 30."
+- C: "12 papers in regional conferences. No open-source code. No models or \
+datasets shared publicly."
+- D: "No publications found in any database. No GitHub presence."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
 {
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "reasoning": "<2-3 sentences explaining the grade>"
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
 }
 """
 
@@ -242,6 +289,7 @@ Also provide:
 Be opinionated. A strong collaboration opportunity means the professor \
 has relevant expertise AND demonstrated interest in applied work. \
 Weak means purely theoretical or no evidence of external engagement.
+Judge based on signal quality, not quantity of available data.
 
 CLASSIFICATION (assign exactly one):
 - research_leader: Established authority with significant impact and citations
@@ -253,10 +301,20 @@ CLASSIFICATION (assign exactly one):
 Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
 (A+ = ideal collaboration partner, D = no collaboration potential)
 
-Respond with ONLY valid JSON:
+CALIBRATION EXAMPLES:
+- A: "Co-founded 2 spin-offs from lab research. Active industry advisory \
+board member at Siemens. ERC Consolidator grant holder. Regularly speaks at \
+industry conferences."
+- C: "Pure theoretical research with limited applied potential. No industry \
+partnerships. Responds to collaboration requests but doesn't initiate."
+- D: "No industry connections found. No spin-offs. No consulting activity. \
+Research area has no clear commercial application."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
 {
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
   "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "reasoning": "<2-3 sentences explaining the grade>",
   "classification": "<research_leader|emerging_researcher|industry_bridge|teaching_focused|emeritus>",
   "contact_who": "<specific person/role + channel for outreach>",
   "contact_channel": "<email|linkedin|event|website_form>",
@@ -379,13 +437,22 @@ class LLMClient:
         else:
             raise ValueError(f"Unknown LLM provider: {self.provider!r}")
 
-    async def call(self, system: str, user: str) -> dict[str, Any]:
-        """Send system+user message to the LLM, return parsed JSON."""
+    async def call(self, system: str, user: str, *, temperature: float | None = None) -> dict[str, Any]:
+        """Send system+user message to the LLM, return parsed JSON.
+
+        Args:
+            system: System prompt.
+            user: User message (typically the dossier).
+            temperature: Sampling temperature. Lower = more deterministic.
+                Defaults to 0.2 for consistent scoring results.
+        """
+        temp = temperature if temperature is not None else 0.2
         try:
             if self.provider == "anthropic":
                 response = await self._client.messages.create(
                     model=self.model,
                     max_tokens=2048,
+                    temperature=temp,
                     system=system,
                     messages=[{"role": "user", "content": user}],
                 )
@@ -399,6 +466,7 @@ class LLMClient:
                 response = await self._client.chat.completions.create(
                     model=self.model,
                     max_completion_tokens=2048,
+                    temperature=temp,
                     response_format={"type": "json_object"},
                     messages=[
                         {"role": "system", "content": system},
@@ -657,6 +725,16 @@ class DimensionResult:
     extras: dict[str, Any]  # classification, contact_who, etc. from opportunity
 
 
+def _dossier_has_substance(dossier: str, min_lines: int = 5) -> bool:
+    """Check if a dossier has enough content to be worth scoring.
+
+    A dossier with only header lines (INITIATIVE: X, UNIVERSITY: Y) and no
+    enrichment data or field values is not worth sending to an LLM.
+    """
+    lines = [l for l in dossier.strip().splitlines() if l.strip()]
+    return len(lines) >= min_lines
+
+
 async def _score_dimension(client: LLMClient, system_prompt: str, dossier: str) -> DimensionResult:
     """Call LLM for a single dimension, return parsed result."""
     raw = await client.call(system_prompt, dossier)
@@ -819,11 +897,38 @@ async def score_initiative(
     tech_dossier = build_tech_dossier(initiative, enrichments, entity_type)
     full_dossier = build_full_dossier(initiative, enrichments, entity_type)
 
-    team, tech, opp = await asyncio.gather(
-        _score_dimension(client, team_prompt, team_dossier),
-        _score_dimension(client, tech_prompt, tech_dossier),
-        _score_dimension(client, opp_prompt, full_dossier),
-    )
+    # Dimension pruning: skip LLM calls for dimensions with near-empty dossiers.
+    # This saves 20-30% on scoring cost when data is sparse and avoids
+    # hallucinated grades. The full/opportunity dossier is always scored.
+    tasks: dict[str, Any] = {}
+    skipped: dict[str, DimensionResult] = {}
+
+    if _dossier_has_substance(team_dossier):
+        tasks["team"] = _score_dimension(client, team_prompt, team_dossier)
+    else:
+        skipped["team"] = DimensionResult(
+            grade=Grade.parse("C"), reasoning="Skipped: insufficient data for assessment.", extras={},
+        )
+
+    if _dossier_has_substance(tech_dossier):
+        tasks["tech"] = _score_dimension(client, tech_prompt, tech_dossier)
+    else:
+        skipped["tech"] = DimensionResult(
+            grade=Grade.parse("C"), reasoning="Skipped: insufficient data for assessment.", extras={},
+        )
+
+    # Opportunity/full dossier is always scored — it drives classification + contact info
+    tasks["opportunity"] = _score_dimension(client, opp_prompt, full_dossier)
+
+    # Run non-skipped dimensions in parallel
+    keys = list(tasks.keys())
+    results_list = await asyncio.gather(*tasks.values())
+    results = dict(zip(keys, results_list))
+    results.update(skipped)
+
+    team = results["team"]
+    tech = results["tech"]
+    opp = results["opportunity"]
 
     avg_grade = (team.grade.numeric + tech.grade.numeric + opp.grade.numeric) / 3
     verdict = compute_verdict(avg_grade)
@@ -885,14 +990,16 @@ def _project_system_prompt(entity_type: str = "initiative") -> str:
     return (
         f"You are an outreach assistant. Read the dossier about a project within "
         f"{ctx} and produce an outreach recommendation.\n\n"
-        f"Provide grades for team, tech, and opportunity dimensions, plus a classification.\n\n"
+        f"Provide grades for team, tech, and opportunity dimensions, plus a classification.\n"
+        f"Judge based on signal quality, not quantity of available data.\n\n"
         f"Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D\n\n"
-        f"Respond with ONLY valid JSON:\n"
+        f"Think step-by-step: first analyze what evidence exists, then assign grades.\n"
+        f"Respond with ONLY valid JSON (reasoning FIRST):\n"
         "{\n"
+        '  "reasoning": "<2-3 sentences: analyze evidence, then justify>",\n'
         '  "verdict": "<reach_out_now|reach_out_soon|monitor|skip>",\n'
         '  "score": <float 1.0-5.0>,\n'
         f'  "classification": "<{cls_list}>",\n'
-        '  "reasoning": "<2-3 sentences>",\n'
         '  "contact_who": "<contact recommendation>",\n'
         '  "contact_channel": "<email|linkedin|event|website_form>",\n'
         '  "engagement_hook": "<specific opener>",\n'
