@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import delete, func, select
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -530,9 +530,12 @@ def manage_initiative(
             return _error("items (list of dicts with name+uni) is required for bulk_create", "VALIDATION_ERROR")
         with session_scope() as session:
             # Build set of existing name+uni pairs for dedup
-            existing = set()
-            for row in session.query(Initiative.name, Initiative.uni).all():
-                existing.add((row.name.lower().strip(), (row.uni or "").lower().strip()))
+            existing = {
+                (name.lower().strip(), (uni or "").lower().strip())
+                for name, uni in session.execute(
+                    select(Initiative.name, Initiative.uni)
+                ).all()
+            }
 
             created_items = []
             skipped = 0
@@ -628,10 +631,7 @@ def manage_initiative(
             custom_fields = updates.pop("custom_fields", None)
             services.apply_updates(init, updates, services.UPDATABLE_FIELDS)
             if custom_fields is not None and isinstance(custom_fields, dict):
-                existing = json_parse(init.custom_fields_json)
-                existing.update(custom_fields)
-                existing = {k: v for k, v in existing.items() if v is not None}
-                init.custom_fields_json = json.dumps(existing)
+                services.merge_custom_fields(init, custom_fields)
             session.flush()
             session.commit()
             detail = _trim(services.initiative_detail(init))
@@ -957,8 +957,7 @@ def submit_score(
     if dimension_grades and isinstance(dimension_grades, dict):
         # Custom dimensions
         for dim, raw_grade in dimension_grades.items():
-            raw_str = str(raw_grade).strip().upper().replace(" ", "")
-            if raw_str not in VALID_GRADES:
+            if Grade.normalize(raw_grade) not in VALID_GRADES:
                 return _error(
                     f"Invalid grade for '{dim}': {raw_grade!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
                     "VALIDATION_ERROR")
@@ -969,8 +968,7 @@ def submit_score(
                            ("grade_opportunity", grade_opportunity)]:
             if not raw:
                 return _error(f"{label} is required", "VALIDATION_ERROR")
-            normalized = raw.strip().upper().replace(" ", "")
-            if normalized not in VALID_GRADES:
+            if Grade.normalize(raw) not in VALID_GRADES:
                 return _error(
                     f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
                     "VALIDATION_ERROR")
@@ -990,8 +988,7 @@ def submit_score(
                     f"Missing grade for dimension '{dim}'. Use dimension_grades={{'{dim}': 'grade'}} "
                     f"or provide grades positionally.",
                     "VALIDATION_ERROR")
-            normalized = raw.strip().upper().replace(" ", "")
-            if normalized not in VALID_GRADES:
+            if Grade.normalize(raw) not in VALID_GRADES:
                 return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
             grades[dim] = Grade.parse(raw)
 

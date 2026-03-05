@@ -223,10 +223,7 @@ async def update_initiative(initiative_id: int, body: InitiativeUpdate, session:
     init = _get_or_404(session, Initiative, initiative_id)
     services.apply_updates(init, body.model_dump(), services.UPDATABLE_FIELDS)
     if body.custom_fields is not None:
-        existing = services.json_parse(init.custom_fields_json, {})
-        existing.update(body.custom_fields)
-        existing = {k: v for k, v in existing.items() if v is not None}
-        init.custom_fields_json = json.dumps(existing)
+        services.merge_custom_fields(init, body.custom_fields)
     session.flush()  # triggers after_update → FTS sync automatically
     session.commit()
     return services.initiative_detail(init)

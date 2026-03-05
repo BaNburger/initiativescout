@@ -81,6 +81,11 @@ class Grade:
             g = default
         return cls(letter=g, numeric=GRADE_MAP[g])
 
+    @staticmethod
+    def normalize(raw: Any) -> str:
+        """Normalize a raw grade string. Returns uppercase letter or empty."""
+        return str(raw or "").strip().upper().replace(" ", "")
+
 # ---------------------------------------------------------------------------
 # Default prompts (editable via API / frontend)
 # ---------------------------------------------------------------------------

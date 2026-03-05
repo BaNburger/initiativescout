@@ -225,6 +225,11 @@ If no API key is available, use the MCP dossier-and-submit workflow:
 | `GET` | `/api/databases` | List available databases |
 | `POST` | `/api/databases/select` | Switch database |
 | `POST` | `/api/databases/create` | Create new database |
+| `POST` | `/api/databases/delete` | Delete a database |
+| `POST` | `/api/databases/backup` | Backup a database |
+| `GET` | `/api/databases/backups` | List all backups |
+| `POST` | `/api/databases/restore` | Restore a database from backup |
+| `DELETE` | `/api/databases/backups/{name}` | Delete a backup |
 | `GET` | `/api/custom-columns` | List custom column definitions |
 | `POST` | `/api/custom-columns` | Add custom column |
 | `PUT` | `/api/custom-columns/{id}` | Update custom column |
@@ -288,9 +293,7 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 | `score_project_tool` | Score a project in context of its parent entity |
 | `list_scoring_prompts` | View the dimension prompt definitions (supports `compact` mode) |
 | `update_scoring_prompt` | Customize a dimension's LLM system prompt |
-| `list_scout_databases` | List available databases |
-| `select_scout_database` | Switch to a different database |
-| `create_scout_database` | Create a new empty database |
+| `manage_database` | List, select, create, delete, backup, restore databases |
 | `get_custom_columns` | List custom column definitions |
 | `create_custom_column` | Add a custom column definition |
 | `update_custom_column` | Update a custom column definition |
@@ -309,10 +312,15 @@ initiativescout/
 │   ├── services.py           #   Shared business logic (queries, FTS, aggregations)
 │   ├── models.py             #   SQLAlchemy ORM models
 │   ├── schemas.py            #   Pydantic request/response schemas
-│   ├── db.py                 #   Multi-DB SQLite management + FTS5 setup
+│   ├── db.py                 #   Multi-DB SQLite management, backups, FTS5 setup
 │   ├── importer.py           #   XLSX parser (Spin-Off, All Initiatives, Overview)
 │   ├── exporter.py           #   XLSX export with styled verdict rows
-│   ├── enricher.py           #   Website, team page, GitHub, extra links enrichment
+│   ├── enricher/             #   Web enrichment pipeline
+│   │   ├── _core.py          #     Shared HTTP client, URL cache, parsing
+│   │   ├── _website.py       #     Website & team page enrichment
+│   │   ├── _github.py        #     GitHub org/repo enrichment
+│   │   ├── _metadata.py      #     Structured data, tech stack, DNS, sitemap
+│   │   └── _discovery.py     #     DuckDuckGo URL discovery
 │   ├── scorer.py             #   Dimension LLM scoring + deterministic aggregation
 │   ├── embedder.py           #   Dense embeddings (model2vec) + similarity search
 │   ├── scrapers.py           #   Entity-specific scrapers (TUM professor directory)
@@ -322,7 +330,6 @@ initiativescout/
 │       ├── index.html        #   Page structure
 │       ├── style.css         #   Styles
 │       └── app.js            #   Frontend logic
-├── output/spreadsheet/       # Source spreadsheets for import
 └── .gitignore
 ```
 

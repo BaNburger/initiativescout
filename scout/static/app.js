@@ -90,6 +90,11 @@ function startRevisionPolling() {
   _revisionTimer = setInterval(pollRevision, 3000);
 }
 
+// Pause polling when tab is hidden to avoid wasting resources
+document.addEventListener('visibilitychange', function() {
+  _revisionPaused = document.hidden;
+});
+
 async function refreshUI(detailId) {
   await loadInitiatives();
   await loadStats();

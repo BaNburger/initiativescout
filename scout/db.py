@@ -68,51 +68,27 @@ def init_db(db_path: str | Path | None = None) -> None:
         old_engine.dispose()
 
 
+def _add_column_if_missing(engine, inspector, table: str, column: str, sql: str) -> None:
+    """Add a column to a table if it doesn't exist yet."""
+    if not inspector.has_table(table):
+        return
+    cols = {col["name"] for col in inspector.get_columns(table)}
+    if column not in cols:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {sql}"))
+
+
 def _migrate_existing_db(engine) -> None:
     """Add columns/tables that may be missing in older databases."""
     inspector = sa_inspect(engine)
     if not inspector.has_table("initiatives"):
         return
-    columns = {col["name"] for col in inspector.get_columns("initiatives")}
-    if "custom_fields_json" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text(
-                "ALTER TABLE initiatives ADD COLUMN custom_fields_json TEXT DEFAULT '{}'"
-            ))
-    if "faculty" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text(
-                "ALTER TABLE initiatives ADD COLUMN faculty VARCHAR(200) DEFAULT ''"
-            ))
-    if "metadata_json" not in columns:
-        with engine.begin() as conn:
-            conn.execute(text(
-                "ALTER TABLE initiatives ADD COLUMN metadata_json TEXT DEFAULT '{}'"
-            ))
-    # Enrichment table migrations
-    if inspector.has_table("enrichments"):
-        ecols = {col["name"] for col in inspector.get_columns("enrichments")}
-        if "source_url" not in ecols:
-            with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE enrichments ADD COLUMN source_url TEXT"
-                ))
-    # Custom columns table migrations
-    if inspector.has_table("custom_columns"):
-        ccols = {col["name"] for col in inspector.get_columns("custom_columns")}
-        if "database" not in ccols:
-            with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE custom_columns ADD COLUMN database TEXT"
-                ))
-    # OutreachScore migrations
-    if inspector.has_table("outreach_scores"):
-        scols = {col["name"] for col in inspector.get_columns("outreach_scores")}
-        if "dimension_grades_json" not in scols:
-            with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE outreach_scores ADD COLUMN dimension_grades_json TEXT DEFAULT '{}'"
-                ))
+    _add_column_if_missing(engine, inspector, "initiatives", "custom_fields_json", "custom_fields_json TEXT DEFAULT '{}'")
+    _add_column_if_missing(engine, inspector, "initiatives", "faculty", "faculty VARCHAR(200) DEFAULT ''")
+    _add_column_if_missing(engine, inspector, "initiatives", "metadata_json", "metadata_json TEXT DEFAULT '{}'")
+    _add_column_if_missing(engine, inspector, "enrichments", "source_url", "source_url TEXT")
+    _add_column_if_missing(engine, inspector, "custom_columns", "database", "database TEXT")
+    _add_column_if_missing(engine, inspector, "outreach_scores", "dimension_grades_json", "dimension_grades_json TEXT DEFAULT '{}'")
     # Ensure performance indexes exist (idempotent)
     with engine.begin() as conn:
         for stmt in (

@@ -13,7 +13,6 @@ from scout.enricher._core import (
     _fetch_url,
     _get_website_url,
     _make_enrichment,
-    _normalize_url,
     _parse_html,
     extruct,
 )

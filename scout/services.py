@@ -475,6 +475,16 @@ def apply_updates(obj, updates: dict[str, Any], fields: tuple[str, ...]) -> None
             setattr(obj, field, val)
 
 
+def merge_custom_fields(obj, updates: dict) -> None:
+    """Merge custom field updates into an initiative's custom_fields_json.
+
+    Sets keys from *updates*; keys with None values are removed.
+    """
+    existing = json_parse(obj.custom_fields_json, {})
+    existing.update(updates)
+    obj.custom_fields_json = json.dumps({k: v for k, v in existing.items() if v is not None})
+
+
 _PROJECT_FIELDS = ("name", "description", "website", "github_url", "team")
 
 
@@ -654,18 +664,20 @@ def import_scraped_entities(
     Each dict should have at least 'name', plus optional 'uni', 'faculty', 'website'.
     Returns {"created": N, "skipped_duplicates": N}.
     """
+    existing_names = {
+        name.lower()
+        for (name,) in session.execute(select(Initiative.name)).all()
+    }
     created = skipped = 0
     for ent in entities:
-        existing = session.execute(
-            select(Initiative).where(Initiative.name == ent["name"])
-        ).scalars().first()
-        if existing:
+        if ent["name"].lower() in existing_names:
             skipped += 1
             continue
         session.add(Initiative(
             name=ent["name"], uni=ent.get("uni", ""),
             faculty=ent.get("faculty", ""), website=ent.get("website", ""),
         ))
+        existing_names.add(ent["name"].lower())
         created += 1
     session.flush()
     return {"created": created, "skipped_duplicates": skipped}
