@@ -73,6 +73,8 @@ class Grade:
 
     @classmethod
     def parse(cls, raw: Any, default: str = "C") -> Grade:
+        if default not in VALID_GRADES:
+            raise ValueError(f"Invalid default grade: {default!r}")
         g = str(raw or default).strip().upper().replace(" ", "")
         if g not in VALID_GRADES:
             log.warning("Unrecognizable grade %r, defaulting to %s", raw, default)

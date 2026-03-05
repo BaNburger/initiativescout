@@ -28,7 +28,8 @@ _MAX_SUMMARY = 1500
 # Per-entity URL cache — avoids re-fetching the same page across enrichers
 # ---------------------------------------------------------------------------
 
-_url_cache: dict[str, str] = {}
+_CACHE_ERROR = object()  # sentinel for cached fetch failures
+_url_cache: dict[str, str | object] = {}
 _url_cache_lock = asyncio.Lock()
 _url_cache_enabled = False
 
@@ -1170,17 +1171,33 @@ async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
 
 
 async def _fetch_url(url: str) -> str:
-    """Fetch a URL, using per-entity cache when enabled."""
-    if _url_cache_enabled:
-        async with _url_cache_lock:
-            if url in _url_cache:
-                return _url_cache[url]
-        # Not in cache — fetch and store
+    """Fetch a URL, using per-entity cache when enabled.
+
+    Caches both successes (str) and failures (sentinel) so parallel
+    enrichers sharing the same website URL don't duplicate requests
+    or hammer a broken URL repeatedly.
+    """
+    if not _url_cache_enabled:
+        return await _fetch_url_uncached(url)
+
+    async with _url_cache_lock:
+        if url in _url_cache:
+            cached = _url_cache[url]
+            if cached is _CACHE_ERROR:
+                raise httpx.HTTPError(f"Cached failure for {url}")
+            return cached  # type: ignore[return-value]
+
+    # Outside lock — do the actual fetch
+    try:
         text = await _fetch_url_uncached(url)
+    except Exception:
         async with _url_cache_lock:
-            _url_cache[url] = text
-        return text
-    return await _fetch_url_uncached(url)
+            _url_cache[url] = _CACHE_ERROR
+        raise
+
+    async with _url_cache_lock:
+        _url_cache[url] = text
+    return text
 
 
 async def _fetch_url_uncached(url: str) -> str:

@@ -1513,12 +1513,15 @@ def list_scoring_prompts(compact: bool = False) -> list:
     Args:
         compact: If True, return only key/label/updated_at (omit full content).
     """
-    with session_scope() as session:
-        prompts_list = services.get_scoring_prompts(session)
-        if compact:
-            return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
-                    for p in prompts_list]
-        return prompts_list
+    try:
+        with session_scope() as session:
+            prompts_list = services.get_scoring_prompts(session)
+            if compact:
+                return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
+                        for p in prompts_list]
+            return prompts_list
+    except Exception as exc:
+        return [_error(f"Failed to list scoring prompts: {exc}", "DB_ERROR")]
 
 
 @mcp.tool(annotations=_WRITE)
@@ -1545,8 +1548,11 @@ def update_scoring_prompt(key: str, content: str) -> dict:
 @mcp.tool(annotations=_READ)
 def get_custom_columns() -> list:
     """List custom column definitions for the current database."""
-    with session_scope() as session:
-        return services.get_custom_columns(session, database=current_db_name())
+    try:
+        with session_scope() as session:
+            return services.get_custom_columns(session, database=current_db_name())
+    except Exception as exc:
+        return [_error(f"Failed to list custom columns: {exc}", "DB_ERROR")]
 
 
 @mcp.tool(annotations=_WRITE)
@@ -1644,18 +1650,23 @@ def export_initiatives(
     from scout.db import DATA_DIR
     from scout.exporter import export_xlsx
 
-    with session_scope() as session:
-        buf = export_xlsx(
-            session, verdict=verdict, uni=uni,
-            include_enrichments=include_enrichments,
-            include_scores=include_scores, include_extras=include_extras,
-        )
-    db_name = current_db_name()
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"scout-{db_name}-{ts}.xlsx"
-    out_path = DATA_DIR / filename
-    out_path.write_bytes(buf.getvalue())
-    return {"ok": True, "file": str(out_path), "filename": filename}
+    try:
+        with session_scope() as session:
+            buf = export_xlsx(
+                session, verdict=verdict, uni=uni,
+                include_enrichments=include_enrichments,
+                include_scores=include_scores, include_extras=include_extras,
+            )
+        db_name = current_db_name()
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"scout-{db_name}-{ts}.xlsx"
+        out_path = DATA_DIR / filename
+        out_path.write_bytes(buf.getvalue())
+        return {"ok": True, "file": str(out_path), "filename": filename}
+    except ImportError:
+        return _error("openpyxl not installed. Run: pip install scout[xlsx]", "MISSING_DEP")
+    except Exception as exc:
+        return _error(f"Export failed: {exc}", "EXPORT_ERROR")
 
 
 # ---------------------------------------------------------------------------

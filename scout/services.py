@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import and_, case, delete, func, or_, select, text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from scout.enricher import (
@@ -286,7 +287,7 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
                     'ORDER BY rank LIMIT 500'
                 ), {"q": fts_q}).all()
         return [r[0] for r in rows]
-    except Exception:
+    except (OperationalError, ProgrammingError):
         log.warning("FTS5 search failed for query %r, falling back to LIKE", query, exc_info=True)
         return None
 
