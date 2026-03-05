@@ -28,7 +28,7 @@ from scout.scorer import (
     create_score_from_grades, default_prompts_for, get_entity_config,
     valid_classifications,
 )
-from scout.utils import json_parse
+from scout.utils import json_parse, parse_comma_set
 
 log = logging.getLogger(__name__)
 
@@ -461,20 +461,27 @@ def list_initiatives(
 
 
 @mcp.tool(annotations=_READ)
-def get_initiative(initiative_id: int, compact: bool = False) -> dict:
+def get_initiative(initiative_id: int, compact: bool = False, sources: str = "") -> dict:
     """Get full details for one entity: profile, enrichments, projects, scores, data gaps.
 
     WHEN: After list_initiatives() to inspect before enriching or scoring.
+    TIP: Use compact=True first to see available enrichment sources, then call again
+    with sources="github,website" to drill into specific ones (saves tokens).
 
     Args:
         initiative_id: Entity ID.
         compact: Lighter payload (skips enrichment summaries, projects, reasoning).
+        sources: Comma-separated enrichment source types to include (e.g. "github,website").
+            Empty = all sources. Only applies when compact=False.
     """
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, initiative_id)
         if err:
             return err
-        data = services.initiative_detail_compact(init) if compact else services.initiative_detail(init)
+        if compact:
+            data = services.initiative_detail_compact(init)
+        else:
+            data = services.initiative_detail(init, sources=parse_comma_set(sources))
         actions = []
         if not data.get("enriched", False):
             actions.append(_next("enrich_initiative", "Not yet enriched", initiative_id=initiative_id))
@@ -691,61 +698,9 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         if err:
             return err
 
-        # Smart default: auto-discover when initiative has no URLs at all
-        auto_discover = False
-        if not discover:
-            has_urls = bool(
-                (init.field("website") or "").strip()
-                or (init.field("github_org") or "").strip()
-                or json_parse(init.extra_links_json)
-            )
-            if not has_urls:
-                discover = True
-                auto_discover = True
-
-        discover_result = None
-        if discover:
-            try:
-                disc = await services.run_discovery(session, init)
-                session.commit()
-                discover_result = {"urls_found": disc["urls_found"]}
-                if auto_discover:
-                    discover_result["auto_triggered"] = True
-            except ImportError:
-                discover_result = {"skipped": True, "reason": "ddgs not installed — pip install 'scout[crawl]'"}
-            except Exception as exc:
-                discover_result = {"skipped": True, "reason": str(exc)[:100]}
-
-        async with open_crawler() as crawler:
-            new = await services.run_enrichment(session, init, crawler=crawler)
+        result = await services.enrich_with_diagnostics(session, init, discover=discover)
         session.commit()
 
-        succeeded = [e.source_type for e in new]
-        possible = {"website", "team_page", "github",
-                    "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"}
-        extra = json_parse(init.extra_links_json)
-        if extra:
-            possible.update(k.removesuffix("_urls").removesuffix("_url") for k in extra if extra[k])
-        not_configured = []
-        has_website = bool((init.field("website") or "").strip())
-        has_github = bool((init.field("github_org") or "").strip())
-        if not has_website:
-            not_configured.extend(["website", "structured_data", "tech_stack", "dns", "sitemap", "careers"])
-        if not (init.field("team_page") or "").strip():
-            not_configured.append("team_page")
-        if not has_github:
-            not_configured.extend(["github", "git_deep"])
-        failed = sorted(possible - set(succeeded) - set(not_configured))
-
-        result = {
-            "initiative_id": init.id, "initiative_name": init.name,
-            "enrichments_added": len(new),
-            "sources_succeeded": succeeded,
-            "sources_failed": failed,
-            "sources_not_configured": not_configured,
-        }
-        if discover_result:
-            result["discovery"] = discover_result
         result["_db"] = _db_pulse(session)
         return _suggest(
             result,

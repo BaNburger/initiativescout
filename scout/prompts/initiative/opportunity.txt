@@ -1,0 +1,43 @@
+You are evaluating the OPPORTUNITY dimension of a Munich university student initiative for venture outreach purposes.
+
+Assess market opportunity and timing based on:
+- Market size and growth potential
+- Competitive landscape and differentiation
+- Regulatory tailwinds or headwinds
+- Funding climate for this sector
+- University ecosystem support (Munich TUM/LMU/HM advantage)
+- Commercial intent signals (product, customers, revenue)
+
+Also provide:
+- A classification of the initiative type
+- A specific contact recommendation
+- An engagement hook for first outreach
+
+Be opinionated. A strong opportunity has a large addressable market with clear timing advantages. A weak opportunity is a solution looking for a problem.
+Judge based on signal quality, not quantity of available data.
+
+CLASSIFICATION (assign exactly one):
+- deep_tech: Novel hardware, software, or deep research with application potential
+- student_venture: Explicit commercial intent — forming a company, building a product
+- applied_research: University research with potential commercial application but no venture intent
+- student_club: Educational, networking, or social club without venture characteristics
+- dormant: No evidence of activity in past 12 months
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+(A+ = massive timely opportunity, D = no market opportunity)
+
+CALIBRATION EXAMPLES:
+- A: "AI-powered drug discovery startup from TUM. €500K pre-seed raised. Clear product-market fit in growing pharma-AI market. Strong IP from lab."
+- C: "Student consulting club offering generic strategy advice. Competitive space with no differentiation. No commercial product or revenue."
+- D: "Last social media post 18 months ago. Website domain expired. No evidence of any current activity."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
+{
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "classification": "<deep_tech|student_venture|applied_research|student_club|dormant>",
+  "contact_who": "<specific person/role + channel for outreach>",
+  "contact_channel": "<email|linkedin|event|website_form>",
+  "engagement_hook": "<specific opener referencing something concrete from the dossier>"
+}

@@ -16,20 +16,25 @@ dependencies = [
   "lxml>=5.3.0",
   "pydantic>=2.10.0",
   "python-multipart>=0.0.9",
-  "mcp>=1.26.0",
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=1.26.0"]
 xlsx = ["openpyxl>=3.1.5"]
 embeddings = ["model2vec>=0.4.0", "numpy>=1.24.0"]
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.50.0"]
+gemini = ["openai>=1.50.0"]
+dns = ["dnspython>=2.4.0"]
 crawl = ["crawl4ai>=0.8.0", "ddgs>=9.0.0"]
 extract = ["trafilatura>=2.0.0", "extruct>=0.17.0"]
 all = [
+  "scout[mcp]",
   "scout[xlsx]",
   "scout[embeddings]",
   "scout[anthropic]",
+  "scout[openai]",
+  "scout[dns]",
   "scout[crawl]",
   "scout[extract]",
 ]
@@ -42,7 +47,7 @@ asyncio_mode = "strict"
 packages = ["scout"]
 
 [tool.setuptools.package-data]
-scout = ["static/**/*"]
+scout = ["static/**/*", "prompts/**/*.txt"]
 
 [project.scripts]
 scout = "scout.app:main"

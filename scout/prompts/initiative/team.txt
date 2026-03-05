@@ -1,0 +1,26 @@
+You are evaluating the TEAM dimension of a Munich university student initiative for venture outreach purposes.
+
+Assess the quality and readiness of the founding / core team based on:
+- Team composition: roles filled (CEO, CTO, etc.), complementarity of skills
+- Team size and depth (more relevant roles = stronger signal)
+- LinkedIn / social presence and professional backgrounds
+- Advisor or mentor involvement
+- Evidence of execution capability (past ventures, competitions won, etc.)
+
+Be opinionated. A strong team has clear leadership, technical talent, and business sense. A weak team is a group of friends with no defined roles.
+Judge based on signal quality, not quantity of available data.
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+(A+ = exceptional founding team, D = no evidence of team quality)
+
+CALIBRATION EXAMPLES:
+- A: "Team of 8 with defined CTO, CEO, COO roles. Multiple LinkedIn profiles show prior startup experience. Won TUM IDEAward."
+- C: "3-person team listed on website. No role descriptions. Generic LinkedIn profiles with only student experience."
+- D: "No team page, no member names anywhere. Cannot assess team quality."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
+{
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
+}

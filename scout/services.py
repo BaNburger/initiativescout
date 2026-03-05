@@ -202,7 +202,7 @@ def initiative_summary(init: Initiative) -> dict:
     )
 
 
-def initiative_detail(init: Initiative) -> dict:
+def initiative_detail(init: Initiative, *, sources: set[str] | None = None) -> dict:
     enriched, enriched_at_iso = _enrichment_meta(init)
     base = _build_initiative_dict(
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
@@ -220,6 +220,7 @@ def initiative_detail(init: Initiative) -> dict:
         {"id": e.id, "source_type": e.source_type, "source_url": e.source_url,
          "summary": e.summary, "fetched_at": e.fetched_at.isoformat()}
         for e in init.enrichments
+        if sources is None or e.source_type in sources
     ]
     base["projects"] = [project_summary(p) for p in init.projects]
     return base
@@ -788,6 +789,78 @@ async def run_discovery(session: Session, init: Initiative) -> dict:
         "discovered_urls": discovered,
         "urls_found": len(discovered),
     }
+
+
+async def enrich_with_diagnostics(
+    session: Session, init: Initiative, *, discover: bool = False,
+) -> dict:
+    """Full enrichment pipeline: optional discovery → enrich → source diagnostics.
+
+    This is the single entry point for both MCP and the web API. It handles:
+    - Auto-discovery when no URLs are configured
+    - Opening/closing the shared crawler
+    - Classifying sources into succeeded/failed/not_configured
+
+    Caller must commit the session after this returns.
+    """
+    from scout.enricher import open_crawler
+
+    # Smart default: auto-discover when entity has no URLs at all
+    auto_discover = False
+    if not discover:
+        has_urls = bool(
+            (init.field("website") or "").strip()
+            or (init.field("github_org") or "").strip()
+            or json_parse(init.extra_links_json)
+        )
+        if not has_urls:
+            discover = True
+            auto_discover = True
+
+    discover_result = None
+    if discover:
+        try:
+            disc = await run_discovery(session, init)
+            session.commit()
+            discover_result = {"urls_found": disc["urls_found"]}
+            if auto_discover:
+                discover_result["auto_triggered"] = True
+        except ImportError:
+            discover_result = {"skipped": True, "reason": "ddgs not installed — pip install 'scout[crawl]'"}
+        except Exception as exc:
+            discover_result = {"skipped": True, "reason": str(exc)[:100]}
+
+    async with open_crawler() as crawler:
+        new = await run_enrichment(session, init, crawler=crawler)
+
+    # Classify sources
+    succeeded = [e.source_type for e in new]
+    possible = {"website", "team_page", "github",
+                "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"}
+    extra = json_parse(init.extra_links_json)
+    if extra:
+        possible.update(k.removesuffix("_urls").removesuffix("_url") for k in extra if extra[k])
+    not_configured = []
+    has_website = bool((init.field("website") or "").strip())
+    has_github = bool((init.field("github_org") or "").strip())
+    if not has_website:
+        not_configured.extend(["website", "structured_data", "tech_stack", "dns", "sitemap", "careers"])
+    if not (init.field("team_page") or "").strip():
+        not_configured.append("team_page")
+    if not has_github:
+        not_configured.extend(["github", "git_deep"])
+    failed = sorted(possible - set(succeeded) - set(not_configured))
+
+    result = {
+        "initiative_id": init.id, "initiative_name": init.name,
+        "enrichments_added": len(new),
+        "sources_succeeded": succeeded,
+        "sources_failed": failed,
+        "sources_not_configured": not_configured,
+    }
+    if discover_result:
+        result["discovery"] = discover_result
+    return result
 
 
 def _ensure_client(client: LLMClient | None) -> LLMClient:

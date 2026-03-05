@@ -213,8 +213,13 @@ async def list_initiatives(
 
 @app.get("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
          tags=["Initiatives"], summary="Get full initiative detail with enrichments, projects, and scores")
-async def get_initiative(initiative_id: int, session: Session = Depends(db_session)):
-    return services.initiative_detail(_get_or_404(session, Initiative, initiative_id))
+async def get_initiative(
+    initiative_id: int,
+    sources: str | None = Query(None, description="Comma-separated enrichment source types to include (e.g. 'github,website')"),
+    session: Session = Depends(db_session),
+):
+    from scout.utils import parse_comma_set
+    return services.initiative_detail(_get_or_404(session, Initiative, initiative_id), sources=parse_comma_set(sources))
 
 
 @app.put("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
@@ -316,12 +321,10 @@ async def enrich_batch(body: dict[str, Any] | None = None):
 
 @app.post("/api/enrich/{initiative_id}", tags=["Enrichment"], summary="Enrich a single initiative from web and GitHub")
 async def enrich_one(initiative_id: int, session: Session = Depends(db_session)):
-    from scout.enricher import open_crawler
     init = _get_or_404(session, Initiative, initiative_id)
-    async with open_crawler() as crawler:
-        added = await services.run_enrichment(session, init, crawler=crawler)
+    result = await services.enrich_with_diagnostics(session, init)
     session.commit()
-    return {"enrichments_added": len(added)}
+    return result
 
 
 @app.post("/api/discover/{initiative_id}", tags=["Enrichment"], summary="Discover new URLs via DuckDuckGo search")

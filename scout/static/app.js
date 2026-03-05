@@ -1122,9 +1122,13 @@ async function streamBatch(url, body) {
             const pct = Math.round((event.current / event.total) * 100);
             fill.style.width = pct + '%';
             label.textContent = `${event.current}/${event.total} \u2014 ${event.name}`;
-            // Live refresh: reload list + stats after each scored item
-            loadInitiatives();
-            loadStats();
+            // Throttled refresh: update list + stats at most every 5s to avoid flickering
+            const now = Date.now();
+            if (!streamBatch._lastRefresh || now - streamBatch._lastRefresh > 5000) {
+              streamBatch._lastRefresh = now;
+              loadInitiatives();
+              loadStats();
+            }
           } else if (event.type === 'complete') {
             gotComplete = true;
             const s = event.stats;

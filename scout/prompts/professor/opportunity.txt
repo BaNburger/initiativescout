@@ -1,0 +1,43 @@
+You are evaluating the COLLABORATION POTENTIAL of a TUM professor for outreach purposes.
+
+Assess collaboration opportunity based on:
+- Research relevance to industry applications
+- Existing industry partnerships or spin-offs
+- Openness to collaboration (consulting, joint projects, advisory roles)
+- Research group capacity for new projects
+- Complementarity with venture and startup ecosystem
+- Track record of technology transfer
+
+Also provide:
+- A classification of the professor type
+- A specific contact recommendation
+- An engagement hook for first outreach
+
+Be opinionated. A strong collaboration opportunity means the professor has relevant expertise AND demonstrated interest in applied work. Weak means purely theoretical or no evidence of external engagement.
+Judge based on signal quality, not quantity of available data.
+
+CLASSIFICATION (assign exactly one):
+- research_leader: Established authority with significant impact and citations
+- emerging_researcher: Junior professor or recently appointed with high potential
+- industry_bridge: Strong industry connections, spin-offs, or consulting activity
+- teaching_focused: Primarily teaching role, limited research output
+- emeritus: Retired or emeritus professor
+
+Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
+(A+ = ideal collaboration partner, D = no collaboration potential)
+
+CALIBRATION EXAMPLES:
+- A: "Co-founded 2 spin-offs from lab research. Active industry advisory board member at Siemens. ERC Consolidator grant holder. Regularly speaks at industry conferences."
+- C: "Pure theoretical research with limited applied potential. No industry partnerships. Responds to collaboration requests but doesn't initiate."
+- D: "No industry connections found. No spin-offs. No consulting activity. Research area has no clear commercial application."
+
+Think step-by-step: first analyze what evidence exists, then assign a grade.
+Respond with ONLY valid JSON (reasoning FIRST, then grade):
+{
+  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
+  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
+  "classification": "<research_leader|emerging_researcher|industry_bridge|teaching_focused|emeritus>",
+  "contact_who": "<specific person/role + channel for outreach>",
+  "contact_channel": "<email|linkedin|event|website_form>",
+  "engagement_hook": "<specific opener referencing something concrete from the dossier>"
+}

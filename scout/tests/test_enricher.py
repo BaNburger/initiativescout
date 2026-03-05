@@ -1328,25 +1328,25 @@ class TestChainOfThoughtPrompts:
     """Tests that scoring prompts use chain-of-thought (reasoning before grade)."""
 
     def test_initiative_prompts_reasoning_first(self):
-        from scout.scorer import DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT
-        for prompt in [DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT]:
+        from scout.scorer import _ALL_DEFAULT_PROMPTS
+        for dim, (label, prompt) in _ALL_DEFAULT_PROMPTS["initiative"].items():
             # "reasoning" should appear before "grade" in the JSON template
             reasoning_pos = prompt.find('"reasoning"')
             grade_pos = prompt.find('"grade"')
-            assert reasoning_pos < grade_pos, f"reasoning should come before grade in prompt"
+            assert reasoning_pos < grade_pos, f"reasoning should come before grade in {dim} prompt"
             assert "Think step-by-step" in prompt
             assert "CALIBRATION EXAMPLES" in prompt
 
     def test_professor_prompts_reasoning_first(self):
-        from scout.scorer import DEFAULT_PROFESSOR_TEAM_PROMPT, DEFAULT_PROFESSOR_TECH_PROMPT, DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT
-        for prompt in [DEFAULT_PROFESSOR_TEAM_PROMPT, DEFAULT_PROFESSOR_TECH_PROMPT, DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT]:
+        from scout.scorer import _ALL_DEFAULT_PROMPTS
+        for dim, (label, prompt) in _ALL_DEFAULT_PROMPTS["professor"].items():
             reasoning_pos = prompt.find('"reasoning"')
             grade_pos = prompt.find('"grade"')
             assert reasoning_pos < grade_pos
 
     def test_prompts_have_anti_verbosity_bias(self):
-        from scout.scorer import DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT
-        for prompt in [DEFAULT_TEAM_PROMPT, DEFAULT_TECH_PROMPT, DEFAULT_OPPORTUNITY_PROMPT]:
+        from scout.scorer import _ALL_DEFAULT_PROMPTS
+        for dim, (label, prompt) in _ALL_DEFAULT_PROMPTS["initiative"].items():
             assert "signal quality" in prompt.lower()
 
 

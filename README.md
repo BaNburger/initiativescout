@@ -12,7 +12,7 @@ Requires **Python 3.11+**.
 pip install git+https://github.com/BaNburger/initiativescout.git
 ```
 
-This gives you the core: web UI, REST API, MCP server, web enrichment, and FTS5 search. No heavy dependencies — just FastAPI, SQLAlchemy, httpx, and lxml.
+This gives you the core: web UI, REST API, web enrichment, and FTS5 search. No heavy dependencies — just FastAPI, SQLAlchemy, httpx, and lxml. The MCP server requires the `scout[mcp]` extra (see below).
 
 ### Install with extras
 
@@ -25,13 +25,20 @@ pip install 'scout[xlsx]'
 # Semantic similarity search (model2vec, ~15MB, no PyTorch)
 pip install 'scout[embeddings]'
 
+# MCP server (for Claude Desktop / MCP clients)
+pip install 'scout[mcp]'
+
 # LLM scoring providers
 pip install 'scout[anthropic]'    # Anthropic (Claude)
 pip install 'scout[openai]'       # OpenAI / OpenAI-compatible
+pip install 'scout[gemini]'       # Google Gemini (via OpenAI-compatible endpoint)
 
 # Enhanced web crawling
 pip install 'scout[crawl]'        # Crawl4AI (JS rendering) + DuckDuckGo discovery
 pip install 'scout[extract]'      # trafilatura + extruct (structured data extraction)
+
+# DNS enrichment
+pip install 'scout[dns]'          # MX, SPF, DMARC record analysis
 
 # Everything
 pip install 'scout[all]'
@@ -82,7 +89,7 @@ Open the browser and start adding entities — via the web UI, the REST API, or 
 1. **Import** — Add entities manually, via the REST API, via MCP tools, or by uploading an XLSX spreadsheet (requires `scout[xlsx]`).
 2. **Discover** — Find additional URLs (LinkedIn, GitHub, HuggingFace, Crunchbase) via DuckDuckGo search (requires `scout[crawl]`).
 3. **Enrich** — Fetch live data from entity websites, team pages, GitHub orgs, and all discovered links. Uses Crawl4AI for JS rendering when installed, otherwise falls back to httpx+lxml.
-4. **Score** — Parallel LLM calls evaluate configurable dimensions (e.g. Team, Tech, Opportunity). Verdict and score are computed deterministically from the average grade. Supports Anthropic and OpenAI providers.
+4. **Score** — Parallel LLM calls evaluate configurable dimensions (e.g. Team, Tech, Opportunity). Verdict and score are computed deterministically from the average grade. Supports Anthropic, OpenAI, and Gemini providers.
 5. **Browse** — Filter, sort, and inspect entities in the web UI. Full keyboard navigation, inline editing, live updates via revision polling.
 6. **Search** — FTS5 full-text search with BM25 ranking. Semantic similarity search via model2vec embeddings (requires `scout[embeddings]`).
 7. **Export** — Download filtered results as a styled XLSX workbook (requires `scout[xlsx]`).
@@ -162,8 +169,9 @@ Each dimension returns a school grade (A+ through D, where A+=1.0, D=4.0) and re
 Scoring uses a configurable LLM provider, set via environment variables (typically in `.mcp.json`):
 
 - **Anthropic** (default) — requires `ANTHROPIC_API_KEY` and `scout[anthropic]`. Default model: `claude-haiku-4-5-20251001`.
-- **OpenAI** — set `LLM_PROVIDER=openai` and `OPENAI_API_KEY`, requires `scout[openai]`. Default model: `gpt-4o-mini`.
+- **OpenAI** — set `LLM_PROVIDER=openai` and `OPENAI_API_KEY`, requires `scout[openai]`. Default model: `gpt-5-mini`.
 - **OpenAI-compatible** — set `LLM_PROVIDER=openai_compatible`, `OPENAI_API_KEY`, and `OPENAI_BASE_URL`.
+- **Gemini** — set `LLM_PROVIDER=gemini` and `GOOGLE_API_KEY` (or `GEMINI_API_KEY`), requires `scout[gemini]`. Default model: `gemini-2.0-flash-lite`. Uses OpenAI-compatible endpoint — no additional SDK needed.
 
 The web server auto-loads LLM env vars from `.mcp.json` if present, so the same config works for both `scout` and `scout-mcp`.
 
@@ -321,6 +329,9 @@ initiativescout/
 │   │   ├── _github.py        #     GitHub org/repo enrichment
 │   │   ├── _metadata.py      #     Structured data, tech stack, DNS, sitemap
 │   │   └── _discovery.py     #     DuckDuckGo URL discovery
+│   ├── prompts/             #   Default scoring prompt templates (.txt files)
+│   │   ├── initiative/      #     Team, Tech, Opportunity prompts for initiatives
+│   │   └── professor/       #     Team, Tech, Opportunity prompts for professors
 │   ├── scorer.py             #   Dimension LLM scoring + deterministic aggregation
 │   ├── embedder.py           #   Dense embeddings (model2vec) + similarity search
 │   ├── scrapers.py           #   Entity-specific scrapers (TUM professor directory)
@@ -339,10 +350,12 @@ initiativescout/
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key for LLM scoring |
 | `GITHUB_TOKEN` | No | Increases GitHub API rate limits during enrichment |
-| `LLM_PROVIDER` | No | `anthropic` (default) or `openai` / `openai_compatible` |
-| `LLM_MODEL` | No | Override model name (default: `claude-haiku-4-5-20251001` or `gpt-4o-mini`) |
+| `LLM_PROVIDER` | No | `anthropic` (default), `openai`, `openai_compatible`, or `gemini` |
+| `LLM_MODEL` | No | Override model name (default varies by provider) |
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `OPENAI_BASE_URL` | No | Custom OpenAI-compatible endpoint |
+| `GOOGLE_API_KEY` | If using Gemini | Google API key for Gemini models |
+| `GEMINI_API_KEY` | If using Gemini | Alternative to `GOOGLE_API_KEY` |
 
 These can be set in `.mcp.json` under `mcpServers.scout.env` — both `scout` (web server) and `scout-mcp` read from this file automatically.
 
@@ -370,10 +383,13 @@ export OPENAI_API_KEY=sk-...   # for OpenAI (requires scout[openai])
 If you see an `ImportError` mentioning `scout[...]`, install the missing extra:
 
 ```bash
+pip install 'scout[mcp]'           # for MCP server (Claude Desktop)
 pip install 'scout[xlsx]'          # for XLSX import/export
 pip install 'scout[embeddings]'    # for semantic search
 pip install 'scout[anthropic]'     # for Anthropic scoring
 pip install 'scout[openai]'        # for OpenAI scoring
+pip install 'scout[gemini]'        # for Gemini scoring
+pip install 'scout[dns]'           # for DNS enrichment
 pip install 'scout[crawl]'         # for Crawl4AI + DuckDuckGo
 pip install 'scout[extract]'       # for trafilatura + extruct
 pip install 'scout[all]'           # everything

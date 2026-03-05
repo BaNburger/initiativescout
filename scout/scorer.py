@@ -32,6 +32,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from scout.models import Enrichment, Initiative, OutreachScore, Project
@@ -87,269 +88,48 @@ class Grade:
         return str(raw or "").strip().upper().replace(" ", "")
 
 # ---------------------------------------------------------------------------
-# Default prompts (editable via API / frontend)
+# Default prompts — loaded from scout/prompts/{entity_type}/{dimension}.txt
+# ---------------------------------------------------------------------------
+# Prompts live in external text files so they can be iterated on without
+# touching Python code, version-controlled separately, and fed to eval
+# frameworks (LangSmith, Langfuse, etc.) that expect prompt templates as
+# standalone assets.
+#
+# The DB-stored prompts (editable via the UI / API) always take priority;
+# these files provide the *seed defaults* for new databases.
 # ---------------------------------------------------------------------------
 
-DEFAULT_TEAM_PROMPT = """\
-You are evaluating the TEAM dimension of a Munich university student initiative \
-for venture outreach purposes.
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-Assess the quality and readiness of the founding / core team based on:
-- Team composition: roles filled (CEO, CTO, etc.), complementarity of skills
-- Team size and depth (more relevant roles = stronger signal)
-- LinkedIn / social presence and professional backgrounds
-- Advisor or mentor involvement
-- Evidence of execution capability (past ventures, competitions won, etc.)
-
-Be opinionated. A strong team has clear leadership, technical talent, and \
-business sense. A weak team is a group of friends with no defined roles.
-Judge based on signal quality, not quantity of available data.
-
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-(A+ = exceptional founding team, D = no evidence of team quality)
-
-CALIBRATION EXAMPLES:
-- A: "Team of 8 with defined CTO, CEO, COO roles. Multiple LinkedIn profiles \
-show prior startup experience. Won TUM IDEAward."
-- C: "3-person team listed on website. No role descriptions. Generic LinkedIn \
-profiles with only student experience."
-- D: "No team page, no member names anywhere. Cannot assess team quality."
-
-Think step-by-step: first analyze what evidence exists, then assign a grade.
-Respond with ONLY valid JSON (reasoning FIRST, then grade):
-{
-  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
+# Labels for the default dimensions per entity type
+_PROMPT_LABELS: dict[str, dict[str, str]] = {
+    "initiative": {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"},
+    "professor": {"team": "Research Group", "tech": "Research Output", "opportunity": "Collaboration Potential"},
 }
-"""
 
-DEFAULT_TECH_PROMPT = """\
-You are evaluating the TECH dimension of a Munich university student initiative \
-for venture outreach purposes.
 
-Assess technical depth and differentiation based on:
-- GitHub activity: number of repos, contributors, recent commits, CI/CD presence
-- Code quality signals: active development, multiple contributors, automation
-- Research output: HuggingFace models, OpenAlex papers, Semantic Scholar hits
-- Key repositories: what they're actually building, technical novelty
-- Technology domains and technical moat
+def _load_prompt_file(entity_type: str, dimension: str) -> str:
+    """Read a prompt .txt file, falling back to the initiative version."""
+    path = _PROMPTS_DIR / entity_type / f"{dimension}.txt"
+    if not path.exists():
+        path = _PROMPTS_DIR / "initiative" / f"{dimension}.txt"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
-Be opinionated. Strong tech means active development of novel technology with \
-measurable output. Weak tech means a landing page with no code or research.
-Judge based on signal quality, not quantity of available data.
 
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-(A+ = deep tech with strong GitHub + research presence, D = no technical evidence)
+def _load_all_prompts() -> dict[str, dict[str, tuple[str, str]]]:
+    """Build the full prompt registry from .txt files on disk."""
+    registry: dict[str, dict[str, tuple[str, str]]] = {}
+    for entity_type, labels in _PROMPT_LABELS.items():
+        prompts: dict[str, tuple[str, str]] = {}
+        for dim, label in labels.items():
+            content = _load_prompt_file(entity_type, dim)
+            if content:
+                prompts[dim] = (label, content)
+        registry[entity_type] = prompts
+    return registry
 
-CALIBRATION EXAMPLES:
-- A: "12 GitHub repos, 45 contributors, 200+ commits in 90 days. CI/CD present. \
-Published HuggingFace model with 500+ downloads. Active ML research."
-- C: "2 GitHub repos with sporadic commits. Single contributor. No research \
-output. Basic web app with standard frameworks."
-- D: "No GitHub organization. No code repositories. No research publications. \
-Only a marketing website."
 
-Think step-by-step: first analyze what evidence exists, then assign a grade.
-Respond with ONLY valid JSON (reasoning FIRST, then grade):
-{
-  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
-}
-"""
-
-DEFAULT_OPPORTUNITY_PROMPT = """\
-You are evaluating the OPPORTUNITY dimension of a Munich university student \
-initiative for venture outreach purposes.
-
-Assess market opportunity and timing based on:
-- Market size and growth potential
-- Competitive landscape and differentiation
-- Regulatory tailwinds or headwinds
-- Funding climate for this sector
-- University ecosystem support (Munich TUM/LMU/HM advantage)
-- Commercial intent signals (product, customers, revenue)
-
-Also provide:
-- A classification of the initiative type
-- A specific contact recommendation
-- An engagement hook for first outreach
-
-Be opinionated. A strong opportunity has a large addressable market with clear \
-timing advantages. A weak opportunity is a solution looking for a problem.
-Judge based on signal quality, not quantity of available data.
-
-CLASSIFICATION (assign exactly one):
-- deep_tech: Novel hardware, software, or deep research with application potential
-- student_venture: Explicit commercial intent — forming a company, building a product
-- applied_research: University research with potential commercial application but no venture intent
-- student_club: Educational, networking, or social club without venture characteristics
-- dormant: No evidence of activity in past 12 months
-
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-(A+ = massive timely opportunity, D = no market opportunity)
-
-CALIBRATION EXAMPLES:
-- A: "AI-powered drug discovery startup from TUM. €500K pre-seed raised. \
-Clear product-market fit in growing pharma-AI market. Strong IP from lab."
-- C: "Student consulting club offering generic strategy advice. Competitive \
-space with no differentiation. No commercial product or revenue."
-- D: "Last social media post 18 months ago. Website domain expired. No \
-evidence of any current activity."
-
-Think step-by-step: first analyze what evidence exists, then assign a grade.
-Respond with ONLY valid JSON (reasoning FIRST, then grade):
-{
-  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "classification": "<deep_tech|student_venture|applied_research|student_club|dormant>",
-  "contact_who": "<specific person/role + channel for outreach>",
-  "contact_channel": "<email|linkedin|event|website_form>",
-  "engagement_hook": "<specific opener referencing something concrete from the dossier>"
-}
-"""
-
-# ---------------------------------------------------------------------------
-# Professor default prompts
-# ---------------------------------------------------------------------------
-
-DEFAULT_PROFESSOR_TEAM_PROMPT = """\
-You are evaluating the RESEARCH GROUP dimension of a TUM professor \
-for collaboration and outreach purposes.
-
-Assess the quality and activity of the professor's research group based on:
-- Research group size and composition (postdocs, PhD students, research staff)
-- LinkedIn / professional presence of group members
-- Advisor and collaborator network quality
-- Evidence of successful mentorship (graduated PhDs, placed students)
-- Industry advisory roles or board memberships
-
-Be opinionated. A strong research group has active members, clear structure, \
-and evidence of producing results. A weak signal is a professor with no \
-visible group activity.
-Judge based on signal quality, not quantity of available data.
-
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-(A+ = exceptional research group, D = no evidence of group quality)
-
-CALIBRATION EXAMPLES:
-- A: "Group of 15+ with 3 postdocs, 8 PhD students. Multiple alumni now at \
-Google/DeepMind. Active LinkedIn profiles show strong publication records."
-- C: "Small group page lists 4 PhD students. No alumni tracking. Limited \
-online presence for group members."
-- D: "No group page found. No team members listed anywhere."
-
-Think step-by-step: first analyze what evidence exists, then assign a grade.
-Respond with ONLY valid JSON (reasoning FIRST, then grade):
-{
-  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
-}
-"""
-
-DEFAULT_PROFESSOR_TECH_PROMPT = """\
-You are evaluating the RESEARCH OUTPUT dimension of a TUM professor \
-for collaboration and outreach purposes.
-
-Assess research depth and technical impact based on:
-- Publication record: recent papers, venue quality, citation signals
-- GitHub activity: open-source code, research artifacts, tools
-- Research output: HuggingFace models, datasets, benchmarks
-- Patents, standards contributions, technical reports
-- Research funding signals (ERC grants, DFG projects, industry funding)
-
-Be opinionated. Strong research output means active publication with \
-reproducible artifacts and open-source impact. Weak means no visible \
-publications or code.
-Judge based on signal quality, not quantity of available data.
-
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-(A+ = prolific researcher with open-source impact, D = no research evidence)
-
-CALIBRATION EXAMPLES:
-- A: "50+ papers in top venues (NeurIPS, ICML). 3 GitHub repos with 500+ \
-stars. Published HuggingFace datasets. H-index > 30."
-- C: "12 papers in regional conferences. No open-source code. No models or \
-datasets shared publicly."
-- D: "No publications found in any database. No GitHub presence."
-
-Think step-by-step: first analyze what evidence exists, then assign a grade.
-Respond with ONLY valid JSON (reasoning FIRST, then grade):
-{
-  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>"
-}
-"""
-
-DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT = """\
-You are evaluating the COLLABORATION POTENTIAL of a TUM professor \
-for outreach purposes.
-
-Assess collaboration opportunity based on:
-- Research relevance to industry applications
-- Existing industry partnerships or spin-offs
-- Openness to collaboration (consulting, joint projects, advisory roles)
-- Research group capacity for new projects
-- Complementarity with venture and startup ecosystem
-- Track record of technology transfer
-
-Also provide:
-- A classification of the professor type
-- A specific contact recommendation
-- An engagement hook for first outreach
-
-Be opinionated. A strong collaboration opportunity means the professor \
-has relevant expertise AND demonstrated interest in applied work. \
-Weak means purely theoretical or no evidence of external engagement.
-Judge based on signal quality, not quantity of available data.
-
-CLASSIFICATION (assign exactly one):
-- research_leader: Established authority with significant impact and citations
-- emerging_researcher: Junior professor or recently appointed with high potential
-- industry_bridge: Strong industry connections, spin-offs, or consulting activity
-- teaching_focused: Primarily teaching role, limited research output
-- emeritus: Retired or emeritus professor
-
-Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D
-(A+ = ideal collaboration partner, D = no collaboration potential)
-
-CALIBRATION EXAMPLES:
-- A: "Co-founded 2 spin-offs from lab research. Active industry advisory \
-board member at Siemens. ERC Consolidator grant holder. Regularly speaks at \
-industry conferences."
-- C: "Pure theoretical research with limited applied potential. No industry \
-partnerships. Responds to collaboration requests but doesn't initiate."
-- D: "No industry connections found. No spin-offs. No consulting activity. \
-Research area has no clear commercial application."
-
-Think step-by-step: first analyze what evidence exists, then assign a grade.
-Respond with ONLY valid JSON (reasoning FIRST, then grade):
-{
-  "reasoning": "<2-3 sentences: analyze evidence, then justify the grade>",
-  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",
-  "classification": "<research_leader|emerging_researcher|industry_bridge|teaching_focused|emeritus>",
-  "contact_who": "<specific person/role + channel for outreach>",
-  "contact_channel": "<email|linkedin|event|website_form>",
-  "engagement_hook": "<specific opener referencing something concrete from the dossier>"
-}
-"""
-
-# ---------------------------------------------------------------------------
-# Prompt & classification registries (keyed by entity type)
-# ---------------------------------------------------------------------------
-
-# {entity_type: {key: (label, content)}}
-_ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = {
-    "initiative": {
-        "team": ("Team", DEFAULT_TEAM_PROMPT),
-        "tech": ("Tech", DEFAULT_TECH_PROMPT),
-        "opportunity": ("Opportunity", DEFAULT_OPPORTUNITY_PROMPT),
-    },
-    "professor": {
-        "team": ("Research Group", DEFAULT_PROFESSOR_TEAM_PROMPT),
-        "tech": ("Research Output", DEFAULT_PROFESSOR_TECH_PROMPT),
-        "opportunity": ("Collaboration Potential", DEFAULT_PROFESSOR_OPPORTUNITY_PROMPT),
-    },
-}
+_ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = _load_all_prompts()
 
 def default_prompts_for(entity_type: str) -> dict[str, tuple[str, str]]:
     """Return default prompt definitions for the given entity type."""
@@ -419,7 +199,7 @@ class LLMClient:
             self._client = anthropic.AsyncAnthropic(api_key=key)
         elif self.provider == "gemini":
             import openai
-            self.model = self.model or "gemini-3.1-flash-lite"
+            self.model = self.model or "gemini-2.0-flash-lite"
             key = self._api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
             if not key:
                 raise LLMCallError(

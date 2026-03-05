@@ -9,6 +9,14 @@ from typing import Any
 _MISSING = object()
 
 
+def parse_comma_set(value: str | None) -> set[str] | None:
+    """Parse a comma-separated string into a set, or None if empty/blank."""
+    if not value:
+        return None
+    result = {s.strip() for s in value.split(",") if s.strip()}
+    return result or None
+
+
 def json_parse(value: str | None, default: Any = _MISSING) -> Any:
     """Safely parse a JSON string, returning *default* on failure.
 
