@@ -1,52 +1,67 @@
-# Scout — Outreach Intelligence
+# Scout — Entity Sourcing & Scoring Engine
 
-Web app and MCP server for discovering, enriching, and scoring entities (initiatives, professors, and more) for outreach. Import spreadsheet data, scrape directories, enrich with live web/GitHub signals, score with LLM-powered evaluations, and export results back to XLSX.
+Web app and MCP server for discovering, enriching, and scoring any type of entity — companies, people, initiatives, products, research papers, and more. Scout provides a structured pipeline: import data, enrich it with live web signals, score it with LLM-powered evaluations, and export results.
 
 ## Installation
 
 Requires **Python 3.11+**.
 
-### Recommended: pipx (isolated install)
-
-```bash
-pipx install git+https://github.com/BaNburger/initiativescout.git
-```
-
-This installs `scout`, `scout-mcp`, and `scout-setup` commands in an isolated environment. Semantic search via [model2vec](https://github.com/MinishLab/model2vec) (~15MB, no PyTorch) is included by default.
-
-### Alternative: pip
+### Minimal install (web UI + MCP server)
 
 ```bash
 pip install git+https://github.com/BaNburger/initiativescout.git
 ```
 
-### Optional extras
+This gives you the core: web UI, REST API, MCP server, web enrichment, and FTS5 search. No heavy dependencies — just FastAPI, SQLAlchemy, httpx, and lxml.
+
+### Install with extras
+
+Pick only what you need:
 
 ```bash
-pip install 'scout[openai]'   # OpenAI / OpenAI-compatible LLM provider
-pip install 'scout[crawl]'    # Crawl4AI (JS rendering) + DuckDuckGo discovery
+# XLSX import/export
+pip install 'scout[xlsx]'
+
+# Semantic similarity search (model2vec, ~15MB, no PyTorch)
+pip install 'scout[embeddings]'
+
+# LLM scoring providers
+pip install 'scout[anthropic]'    # Anthropic (Claude)
+pip install 'scout[openai]'       # OpenAI / OpenAI-compatible
+
+# Enhanced web crawling
+pip install 'scout[crawl]'        # Crawl4AI (JS rendering) + DuckDuckGo discovery
+pip install 'scout[extract]'      # trafilatura + extruct (structured data extraction)
+
+# Everything
+pip install 'scout[all]'
 ```
 
-### Update
+You can combine extras: `pip install 'scout[xlsx,embeddings,anthropic]'`
+
+### Recommended: pipx (isolated install)
 
 ```bash
-pipx upgrade scout          # pipx
-pip install --upgrade git+https://github.com/BaNburger/initiativescout.git  # pip
+pipx install 'git+https://github.com/BaNburger/initiativescout.git'
+
+# With extras:
+pipx install 'git+https://github.com/BaNburger/initiativescout.git[xlsx,embeddings,anthropic]'
 ```
 
-### Uninstall
-
-```bash
-pipx uninstall scout        # pipx
-pip uninstall scout         # pip
-```
-
-### Development install (contributors)
+### Development install
 
 ```bash
 git clone https://github.com/BaNburger/initiativescout.git
 cd initiativescout
-pip install -e .
+pip install -e '.[dev]'           # core + pytest
+pip install -e '.[dev,all]'       # core + pytest + all optional features
+```
+
+### Update / Uninstall
+
+```bash
+pip install --upgrade git+https://github.com/BaNburger/initiativescout.git
+pip uninstall scout
 ```
 
 ## Quickstart
@@ -60,27 +75,38 @@ scout-setup all       # auto-configure MCP for Claude Desktop, Cursor, Windsurf
 scout --version       # print version
 ```
 
-Open the browser and import an `.xlsx` spreadsheet to get started.
+Open the browser and start adding entities — via the web UI, the REST API, or MCP tools.
 
 ## How It Works
 
-1. **Import** — Upload an XLSX spreadsheet via the web UI. Supports three sheet types: Spin-Off Targets, All Initiatives, and the Initiatives overview sheet. Deduplicates by name+uni.
-2. **Discover** — Find additional URLs (LinkedIn, GitHub, HuggingFace, Crunchbase) via DuckDuckGo search. Rate-limited at ~12s per call; results persist so each initiative only needs one discovery pass.
-3. **Enrich** — Fetch live data from initiative websites, team pages, GitHub orgs, and all discovered extra links. Uses Crawl4AI for JS rendering when installed, otherwise falls back to httpx+lxml.
-4. **Score** — Three parallel LLM calls evaluate Team, Tech, and Opportunity dimensions. Verdict and score are computed deterministically from the average grade. Supports configurable LLM provider (Anthropic or OpenAI).
-5. **Browse** — Filter, sort, and inspect initiatives in the web UI. Full keyboard navigation (spreadsheet-style grid cursor + detail browsing). Inline editing via double-click. Live updates via revision polling when data changes from MCP or other processes.
-6. **Search** — FTS5 full-text search with BM25 ranking across name, description, sector, domains, and faculty. Semantic similarity search via model2vec embeddings.
-7. **Export** — Download filtered results as a styled XLSX workbook via the Export button in the web UI, the REST API, or the `export_initiatives` MCP tool.
+1. **Import** — Add entities manually, via the REST API, via MCP tools, or by uploading an XLSX spreadsheet (requires `scout[xlsx]`).
+2. **Discover** — Find additional URLs (LinkedIn, GitHub, HuggingFace, Crunchbase) via DuckDuckGo search (requires `scout[crawl]`).
+3. **Enrich** — Fetch live data from entity websites, team pages, GitHub orgs, and all discovered links. Uses Crawl4AI for JS rendering when installed, otherwise falls back to httpx+lxml.
+4. **Score** — Parallel LLM calls evaluate configurable dimensions (e.g. Team, Tech, Opportunity). Verdict and score are computed deterministically from the average grade. Supports Anthropic and OpenAI providers.
+5. **Browse** — Filter, sort, and inspect entities in the web UI. Full keyboard navigation, inline editing, live updates via revision polling.
+6. **Search** — FTS5 full-text search with BM25 ranking. Semantic similarity search via model2vec embeddings (requires `scout[embeddings]`).
+7. **Export** — Download filtered results as a styled XLSX workbook (requires `scout[xlsx]`).
+
+## Entity Types
+
+Scout is entity-agnostic. The `entity_type` field on each database controls scoring dimensions, enrichment strategies, and default prompts. Built-in types include `initiative` and `professor`, but you can define any type via `ENTITY_CONFIG` with custom:
+
+- Scoring dimensions and weights
+- Enrichment pipelines
+- Classification labels
+- LLM prompts
+
+All entity-specific data beyond the universal columns (name, description, website, email) is stored in `custom_fields_json`, so no schema changes are needed for new entity types.
 
 ## Web UI Features
 
 - **Database switching** — Select or create databases from the header dropdown.
 - **Import / Export XLSX** — Import spreadsheets and export scored results with verdict-colored rows.
 - **Batch operations** — "Score Unscored" and "Rescore All" buttons with progress bar, pause, and cancel controls.
-- **Prompt editor** — Edit the three scoring dimension prompts directly in the UI (Prompts button).
+- **Prompt editor** — Edit the scoring dimension prompts directly in the UI (Prompts button).
 - **MCP Setup** — In-app setup instructions for connecting Scout to Claude Desktop, Cursor, and Windsurf.
 - **Revision polling** — The UI automatically refreshes when data changes from MCP tools or other processes.
-- **Custom columns** — Define additional per-initiative fields (text, number, boolean, URL) that appear in the list view and are editable inline.
+- **Custom columns** — Define additional per-entity fields (text, number, boolean, URL) that appear in the list view and are editable inline.
 - **Keyboard shortcuts** — Press `?` for the full shortcut overlay.
 
 ## Keyboard Shortcuts
@@ -91,8 +117,8 @@ Open the browser and import an `.xlsx` spreadsheet to get started.
 |-----|--------|
 | Arrow keys | Move cursor cell-by-cell |
 | `Enter` | Open detail for selected row |
-| `e` | Enrich selected initiative |
-| `s` | Score selected initiative |
+| `e` | Enrich selected entity |
+| `s` | Score selected entity |
 | `i` | Open import |
 | `/` | Focus search |
 | `?` | Show keyboard shortcut help |
@@ -101,16 +127,16 @@ Open the browser and import an `.xlsx` spreadsheet to get started.
 
 | Key | Action |
 |-----|--------|
-| `Up` / `Down` | Browse prev/next initiative |
+| `Up` / `Down` | Browse prev/next entity |
 | `\` | Return to grid |
-| `e` | Enrich current initiative |
-| `s` | Score current initiative |
+| `e` | Enrich current entity |
+| `s` | Score current entity |
 | `f` | Find similar |
 | `Esc` | Close overlay / return to grid |
 
 ## Scoring Architecture
 
-Each initiative is scored on three dimensions in parallel:
+Each entity is scored on configurable dimensions in parallel. The default `initiative` type uses three dimensions:
 
 | Dimension | Data Sources | LLM Evaluates |
 |-----------|-------------|---------------|
@@ -131,14 +157,12 @@ Each dimension returns a school grade (A+ through D, where A+=1.0, D=4.0) and re
 
 **Score** = `round(5.0 - avg_grade)` snapped to half-points (higher = better).
 
-The Opportunity dimension also provides: classification, contact recommendation, and engagement hook.
-
 ### LLM Provider Configuration
 
 Scoring uses a configurable LLM provider, set via environment variables (typically in `.mcp.json`):
 
-- **Anthropic** (default) — requires `ANTHROPIC_API_KEY`. Default model: `claude-haiku-4-5-20251001`.
-- **OpenAI** — set `LLM_PROVIDER=openai` and `OPENAI_API_KEY`. Default model: `gpt-4o-mini`.
+- **Anthropic** (default) — requires `ANTHROPIC_API_KEY` and `scout[anthropic]`. Default model: `claude-haiku-4-5-20251001`.
+- **OpenAI** — set `LLM_PROVIDER=openai` and `OPENAI_API_KEY`, requires `scout[openai]`. Default model: `gpt-4o-mini`.
 - **OpenAI-compatible** — set `LLM_PROVIDER=openai_compatible`, `OPENAI_API_KEY`, and `OPENAI_BASE_URL`.
 
 The web server auto-loads LLM env vars from `.mcp.json` if present, so the same config works for both `scout` and `scout-mcp`.
@@ -157,7 +181,7 @@ Default prompts are seeded on first run and can be freely modified per database.
 
 If no API key is available, use the MCP dossier-and-submit workflow:
 
-1. `get_scoring_dossier(id)` — builds the 3 dimension dossiers and prompts locally (no API call).
+1. `get_scoring_dossier(id)` — builds the dimension dossiers and prompts locally (no API call).
 2. The calling LLM (e.g. Claude in Claude Desktop) evaluates the dossiers.
 3. `submit_score(id, grade_team, grade_tech, grade_opportunity, classification, ...)` — saves the result.
 
@@ -178,25 +202,25 @@ If no API key is available, use the MCP dossier-and-submit workflow:
 | `GET` | `/` | Web UI |
 | `GET` | `/api/initiatives` | List with filters (`verdict`, `uni`, `faculty`, `classification`, `search`, `fields`) and pagination |
 | `GET` | `/api/initiatives/{id}` | Full detail with enrichments, projects, and scores |
-| `PUT` | `/api/initiatives/{id}` | Update initiative fields (partial update) |
-| `GET` | `/api/initiatives/{id}/projects` | List projects for an initiative |
+| `PUT` | `/api/initiatives/{id}` | Update entity fields (partial update) |
+| `GET` | `/api/initiatives/{id}/projects` | List projects for an entity |
 | `POST` | `/api/initiatives/{id}/projects` | Create a new project |
 | `PUT` | `/api/projects/{id}` | Update project fields |
 | `DELETE` | `/api/projects/{id}` | Delete a project and its scores |
-| `POST` | `/api/enrich/{id}` | Enrich single initiative |
+| `POST` | `/api/enrich/{id}` | Enrich single entity |
 | `POST` | `/api/enrich/batch` | Enrich all (SSE progress stream) |
 | `POST` | `/api/discover/{id}` | Discover new URLs via DuckDuckGo |
-| `POST` | `/api/score/{id}` | Score single initiative (3 parallel LLM calls) |
+| `POST` | `/api/score/{id}` | Score single entity (parallel LLM calls) |
 | `POST` | `/api/score/batch` | Score all (SSE progress stream) |
 | `POST` | `/api/projects/{id}/score` | Score a project via LLM |
 | `GET` | `/api/scoring-prompts` | List scoring prompt definitions |
 | `PUT` | `/api/scoring-prompts/{key}` | Update a scoring prompt |
 | `GET` | `/api/stats` | Counts by verdict, classification, uni |
 | `GET` | `/api/aggregations` | Score distributions by uni/faculty, top-N per verdict, grade breakdowns |
-| `GET` | `/api/similar/{id}` | Find semantically similar initiatives |
+| `GET` | `/api/similar/{id}` | Find semantically similar entities |
 | `GET` | `/api/search/semantic` | Semantic text search with optional SQL pre-filters |
 | `POST` | `/api/embed` | Build/rebuild dense embeddings |
-| `GET` | `/api/export` | Export initiatives to XLSX (with verdict/uni filters) |
+| `GET` | `/api/export` | Export entities to XLSX (with verdict/uni filters) |
 | `POST` | `/api/import` | Upload `.xlsx` (multipart form) |
 | `GET` | `/api/databases` | List available databases |
 | `POST` | `/api/databases/select` | Switch database |
@@ -216,7 +240,7 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 
 - `delete_initiative()` and `delete_project()` require `confirm=True` to execute. Without it, they return a dry-run warning showing what would be deleted.
 - `update_initiative()` emits a warning when the `name` field is changed, showing old and new values, to prevent accidental identity changes.
-- The MCP server instructions explicitly warn against renaming or deleting initiatives without verification, and recommend creating a test database for experiments.
+- The MCP server instructions explicitly warn against renaming or deleting entities without verification, and recommend creating a test database for experiments.
 
 ### Workflows
 
@@ -240,28 +264,29 @@ The `scout-mcp` entry point runs an MCP server over stdio, exposing Scout's func
 |------|-------------|
 | `get_stats` | Summary statistics and breakdowns |
 | `get_aggregations` | Score distributions by uni/faculty, top-N per verdict, grade breakdowns |
-| `get_work_queue` | Prioritized queue of initiatives needing enrichment or scoring |
+| `get_work_queue` | Prioritized queue of entities needing enrichment or scoring |
 | `list_initiatives` | Browse and filter with verdict, uni, faculty, classification, search, `fields` for compact mode |
 | `get_initiative` | Full details with enrichments, projects, and scores (supports `compact` mode) |
-| `create_initiative` | Add a new initiative to the database |
-| `update_initiative` | Update initiative fields (warns on name changes) |
-| `delete_initiative` | Remove an initiative and all associated data (requires `confirm=True`) |
+| `create_initiative` | Add a new entity to the database |
+| `update_initiative` | Update entity fields (warns on name changes) |
+| `delete_initiative` | Remove an entity and all associated data (requires `confirm=True`) |
 | `enrich_initiative` | Fetch fresh web/GitHub enrichment data |
 | `discover_initiative` | Discover new URLs via DuckDuckGo (LinkedIn, GitHub, HuggingFace, etc.) |
-| `score_initiative_tool` | Score 3 dimensions in parallel, aggregate deterministically |
+| `score_initiative_tool` | Score dimensions in parallel, aggregate deterministically |
 | `get_scoring_dossier` | Build scoring dossiers and prompts without making LLM calls |
 | `submit_score` | Submit externally computed grades and verdict |
-| `batch_enrich` | Enrich multiple initiatives in one call (shared browser, 3 concurrent) |
-| `batch_score` | Score multiple initiatives in one call |
+| `submit_enrichment` | Submit enrichment data found by the calling LLM |
+| `batch_enrich` | Enrich multiple entities in one call (shared browser, 3 concurrent) |
+| `batch_score` | Score multiple entities in one call |
 | `process_queue` | Autonomous pipeline: fetch queue -> enrich -> score in one call |
 | `embed_all_tool` | Build/rebuild dense embeddings for similarity search |
-| `find_similar_initiatives` | Semantic similarity search (by query text or initiative ID, with SQL pre-filters) |
-| `export_initiatives` | Export initiatives to XLSX file (with verdict/uni filters) |
-| `create_project` | Add a sub-project to an initiative |
+| `find_similar_initiatives` | Semantic similarity search (by query text or entity ID, with SQL pre-filters) |
+| `export_initiatives` | Export entities to XLSX file (with verdict/uni filters) |
+| `create_project` | Add a sub-project to an entity |
 | `update_project` | Update project fields |
 | `delete_project` | Remove a project and its scores (requires `confirm=True`) |
-| `score_project_tool` | Score a project in context of its parent initiative |
-| `list_scoring_prompts` | View the 3 dimension prompt definitions (supports `compact` mode) |
+| `score_project_tool` | Score a project in context of its parent entity |
+| `list_scoring_prompts` | View the dimension prompt definitions (supports `compact` mode) |
 | `update_scoring_prompt` | Customize a dimension's LLM system prompt |
 | `list_scout_databases` | List available databases |
 | `select_scout_database` | Switch to a different database |
@@ -288,7 +313,7 @@ initiativescout/
 │   ├── importer.py           #   XLSX parser (Spin-Off, All Initiatives, Overview)
 │   ├── exporter.py           #   XLSX export with styled verdict rows
 │   ├── enricher.py           #   Website, team page, GitHub, extra links enrichment
-│   ├── scorer.py             #   3-dimension LLM scoring + deterministic aggregation
+│   ├── scorer.py             #   Dimension LLM scoring + deterministic aggregation
 │   ├── embedder.py           #   Dense embeddings (model2vec) + similarity search
 │   ├── scrapers.py           #   Entity-specific scrapers (TUM professor directory)
 │   ├── utils.py              #   Shared utilities (JSON parsing, LLM env loading)
@@ -308,7 +333,7 @@ initiativescout/
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key for LLM scoring |
 | `GITHUB_TOKEN` | No | Increases GitHub API rate limits during enrichment |
 | `LLM_PROVIDER` | No | `anthropic` (default) or `openai` / `openai_compatible` |
-| `LLM_MODEL` | No | Override model name (default: `claude-haiku-4-5-20251001` or `gpt-5-mini`) |
+| `LLM_MODEL` | No | Override model name (default: `claude-haiku-4-5-20251001` or `gpt-4o-mini`) |
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `OPENAI_BASE_URL` | No | Custom OpenAI-compatible endpoint |
 
@@ -329,18 +354,22 @@ scout --port 9000
 Scoring requires an LLM API key. Set it via environment variable or in `.mcp.json`:
 
 ```bash
-export OPENAI_API_KEY=sk-...   # for OpenAI (default if LLM_PROVIDER=openai)
-export ANTHROPIC_API_KEY=...   # for Anthropic (install scout[anthropic])
+export ANTHROPIC_API_KEY=...   # for Anthropic (requires scout[anthropic])
+export OPENAI_API_KEY=sk-...   # for OpenAI (requires scout[openai])
 ```
 
-**Optional dependencies**
+**Missing optional dependency**
 
-Some features require extras. Install what you need:
+If you see an `ImportError` mentioning `scout[...]`, install the missing extra:
 
 ```bash
-pip install "scout[openai]"      # OpenAI scoring
-pip install "scout[anthropic]"   # Anthropic scoring
-pip install "scout[crawl]"       # Crawl4AI + DuckDuckGo discovery
+pip install 'scout[xlsx]'          # for XLSX import/export
+pip install 'scout[embeddings]'    # for semantic search
+pip install 'scout[anthropic]'     # for Anthropic scoring
+pip install 'scout[openai]'        # for OpenAI scoring
+pip install 'scout[crawl]'         # for Crawl4AI + DuckDuckGo
+pip install 'scout[extract]'       # for trafilatura + extruct
+pip install 'scout[all]'           # everything
 ```
 
 ## License

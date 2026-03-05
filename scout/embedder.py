@@ -8,9 +8,16 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import numpy as np
-from model2vec import StaticModel
 from sqlalchemy import select
+
+try:
+    import numpy as np
+    from model2vec import StaticModel
+    _MODEL2VEC_AVAILABLE = True
+except ImportError:
+    np = None  # type: ignore[assignment]
+    StaticModel = None  # type: ignore[assignment,misc]
+    _MODEL2VEC_AVAILABLE = False
 from sqlalchemy.orm import Session
 
 from scout.db import DATA_DIR, current_db_name
@@ -28,9 +35,14 @@ _model = None
 _vec_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
 
-def _get_model() -> StaticModel:
+def _get_model():  # type: ignore[return]
     global _model
     if _model is None:
+        if not _MODEL2VEC_AVAILABLE:
+            raise ImportError(
+                "model2vec is required for semantic search. "
+                "Install it with: pip install 'scout[embeddings]'"
+            )
         _model = StaticModel.from_pretrained("minishlab/potion-base-32M")
     return _model
 

@@ -8,9 +8,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+from sqlalchemy import and_, delete, func, select
+
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-from sqlalchemy import and_, delete, func, select
 
 from scout import services
 from scout.db import (

@@ -4,8 +4,14 @@ import json
 import logging
 from pathlib import Path
 
-import openpyxl
 from sqlalchemy import select
+
+try:
+    import openpyxl
+    _OPENPYXL_AVAILABLE = True
+except ImportError:
+    openpyxl = None  # type: ignore[assignment]
+    _OPENPYXL_AVAILABLE = False
 from sqlalchemy.orm import Session
 
 from scout.models import Initiative
@@ -215,6 +221,11 @@ def _upsert(session: Session, data: dict, existing: dict[str, Initiative]) -> tu
 
 def import_xlsx(file_path: str | Path, session: Session) -> ImportResult:
     """Import both sheets from the enriched XLSX. Upserts by name+uni."""
+    if not _OPENPYXL_AVAILABLE:
+        raise ImportError(
+            "openpyxl is required for XLSX import. "
+            "Install it with: pip install 'scout[xlsx]'"
+        )
     file_path = Path(file_path)
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
 
