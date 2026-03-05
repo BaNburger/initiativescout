@@ -1507,7 +1507,7 @@ def manage_database(
 
 
 @mcp.tool(annotations=_READ)
-def list_scoring_prompts(compact: bool = False) -> list:
+def list_scoring_prompts(compact: bool = False) -> list | dict:
     """List scoring prompt definitions.
 
     Args:
@@ -1521,7 +1521,7 @@ def list_scoring_prompts(compact: bool = False) -> list:
                         for p in prompts_list]
             return prompts_list
     except Exception as exc:
-        return [_error(f"Failed to list scoring prompts: {exc}", "DB_ERROR")]
+        return _error(f"Failed to list scoring prompts: {exc}", "DB_ERROR")
 
 
 @mcp.tool(annotations=_WRITE)

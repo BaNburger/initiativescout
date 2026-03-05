@@ -17,6 +17,12 @@ from scout.models import Enrichment, Initiative
 log = logging.getLogger(__name__)
 
 
+def _first_repo(initiative: Initiative) -> str:
+    """Extract the first repo name from the key_repos field."""
+    repos_text = (initiative.field("key_repos") or "").strip()
+    return repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
+
+
 async def _collect_repo_metrics(org: str, repo: str, headers: dict[str, str]) -> dict:
     metrics: dict = {"contributors": 0, "commits_90d": 0, "ci_present": False}
     since = (datetime.now(UTC) - timedelta(days=90)).isoformat()
@@ -42,8 +48,7 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
     if not org:
         return None
 
-    repos_text = (initiative.field("key_repos") or "").strip()
-    repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
+    repo = _first_repo(initiative)
 
     headers = _github_headers()
 
@@ -99,8 +104,7 @@ async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
     if not org:
         return None
 
-    repos_text = (initiative.field("key_repos") or "").strip()
-    repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
+    repo = _first_repo(initiative)
 
     headers = _github_headers()
 
