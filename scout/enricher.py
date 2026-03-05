@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 _USER_AGENT = "ScoutBot/1.0 (+https://scout.local)"
 _TIMEOUT = 15.0
 _MAX_TEXT = 15_000
+_MAX_SUMMARY = 1500
 
 GITHUB_API = "https://api.github.com"
 
@@ -59,6 +60,45 @@ except ImportError:
 
 # ddgs v9+ no longer exposes a RatelimitException; use a generic fallback.
 RatelimitException: type[Exception] = Exception  # type: ignore[assignment,misc]
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_url(url: str) -> str:
+    """Ensure a URL has an http(s) scheme prefix."""
+    if not url.startswith(("http://", "https://")):
+        return "https://" + url
+    return url
+
+
+def _parse_html(raw_html: str):
+    """Strip XML declaration and parse HTML with lxml. Returns tree or None."""
+    cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
+    try:
+        return lxml_html.fromstring(cleaned)
+    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
+        return None
+
+
+def _github_org_from_field(initiative: Initiative) -> str:
+    """Extract a clean GitHub org/user name from the initiative's github_org field."""
+    org = (initiative.field("github_org") or "").strip()
+    if "github.com" in org:
+        parts = org.split("github.com")[-1].strip("/").split("/")
+        org = parts[0] if parts else ""
+    return org
+
+
+def _github_headers() -> dict[str, str]:
+    """Build GitHub API headers, including auth token if available."""
+    headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": _USER_AGENT}
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +153,7 @@ async def _enrich_page(
 
     Uses Crawl4AI when a crawler is provided, otherwise falls back to httpx+lxml.
     """
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
 
     text = None
     raw_html = None
@@ -160,10 +199,8 @@ _MAX_SUBPAGES = 5
 
 def _extract_important_links(raw_html: str, base_url: str) -> list[str]:
     """Extract internal links from HTML that match important subpage keywords."""
-    try:
-        cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
-        tree = lxml_html.fromstring(cleaned)
-    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
+    tree = _parse_html(raw_html)
+    if tree is None:
         return []
 
     base_domain = urlparse(base_url).netloc
@@ -211,8 +248,7 @@ async def enrich_website(
     url = (initiative.field("website") or "").strip()
     if not url:
         return []
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
 
     # Fetch main page
     main = await _enrich_page(initiative, url, "website", crawler)
@@ -312,24 +348,14 @@ async def enrich_extra_links(
 
 async def enrich_github(initiative: Initiative) -> Enrichment | None:
     """Fetch GitHub org/repo metrics."""
-    org = (initiative.field("github_org") or "").strip()
-    if not org:
-        return None
-
-    # Clean up: might be a full URL
-    if "github.com" in org:
-        parts = org.split("github.com")[-1].strip("/").split("/")
-        org = parts[0] if parts else ""
+    org = _github_org_from_field(initiative)
     if not org:
         return None
 
     repos_text = (initiative.field("key_repos") or "").strip()
     repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
 
-    token = os.environ.get("GITHUB_TOKEN", "")
-    headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": _USER_AGENT}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = _github_headers()
 
     lines: list[str] = [f"GitHub org: {org}"]
 
@@ -578,10 +604,8 @@ def _extract_structured_data(raw_html: str) -> str | None:
             pass  # fall through to manual extraction
 
     # Fallback: manual lxml-based extraction
-    try:
-        cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
-        tree = lxml_html.fromstring(cleaned)
-    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
+    tree = _parse_html(raw_html)
+    if tree is None:
         return None
 
     lines = []
@@ -650,8 +674,7 @@ async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
     url = (initiative.field("website") or "").strip()
     if not url:
         return None
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
 
     try:
         raw_html = await _fetch_url(url)
@@ -668,7 +691,7 @@ async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
         source_type="structured_data",
         source_url=url,
         raw_text=text[:_MAX_TEXT],
-        summary=text[:1500],
+        summary=text[:_MAX_SUMMARY],
         fetched_at=datetime.now(UTC),
     )
 
@@ -750,8 +773,7 @@ async def enrich_tech_stack(initiative: Initiative) -> Enrichment | None:
     url = (initiative.field("website") or "").strip()
     if not url:
         return None
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
 
     try:
         raw_html = await _fetch_url(url)
@@ -768,7 +790,7 @@ async def enrich_tech_stack(initiative: Initiative) -> Enrichment | None:
         source_type="tech_stack",
         source_url=url,
         raw_text=text[:_MAX_TEXT],
-        summary=text[:1500],
+        summary=text[:_MAX_SUMMARY],
         fetched_at=datetime.now(UTC),
     )
 
@@ -854,8 +876,7 @@ async def enrich_dns(initiative: Initiative) -> Enrichment | None:
     url = (initiative.field("website") or "").strip()
     if not url:
         return None
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
     domain = urlparse(url).netloc
     if not domain:
         return None
@@ -872,7 +893,7 @@ async def enrich_dns(initiative: Initiative) -> Enrichment | None:
         source_type="dns",
         source_url=url,
         raw_text=text[:_MAX_TEXT],
-        summary=text[:1500],
+        summary=text[:_MAX_SUMMARY],
         fetched_at=datetime.now(UTC),
     )
 
@@ -887,8 +908,7 @@ async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
     url = (initiative.field("website") or "").strip()
     if not url:
         return None
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
 
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -953,7 +973,7 @@ async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
         source_type="sitemap",
         source_url=f"{base}/sitemap.xml",
         raw_text="\n".join(lines)[:_MAX_TEXT],
-        summary="\n".join(lines)[:1500],
+        summary="\n".join(lines)[:_MAX_SUMMARY],
         fetched_at=datetime.now(UTC),
     ) if len(lines) > 1 else None
 
@@ -974,8 +994,7 @@ async def enrich_careers(initiative: Initiative) -> Enrichment | None:
     url = (initiative.field("website") or "").strip()
     if not url:
         return None
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = _normalize_url(url)
 
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -1007,7 +1026,7 @@ async def enrich_careers(initiative: Initiative) -> Enrichment | None:
                 source_type="careers",
                 source_url=career_url,
                 raw_text=full_text[:_MAX_TEXT],
-                summary=full_text[:1500],
+                summary=full_text[:_MAX_SUMMARY],
                 fetched_at=datetime.now(UTC),
             )
         except Exception:
@@ -1023,23 +1042,14 @@ async def enrich_careers(initiative: Initiative) -> Enrichment | None:
 
 async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
     """Extract deeper GitHub signals: README, deps, license, releases."""
-    org = (initiative.field("github_org") or "").strip()
-    if not org:
-        return None
-
-    if "github.com" in org:
-        parts = org.split("github.com")[-1].strip("/").split("/")
-        org = parts[0] if parts else ""
+    org = _github_org_from_field(initiative)
     if not org:
         return None
 
     repos_text = (initiative.field("key_repos") or "").strip()
     repo = repos_text.split(",")[0].strip().split("/")[-1] if repos_text else ""
 
-    token = os.environ.get("GITHUB_TOKEN", "")
-    headers: dict[str, str] = {"Accept": "application/vnd.github+json", "User-Agent": _USER_AGENT}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = _github_headers()
 
     lines: list[str] = [f"DEEP GIT ANALYSIS: {org}"]
 
@@ -1125,7 +1135,7 @@ async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
         source_type="git_deep",
         source_url=f"https://github.com/{org}/{repo}",
         raw_text=text[:_MAX_TEXT],
-        summary=text[:1500],
+        summary=text[:_MAX_SUMMARY],
         fetched_at=datetime.now(UTC),
     )
 
@@ -1168,10 +1178,8 @@ def _extract_text(raw_html: str) -> str:
             pass  # fall through to lxml
 
     # Fallback: lxml-based extraction
-    try:
-        cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
-        tree = lxml_html.fromstring(cleaned)
-    except (etree.ParserError, etree.XMLSyntaxError, ValueError):
+    tree = _parse_html(raw_html)
+    if tree is None:
         return ""
     title = " ".join(tree.xpath("//title//text()")).strip()
     meta = " ".join(tree.xpath("//meta[@name='description']/@content")).strip()
@@ -1199,7 +1207,7 @@ def _summarize_text(text: str, url: str) -> str:
     for line in lines[:4]:
         if line.strip():
             summary_parts.append(line[:500])
-    return "\n".join(summary_parts)[:1500]
+    return "\n".join(summary_parts)[:_MAX_SUMMARY]
 
 
 async def _github_get(path: str, headers: dict[str, str]) -> tuple[int, dict | list | None]:

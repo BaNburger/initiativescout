@@ -118,31 +118,30 @@ def score_response_dict(outreach: OutreachScore, extended: bool = False) -> dict
     """
     result = {f: getattr(outreach, f) for f in SCORE_LIST_FIELDS}
     if extended:
-        result.update({
-            "reasoning": outreach.reasoning,
-            "contact_who": outreach.contact_who,
-            "contact_channel": outreach.contact_channel,
-            "engagement_hook": outreach.engagement_hook,
-            "key_evidence": json_parse(outreach.key_evidence_json, []),
-            "data_gaps": json_parse(outreach.data_gaps_json, []),
-        })
+        for f in SCORE_DETAIL_FIELDS:
+            if f not in result:
+                result[f] = getattr(outreach, f)
+        result["key_evidence"] = json_parse(outreach.key_evidence_json, [])
+        result["data_gaps"] = json_parse(outreach.data_gaps_json, [])
+    return result
+
+
+def _empty_score_fields(detail: bool) -> dict[str, Any]:
+    """Return a score dict with all None values (no scores available)."""
+    fields = SCORE_DETAIL_FIELDS if detail else SCORE_LIST_FIELDS
+    result: dict[str, Any] = {f: None for f in fields}
+    if detail:
+        result["key_evidence"] = []
+        result["data_gaps"] = []
     return result
 
 
 def latest_score_fields(scores: list[OutreachScore], detail: bool = True) -> dict[str, Any]:
-    fields = SCORE_DETAIL_FIELDS if detail else SCORE_LIST_FIELDS
+    """Extract score fields from the most recent score in the list."""
     if not scores:
-        result: dict[str, Any] = {f: None for f in fields}
-        if detail:
-            result["key_evidence"] = []
-            result["data_gaps"] = []
-        return result
+        return _empty_score_fields(detail)
     latest = max(scores, key=lambda s: s.scored_at)
-    result = {f: getattr(latest, f) for f in fields}
-    if detail:
-        result["key_evidence"] = json_parse(latest.key_evidence_json, [])
-        result["data_gaps"] = json_parse(latest.data_gaps_json, [])
-    return result
+    return score_response_dict(latest, extended=detail)
 
 
 # Base initiative fields read directly from the Initiative ORM object.
@@ -296,14 +295,8 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
 # ---------------------------------------------------------------------------
 
 
-def _latest_score_subquery(detail: bool = False):
-    """Subquery returning the latest initiative-level score per initiative.
-
-    Args:
-        detail: If True, include heavy text columns (reasoning, contact info,
-                evidence, data gaps). If False, only include lightweight fields
-                needed for list views.
-    """
+def _latest_score_subquery():
+    """Subquery returning the latest initiative-level score per initiative (lightweight fields)."""
     columns = [
         OutreachScore.initiative_id,
         OutreachScore.verdict,
@@ -316,24 +309,13 @@ def _latest_score_subquery(detail: bool = False):
         OutreachScore.grade_opportunity,
         OutreachScore.grade_opportunity_num,
         OutreachScore.scored_at,
-    ]
-    if detail:
-        columns.extend([
-            OutreachScore.reasoning,
-            OutreachScore.contact_who,
-            OutreachScore.contact_channel,
-            OutreachScore.engagement_hook,
-            OutreachScore.key_evidence_json,
-            OutreachScore.data_gaps_json,
-        ])
-    columns.append(
         func.row_number()
         .over(
             partition_by=OutreachScore.initiative_id,
             order_by=OutreachScore.scored_at.desc(),
         )
         .label("rn"),
-    )
+    ]
     return (
         select(*columns)
         .where(OutreachScore.project_id.is_(None))
@@ -356,7 +338,7 @@ def query_initiatives(
     fields: set[str] | None = None,
 ) -> tuple[list[dict], int]:
     """Return (items, total) with filtering, sorting, and pagination in SQL."""
-    ls = _latest_score_subquery(detail=False)
+    ls = _latest_score_subquery()
 
     # Enrichment aggregates as a subquery
     enrich_sub = (
