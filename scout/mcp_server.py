@@ -15,9 +15,10 @@ from mcp.types import ToolAnnotations
 
 from scout import services
 from scout.db import (
-    backup_database, create_database, current_db_name, delete_database,
-    get_entity_type, get_session, init_db,
-    list_databases, session_scope, switch_db, validate_db_name,
+    backup_database, create_database, current_db_name, delete_backup,
+    delete_database, get_entity_type, get_session, init_db,
+    list_backups, list_databases, restore_database, session_scope,
+    switch_db, validate_db_name,
 )
 from scout.enricher import open_crawler
 from scout.models import Enrichment, Initiative, OutreachScore, Project
@@ -495,19 +496,23 @@ def manage_initiative(
     uni: str | None = None,
     updates: dict | None = None,
     confirm: bool = False,
+    items: list | None = None,
 ) -> dict:
     """Create, update, or delete entities.
 
     ACTIONS:
-    - create: Requires name. Pass updates={field: value} for optional fields.
-        For initiative/professor types, uni is also expected.
-        For custom entity types, use updates or custom_fields for domain-specific data.
+    - create: Requires name, uni. Pass updates={field: value} for optional fields.
+    - bulk_create: Requires items (list of dicts). Each dict needs name, uni,
+        plus optional fields: faculty, sector, description, website, email,
+        team_page, team_size, linkedin, github_org, key_repos, sponsors,
+        competitions, mode, relevance, custom_fields.
+        Skips duplicates (same name+uni). Returns {created, skipped, items}.
     - update: Requires initiative_id. Pass updates={field: value} for changes.
         For custom entity types, any key not in the standard columns is stored in metadata.
     - delete: Requires initiative_id + confirm=True.
 
     Args:
-        action: "create", "update", or "delete".
+        action: "create", "bulk_create", "update", or "delete".
         initiative_id: Entity ID (required for update/delete).
         name: Entity name (required for create).
         uni: University/institution (optional; mainly for initiative/professor types).
@@ -516,8 +521,55 @@ def manage_initiative(
             sponsors, competitions, mode, relevance, custom_fields.
             Any other keys are stored in metadata (for custom entity types).
         confirm: Must be True for delete.
+        items: List of dicts for bulk_create. Each dict needs at least name and uni.
     """
     action = (action or "").strip().lower()
+
+    if action == "bulk_create":
+        if not items or not isinstance(items, list):
+            return _error("items (list of dicts with name+uni) is required for bulk_create", "VALIDATION_ERROR")
+        with session_scope() as session:
+            # Build set of existing name+uni pairs for dedup
+            existing = set()
+            for row in session.query(Initiative.name, Initiative.uni).all():
+                existing.add((row.name.lower().strip(), (row.uni or "").lower().strip()))
+
+            created_items = []
+            skipped = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_name = (item.get("name") or "").strip()
+                item_uni = (item.get("uni") or "").strip()
+                if not item_name or not item_uni:
+                    skipped += 1
+                    continue
+                if (item_name.lower(), item_uni.lower()) in existing:
+                    skipped += 1
+                    continue
+                # Build fields
+                fields = {"name": item_name, "uni": item_uni}
+                custom_fields = item.pop("custom_fields", None) if isinstance(item, dict) else None
+                for k, v in item.items():
+                    if k in ("name", "uni", "custom_fields"):
+                        continue
+                    if k in services.UPDATABLE_FIELDS and v:
+                        fields[k] = v
+                init = services.create_initiative(session, **fields)
+                if custom_fields and isinstance(custom_fields, dict):
+                    init.custom_fields_json = json.dumps(custom_fields)
+                    session.flush()
+                existing.add((item_name.lower(), item_uni.lower()))
+                created_items.append({"id": init.id, "name": init.name, "uni": init.uni})
+
+            session.commit()
+            result = {
+                "created": len(created_items),
+                "skipped_duplicates": skipped,
+                "items": created_items,
+            }
+            result["_db"] = _db_pulse(session)
+            return result
 
     if action == "create":
         if not name:
@@ -1413,7 +1465,7 @@ def manage_database(
     context: str = "",
     dimensions: str = "",
 ) -> dict:
-    """List, select, create, delete, or backup Scout databases.
+    """List, select, create, delete, backup, or restore Scout databases.
 
     ACTIONS:
     - list: Show all databases and which is active.
@@ -1421,16 +1473,14 @@ def manage_database(
     - create: Create a new empty database. Requires name. Supports ANY entity type.
     - delete: Delete a database. Requires name. Cannot delete the active database.
     - backup: Create a timestamped backup copy. Requires name.
+    - list_backups: Show all available backups with metadata.
+    - restore: Restore a database from backup. Requires name (backup name).
+    - delete_backup: Delete a backup file. Requires name (backup name).
 
     Args:
-        action: "list", "select", "create", "delete", or "backup".
-        name: Database name (letters, numbers, hyphens, underscores). Required for select/create/delete/backup.
-        entity_type: For create: any entity type string (e.g. "initiative", "professor",
-            "company", "patent", "research_paper"). Default "initiative".
-        context: For create with custom entity types: description of the context
-            (e.g. "US patent applications", "Berlin startups"). Used in scoring prompts.
-        dimensions: For create with custom entity types: comma-separated scoring dimensions
-            (e.g. "novelty,commercial_potential,prior_art"). Defaults to "team,tech,opportunity".
+        action: "list", "select", "create", "delete", "backup", "list_backups", "restore", or "delete_backup".
+        name: Database name or backup name depending on action.
+        entity_type: For create: "initiative" or "professor". Default "initiative".
     """
     action = (action or "").strip().lower()
 
@@ -1497,7 +1547,28 @@ def manage_database(
             return _error(str(exc), "VALIDATION_ERROR")
         return {"ok": True, "backup": backup_name}
 
-    return _error(f"Unknown action: {action!r}. Use list, select, create, delete, or backup.",
+    if action == "list_backups":
+        return {"backups": list_backups()}
+
+    if action == "restore":
+        if not name:
+            return _error("name (backup name) required for restore", "VALIDATION_ERROR")
+        try:
+            restored = restore_database(name)
+        except ValueError as exc:
+            return _error(str(exc), "VALIDATION_ERROR")
+        return {"ok": True, "restored": restored}
+
+    if action == "delete_backup":
+        if not name:
+            return _error("name (backup name) required for delete_backup", "VALIDATION_ERROR")
+        try:
+            delete_backup(name)
+        except ValueError as exc:
+            return _error(str(exc), "VALIDATION_ERROR")
+        return {"ok": True, "deleted": name}
+
+    return _error(f"Unknown action: {action!r}. Use list, select, create, delete, backup, list_backups, restore, or delete_backup.",
                   "VALIDATION_ERROR")
 
 

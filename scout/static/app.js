@@ -39,6 +39,8 @@ const _ICONS = {
   sliders:  _svg(14, '<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>'),
   terminal: _svg(14, '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>'),
   refresh:  _svg(14, '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'),
+  archive:  _svg(14, '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'),
+  undo:     _svg(14, '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>'),
 };
 
 function _icon(name) { return _ICONS[name] || ''; }
@@ -528,7 +530,7 @@ const CORE_COLUMNS = [
   { key: 'name', label: 'Initiative', sort: 'name',
     render: i => `<td class="name-cell editable" title="${esc(i.name)}"${editAttr(i.id,'name',i.name)} ondblclick="editFromAttr(this,event)">${esc(i.name)}</td>` },
   { key: 'uni', label: 'Uni', sort: 'uni',
-    render: i => `<td class="uni-cell editable"${editAttr(i.id,'uni',i.uni,'select-uni')} ondblclick="editFromAttr(this,event)">${esc(i.uni)}</td>` },
+    render: i => `<td class="uni-cell editable"${editAttr(i.id,'uni',i.uni)} ondblclick="editFromAttr(this,event)">${esc(i.uni)}</td>` },
   { key: 'verdict', label: 'Verdict', sort: 'verdict',
     render: i => { const v = i.verdict || 'unscored'; return `<td><span class="verdict-badge verdict-${v}">${VERDICT_SHORT[v] || '\u2014'}</span></td>`; } },
   { key: 'team', label: 'Team', sort: 'grade_team',
@@ -563,16 +565,7 @@ function inlineEdit(el, id, field, currentValue, type) {
   const original = el.innerHTML;
   let input;
 
-  if (type === 'select-uni') {
-    input = document.createElement('select');
-    input.className = 'inline-select';
-    ['TUM', 'LMU', 'HM', 'TUM/LMU', 'TUM/HM', 'LMU/HM'].forEach(opt => {
-      const o = document.createElement('option');
-      o.value = opt; o.textContent = opt;
-      if (opt === currentValue) o.selected = true;
-      input.appendChild(o);
-    });
-  } else if (type === 'textarea') {
+  if (type === 'textarea') {
     input = document.createElement('textarea');
     input.className = 'inline-input';
     input.value = currentValue || '';
@@ -737,7 +730,7 @@ function renderDetail(d) {
     <div class="detail-header">
       <h2 class="editable"${ea('name',d.name)} ondblclick="editFromAttr(this)">${esc(d.name)}</h2>
       <div class="meta">
-        <span class="editable"${ea('uni',d.uni,'select-uni')} ondblclick="editFromAttr(this)">${esc(d.uni)}</span>
+        <span class="editable"${ea('uni',d.uni)} ondblclick="editFromAttr(this)">${esc(d.uni)}</span>
         <span class="editable"${ea('sector',d.sector)} ondblclick="editFromAttr(this)">${esc(d.sector) || 'Sector'}</span>
         <span class="editable"${ea('mode',d.mode)} ondblclick="editFromAttr(this)">${esc(d.mode) || 'Mode'}</span>
         <span class="editable"${ea('relevance',d.relevance)} ondblclick="editFromAttr(this)">Rating: ${esc(d.relevance) || '\u2014'}</span>
@@ -1203,8 +1196,9 @@ document.addEventListener('keydown', e => {
     const promptOpen = !document.getElementById('prompt-overlay').classList.contains('hidden');
     const mcpOpen = !!_mcpOverlay;
     const hotkeyOpen = !!_hotkeyOverlay;
-    if (importOpen || promptOpen || mcpOpen || hotkeyOpen) {
-      hideImport(); hidePrompts(); hideMcpSetup();
+    const backupOpen = !!_backupOverlay;
+    if (importOpen || promptOpen || mcpOpen || hotkeyOpen || backupOpen) {
+      hideImport(); hidePrompts(); hideMcpSetup(); hideBackups();
       if (_hotkeyOverlay) { _hotkeyOverlay.remove(); _hotkeyOverlay = null; }
     } else {
       state.mode = 'grid';
@@ -1515,8 +1509,117 @@ async function backupDatabase() {
   try {
     const result = await api('POST', '/api/databases/backup', { name });
     showToast(`Backup created: ${result.backup}`, 'success');
+    await loadBackupsList();
   } catch (err) {
     showToast('Backup failed: ' + err.message, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Backups panel
+// ---------------------------------------------------------------------------
+let _backupOverlay = null;
+
+async function showBackups() {
+  if (_backupOverlay) { hideBackups(); return; }
+  const overlay = document.createElement('div');
+  overlay.className = 'import-overlay';
+  overlay.innerHTML = `
+    <div class="prompt-editor-box" style="max-width:640px;">
+      <div class="prompt-header">
+        <h2>${_icon('archive')}Backups</h2>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm btn-primary" onclick="backupDatabase()" data-icon="download">Backup Now</button>
+          <button class="btn btn-sm" onclick="hideBackups()" data-icon="x">Close</button>
+        </div>
+      </div>
+      <p class="prompt-description">
+        Create backups and restore previous versions of your databases.
+      </p>
+      <div id="backups-list"><p class="text-faint">Loading...</p></div>
+    </div>
+  `;
+  // inject icons into the dynamically created buttons
+  overlay.querySelectorAll('[data-icon]').forEach(function(el) {
+    var svg = _ICONS[el.dataset.icon];
+    if (svg) el.insertAdjacentHTML('afterbegin', svg);
+  });
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) hideBackups(); });
+  document.body.appendChild(overlay);
+  _backupOverlay = overlay;
+  await loadBackupsList();
+}
+
+function hideBackups() {
+  if (_backupOverlay) { _backupOverlay.remove(); _backupOverlay = null; }
+}
+
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function _formatDate(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+      + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return iso; }
+}
+
+async function loadBackupsList() {
+  const container = document.getElementById('backups-list');
+  if (!container) return;
+  try {
+    const data = await api('GET', '/api/databases/backups');
+    const backups = data.backups || [];
+    if (backups.length === 0) {
+      container.innerHTML = '<p class="text-faint" style="padding:16px 0;">No backups yet. Click "Backup Now" to create one.</p>';
+      return;
+    }
+    container.innerHTML = '<div class="backups-table">' + backups.map(function(b) {
+      return `<div class="backup-row">
+        <div class="backup-info">
+          <span class="backup-origin">${esc(b.origin)}</span>
+          <span class="backup-meta">${_formatDate(b.created)} &middot; ${_formatBytes(b.size_bytes)}</span>
+        </div>
+        <div class="backup-actions">
+          <button class="btn btn-xs" onclick="restoreBackup('${escAttr(b.name)}')" title="Restore this backup">${_icon('undo')}Restore</button>
+          <button class="btn btn-xs btn-muted" onclick="deleteBackup('${escAttr(b.name)}')" title="Delete this backup">${_icon('trash')}Delete</button>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch (err) {
+    container.innerHTML = `<p class="text-red">Failed to load backups: ${esc(err.message)}</p>`;
+  }
+}
+
+async function restoreBackup(backupName) {
+  const parts = backupName.split('-backup-');
+  const origin = parts[0] || backupName;
+  if (state.currentDb === origin) {
+    showToast(`Cannot restore over the active database "${origin}". Switch to another database first.`, 'error');
+    return;
+  }
+  if (!confirm(`Restore backup to database "${origin}"?\n\nThis will overwrite "${origin}" with the backup data.`)) return;
+  try {
+    await api('POST', '/api/databases/restore', { backup_name: backupName });
+    showToast(`Restored "${origin}" from backup`, 'success');
+    await loadDatabases();
+  } catch (err) {
+    showToast('Restore failed: ' + err.message, 'error');
+  }
+}
+
+async function deleteBackup(backupName) {
+  if (!confirm(`Delete backup "${backupName}"? This cannot be undone.`)) return;
+  try {
+    await api('DELETE', '/api/databases/backups/' + encodeURIComponent(backupName));
+    showToast('Backup deleted', 'success');
+    await loadBackupsList();
+  } catch (err) {
+    showToast('Delete failed: ' + err.message, 'error');
   }
 }
 

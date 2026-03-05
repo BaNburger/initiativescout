@@ -18,10 +18,10 @@ from sqlalchemy.orm import Session
 
 from scout import services
 from scout.db import (
-    backup_database, create_database, current_db_name, delete_database,
-    get_entity_type, get_revision,
-    get_session, init_db, list_databases, session_generator, switch_db,
-    validate_db_name,
+    backup_database, create_database, current_db_name, delete_backup,
+    delete_database, get_entity_type, get_revision,
+    get_session, init_db, list_backups, list_databases, restore_database,
+    session_generator, switch_db, validate_db_name,
 )
 from scout.importer import import_xlsx
 from scout.models import Enrichment, Initiative, OutreachScore, Project
@@ -499,6 +499,32 @@ async def backup_database_route(body: dict[str, Any]):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"ok": True, "backup": backup_name}
+
+
+@app.get("/api/databases/backups", tags=["Databases"], summary="List all backups")
+async def list_backups_route():
+    return {"backups": list_backups()}
+
+
+@app.post("/api/databases/restore", tags=["Databases"], summary="Restore a database from backup")
+async def restore_database_route(body: dict[str, Any]):
+    backup_name = (body.get("backup_name") or "").strip()
+    if not backup_name:
+        raise HTTPException(400, "backup_name is required")
+    try:
+        restored = restore_database(backup_name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "restored": restored}
+
+
+@app.delete("/api/databases/backups/{backup_name}", tags=["Databases"], summary="Delete a backup")
+async def delete_backup_route(backup_name: str):
+    try:
+        delete_backup(backup_name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "deleted": backup_name}
 
 
 # ---------------------------------------------------------------------------
