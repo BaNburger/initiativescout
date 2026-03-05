@@ -498,41 +498,65 @@ def manage_initiative(
     """Create, update, or delete entities.
 
     ACTIONS:
-    - create: Requires name, uni. Pass updates={field: value} for optional fields.
+    - create: Requires name. Pass updates={field: value} for optional fields.
+        For initiative/professor types, uni is also expected.
+        For custom entity types, use updates or custom_fields for domain-specific data.
     - update: Requires initiative_id. Pass updates={field: value} for changes.
+        For custom entity types, any key not in the standard columns is stored in metadata.
     - delete: Requires initiative_id + confirm=True.
 
     Args:
         action: "create", "update", or "delete".
         initiative_id: Entity ID (required for update/delete).
         name: Entity name (required for create).
-        uni: University (required for create).
-        updates: Dict of field->value. Valid keys: faculty, sector, description,
+        uni: University/institution (optional; mainly for initiative/professor types).
+        updates: Dict of field->value. Standard keys: faculty, sector, description,
             website, email, team_page, team_size, linkedin, github_org, key_repos,
             sponsors, competitions, mode, relevance, custom_fields.
+            Any other keys are stored in metadata (for custom entity types).
         confirm: Must be True for delete.
     """
     action = (action or "").strip().lower()
 
     if action == "create":
-        if not name or not uni:
-            return _error("name and uni are required for create", "VALIDATION_ERROR")
-        all_fields: dict = {"name": name, "uni": uni}
+        if not name:
+            return _error("name is required for create", "VALIDATION_ERROR")
+        all_fields: dict = {"name": name}
+        if uni:
+            all_fields["uni"] = uni
         custom_fields = None
+        metadata_fields: dict = {}
         if updates:
             updates = dict(updates)  # copy to avoid mutation
             custom_fields = updates.pop("custom_fields", None)
-            all_fields.update(updates)
+            # Separate standard fields from metadata fields
+            for k, v in updates.items():
+                if k in services.UPDATABLE_FIELDS:
+                    all_fields[k] = v
+                else:
+                    metadata_fields[k] = v
         with session_scope() as session:
             init = services.create_initiative(session, **all_fields)
             if custom_fields and isinstance(custom_fields, dict):
                 init.custom_fields_json = json.dumps(custom_fields)
-                session.flush()
+            # Store non-standard fields in metadata_json
+            if metadata_fields:
+                for k, v in metadata_fields.items():
+                    init.set_field(k, v)
+            session.flush()
             session.commit()
+            result_data: dict = {"id": init.id, "name": init.name}
+            if init.uni:
+                result_data["uni"] = init.uni
+            if init.website:
+                result_data["website"] = init.website
+            if init.field("github_org"):
+                result_data["github_org"] = init.field("github_org")
+            if metadata_fields:
+                result_data["metadata"] = metadata_fields
             result = _suggest(
-                {"id": init.id, "name": init.name, "uni": init.uni,
-                 "website": init.website or None, "github_org": init.github_org or None},
-                _next("enrich_initiative", "Fetch web/GitHub data", initiative_id=init.id),
+                result_data,
+                _next("enrich_initiative", "Fetch web data or submit_enrichment()", initiative_id=init.id),
             )
             result["_db"] = _db_pulse(session)
             return result
@@ -807,67 +831,126 @@ def get_scoring_dossier(initiative_id: int) -> dict:
         et = get_entity_type()
         defaults = default_prompts_for(et)
 
-        team_prompt = prompts.get("team", defaults["team"][1])
-        tech_prompt = prompts.get("tech", defaults["tech"][1])
-        opp_prompt = prompts.get("opportunity", defaults["opportunity"][1])
+        ecfg = get_entity_config(et)
+        dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+
+        # Build dimension dossiers: first dim gets team dossier, second gets tech,
+        # last gets full (includes all enrichments for big-picture assessment).
+        dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
+        dimensions_out = {}
+        for i, dim in enumerate(dims):
+            builder_idx = min(i, len(dossier_builders) - 1)
+            # Last dimension always gets the full dossier
+            if i == len(dims) - 1:
+                builder_idx = len(dossier_builders) - 1
+            builder = dossier_builders[builder_idx]
+            prompt = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
+            dimensions_out[dim] = {"prompt": prompt, "dossier": builder(init, enrichments, et)}
+
+        # Build grade args hint for submit_score
+        grade_args = {f"grade_{dim}": "" for dim in dims}
+        grade_args["classification"] = ""
+
         return _suggest(
             {
                 "initiative_id": init.id, "initiative_name": init.name,
                 "entity_type": et, "enriched": len(enrichments) > 0,
-                "dimensions": {
-                    "team": {"prompt": team_prompt, "dossier": build_team_dossier(init, enrichments, et)},
-                    "tech": {"prompt": tech_prompt, "dossier": build_tech_dossier(init, enrichments, et)},
-                    "opportunity": {"prompt": opp_prompt, "dossier": build_full_dossier(init, enrichments, et)},
-                },
+                "dimensions": dimensions_out,
             },
             _next("submit_score", "Submit your evaluation",
-                  initiative_id=init.id,
-                  grade_team="", grade_tech="", grade_opportunity="", classification=""),
+                  initiative_id=init.id, **grade_args),
         )
 
 
 @mcp.tool(annotations=_WRITE)
 def submit_score(
     initiative_id: int,
-    grade_team: str, grade_tech: str, grade_opportunity: str,
-    classification: str,
+    grade_team: str = "", grade_tech: str = "", grade_opportunity: str = "",
+    classification: str = "",
     contact_who: str = "", contact_channel: str = "website_form",
     engagement_hook: str = "", reasoning: str = "",
+    dimension_grades: dict | None = None,
 ) -> dict:
     """Submit externally-evaluated scores. No LLM call needed.
 
     WHAT: Validates grades, computes verdict/score deterministically, saves the score.
     WHEN: After get_scoring_dossier() when you've evaluated the dossiers.
 
+    Supports both standard and custom scoring dimensions:
+    - Standard (initiative/professor): use grade_team, grade_tech, grade_opportunity.
+    - Custom entity types: use dimension_grades={"dim_name": "grade", ...}.
+      The dimension names must match those from get_scoring_dossier().
+
     Args:
         initiative_id: Entity ID.
-        grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D).
-        grade_tech: Tech grade (same scale).
-        grade_opportunity: Opportunity grade (same scale).
-        classification: Entity classification. See scout://overview for valid values.
+        grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D). For standard types.
+        grade_tech: Tech grade (same scale). For standard types.
+        grade_opportunity: Opportunity grade (same scale). For standard types.
+        classification: Entity classification (optional for custom types).
         contact_who: Recommended contact person/role.
         contact_channel: email, linkedin, event, or website_form.
         engagement_hook: Suggested opening line.
-        reasoning: Brief reasoning for the opportunity assessment.
+        reasoning: Brief reasoning for the assessment.
+        dimension_grades: Dict of dimension->grade for custom entity types.
+            Example: {"novelty": "A", "methodology": "B+", "impact": "A-"}.
     """
-    for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
-                       ("grade_opportunity", grade_opportunity)]:
-        normalized = raw.strip().upper().replace(" ", "")
-        if normalized not in VALID_GRADES:
-            return _error(f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
-                          "VALIDATION_ERROR")
+    et = get_entity_type()
+    ecfg = get_entity_config(et)
+    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+    is_standard = (dims == ["team", "tech", "opportunity"])
 
-    grades = {
-        "team": Grade.parse(grade_team),
-        "tech": Grade.parse(grade_tech),
-        "opportunity": Grade.parse(grade_opportunity),
-    }
+    # Build grades dict from either standard params or dimension_grades
+    grades: dict[str, Grade] = {}
+    if dimension_grades and isinstance(dimension_grades, dict):
+        # Custom dimensions
+        for dim, raw_grade in dimension_grades.items():
+            raw_str = str(raw_grade).strip().upper().replace(" ", "")
+            if raw_str not in VALID_GRADES:
+                return _error(
+                    f"Invalid grade for '{dim}': {raw_grade!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
+                    "VALIDATION_ERROR")
+            grades[dim] = Grade.parse(raw_grade)
+    elif is_standard:
+        # Standard team/tech/opportunity
+        for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
+                           ("grade_opportunity", grade_opportunity)]:
+            if not raw:
+                return _error(f"{label} is required", "VALIDATION_ERROR")
+            normalized = raw.strip().upper().replace(" ", "")
+            if normalized not in VALID_GRADES:
+                return _error(
+                    f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
+                    "VALIDATION_ERROR")
+        grades = {
+            "team": Grade.parse(grade_team),
+            "tech": Grade.parse(grade_tech),
+            "opportunity": Grade.parse(grade_opportunity),
+        }
+    else:
+        # Non-standard dims, but no dimension_grades provided — try grade_ params
+        # as positional mapping to configured dimensions
+        positional = [grade_team, grade_tech, grade_opportunity]
+        for i, dim in enumerate(dims):
+            raw = positional[i] if i < len(positional) else ""
+            if not raw:
+                return _error(
+                    f"Missing grade for dimension '{dim}'. Use dimension_grades={{'{dim}': 'grade'}} "
+                    f"or provide grades positionally.",
+                    "VALIDATION_ERROR")
+            normalized = raw.strip().upper().replace(" ", "")
+            if normalized not in VALID_GRADES:
+                return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
+            grades[dim] = Grade.parse(raw)
 
-    classification = classification.strip().lower()
-    valid_cls = valid_classifications(get_entity_type())
-    if classification not in valid_cls:
-        return _error(f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
-                      "VALIDATION_ERROR")
+    # Validate classification (relaxed for custom types)
+    if classification:
+        classification = classification.strip().lower()
+        valid_cls = valid_classifications(et)
+        # For custom types, accept any classification
+        if is_standard and classification not in valid_cls:
+            return _error(
+                f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
+                "VALIDATION_ERROR")
 
     contact_channel = contact_channel.strip().lower()
     if contact_channel and contact_channel not in VALID_CHANNELS:
@@ -897,13 +980,22 @@ def submit_score(
         session.add(outreach)
         session.commit()
 
-        result = {
+        result: dict = {
             "initiative_id": init.id, "initiative_name": init.name,
             "verdict": outreach.verdict, "score": outreach.score,
             "classification": outreach.classification,
-            "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-            "grade_opportunity": outreach.grade_opportunity,
         }
+        # Include dimension grades — use dimension_grades_json for full picture
+        dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
+        if dim_grades_stored:
+            result["dimension_grades"] = {
+                k: v.get("letter", "") for k, v in dim_grades_stored.items()
+            }
+        else:
+            result.update({
+                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+                "grade_opportunity": outreach.grade_opportunity,
+            })
         result["_db"] = _db_pulse(session)
         return result
 

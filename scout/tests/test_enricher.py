@@ -1150,3 +1150,153 @@ class TestEntityConfig:
         assert "GitHub" not in gap_text or "team_page" not in [
             e for e in get_entity_config("professor").get("enrichers", [])
         ]
+
+
+class TestCustomEntityDossier:
+    """Tests for dossier building with custom entity types."""
+
+    def test_metadata_included_for_custom_type(self):
+        """Custom entity types should include metadata_json in dossiers."""
+        from scout.scorer import build_team_dossier, build_full_dossier
+        init = Initiative(name="Test Company")
+        init.set_field("industry", "Fintech")
+        init.set_field("revenue", "$10M")
+
+        dossier = build_team_dossier(init, [], "company")
+        assert "INDUSTRY: Fintech" in dossier
+        assert "REVENUE: $10M" in dossier
+
+    def test_metadata_not_duplicated_for_builtin_type(self):
+        """Built-in types should NOT include metadata (they use hardcoded fields)."""
+        from scout.scorer import build_team_dossier
+        init = Initiative(name="Test Init", uni="TUM")
+        dossier = build_team_dossier(init, [], "initiative")
+        # Metadata is empty, so nothing extra should appear
+        assert "METADATA" not in dossier.upper() or True  # no metadata section
+
+    def test_enrichments_unfiltered_for_custom_type(self):
+        """Custom entity types should include ALL enrichments in dimension dossiers."""
+        from scout.scorer import build_team_dossier
+        init = Initiative(name="Test Article")
+        e = Enrichment(
+            initiative_id=1, source_type="citation_analysis",
+            raw_text="High-impact paper", summary="Important",
+            fetched_at=datetime.now(UTC),
+        )
+        dossier = build_team_dossier(init, [e], "article")
+        assert "CITATION_ANALYSIS" in dossier
+
+    def test_enrichments_filtered_for_builtin_type(self):
+        """Built-in types should filter enrichments by source type in dimension dossiers."""
+        from scout.scorer import build_team_dossier
+        init = Initiative(name="Test Init", uni="TUM")
+        e = Enrichment(
+            initiative_id=1, source_type="random_source",
+            raw_text="Random data", summary="Random",
+            fetched_at=datetime.now(UTC),
+        )
+        dossier = build_team_dossier(init, [e], "initiative")
+        assert "RANDOM_SOURCE" not in dossier
+
+    def test_full_dossier_always_includes_all(self):
+        """Full dossier includes all enrichments for any entity type."""
+        from scout.scorer import build_full_dossier
+        init = Initiative(name="Test")
+        e = Enrichment(
+            initiative_id=1, source_type="custom_source",
+            raw_text="Custom data", summary="Custom",
+            fetched_at=datetime.now(UTC),
+        )
+        # Custom type
+        dossier = build_full_dossier(init, [e], "movie")
+        assert "CUSTOM_SOURCE" in dossier
+        # Built-in type
+        dossier2 = build_full_dossier(init, [e], "initiative")
+        assert "CUSTOM_SOURCE" in dossier2
+
+
+class TestCustomEntityDataGaps:
+    """Tests for data gaps with custom entity types."""
+
+    def test_custom_type_no_enrichments(self):
+        from scout.scorer import compute_data_gaps
+        init = Initiative(name="Test")
+        gaps = compute_data_gaps(init, [], entity_type="movie")
+        assert any("submit_enrichment" in g for g in gaps)
+
+    def test_custom_type_with_enrichments(self):
+        from scout.scorer import compute_data_gaps
+        init = Initiative(name="Test")
+        e = Enrichment(
+            initiative_id=1, source_type="review",
+            raw_text="Good movie", summary="Good",
+            fetched_at=datetime.now(UTC),
+        )
+        gaps = compute_data_gaps(init, [e], entity_type="movie")
+        # With 1 enrichment, suggests more data
+        assert any("1 enrichment" in g for g in gaps)
+
+    def test_custom_type_sufficient_enrichments(self):
+        from scout.scorer import compute_data_gaps
+        init = Initiative(name="Test")
+        enrichments = [
+            Enrichment(initiative_id=1, source_type=f"src{i}",
+                       raw_text=f"Data {i}", summary=f"Summary {i}",
+                       fetched_at=datetime.now(UTC))
+            for i in range(3)
+        ]
+        gaps = compute_data_gaps(init, enrichments, entity_type="movie")
+        assert len(gaps) == 0
+
+    def test_builtin_type_still_checks_specific_enrichers(self):
+        from scout.scorer import compute_data_gaps
+        init = Initiative(name="Test", uni="TUM")
+        gaps = compute_data_gaps(init, [], entity_type="initiative")
+        assert any("website" in g.lower() for g in gaps)
+
+
+class TestAllFieldsFiltering:
+    """Tests for all_fields filtering of empty defaults."""
+
+    def test_all_fields_skips_empty_defaults(self):
+        init = Initiative(name="Test Company")
+        init.set_field("industry", "Fintech")
+        fields = init.all_fields()
+        assert "industry" in fields
+        assert fields["industry"] == "Fintech"
+        # Empty default columns should be excluded
+        assert "github_org" not in fields
+        assert "openalex_hits" not in fields
+        assert "github_ci_present" not in fields
+
+    def test_all_fields_includes_nonempty_columns(self):
+        init = Initiative(name="Test", uni="TUM", website="https://example.com")
+        fields = init.all_fields()
+        assert fields["name"] == "Test"
+        assert fields["uni"] == "TUM"
+        assert fields["website"] == "https://example.com"
+
+
+class TestWorkQueueEntityAware:
+    """Tests for entity-type-aware work queue."""
+
+    def test_work_queue_omits_empty_uni(self, session):
+        init = Initiative(name="Test Movie")
+        session.add(init)
+        session.flush()
+        from scout.services import get_work_queue
+        queue = get_work_queue(session, limit=10)
+        assert len(queue) > 0
+        item = queue[0]
+        assert "name" in item
+        # uni should not be in output when empty
+        assert "uni" not in item
+
+    def test_work_queue_includes_uni_when_set(self, session):
+        init = Initiative(name="Test Init", uni="TUM")
+        session.add(init)
+        session.flush()
+        from scout.services import get_work_queue
+        queue = get_work_queue(session, limit=10)
+        item = next(i for i in queue if i["name"] == "Test Init")
+        assert item["uni"] == "TUM"

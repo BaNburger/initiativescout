@@ -167,6 +167,9 @@ def _build_initiative_dict(
     This is the single source of truth for the initiative list-view shape,
     used by both ``initiative_summary`` (ORM-based) and ``query_initiatives``
     (SQL-based).
+
+    Includes metadata_json fields so custom entity types (company, article,
+    movie, etc.) have their domain-specific data in the response.
     """
     result: dict[str, Any] = {f: getattr(init, f) for f in _SUMMARY_BASE_FIELDS}
     result["enriched"] = enriched
@@ -175,6 +178,10 @@ def _build_initiative_dict(
     for f in _SUMMARY_EXTRA_FIELDS:
         result[f] = getattr(init, f)
     result["custom_fields"] = json_parse(init.custom_fields_json, {})
+    # Include metadata fields so custom entity types surface their data
+    metadata = json_parse(init.metadata_json, {})
+    if metadata:
+        result["metadata"] = metadata
     return result
 
 
@@ -200,8 +207,14 @@ def initiative_detail(init: Initiative) -> dict:
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=True),
     )
-    base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
-    base["extra_links"] = json_parse(init.extra_links_json)
+    # Add detail fields, skipping empty defaults to keep output clean
+    for f in DETAIL_FIELDS:
+        val = getattr(init, f)
+        if val is not None and val != "" and val != 0 and val is not False:
+            base[f] = val
+    extra = json_parse(init.extra_links_json)
+    if extra:
+        base["extra_links"] = extra
     base["enrichments"] = [
         {"id": e.id, "source_type": e.source_type, "source_url": e.source_url,
          "summary": e.summary, "fetched_at": e.fetched_at.isoformat()}
@@ -558,8 +571,6 @@ def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
     for row in rows:
         init = row[0]
         p = row[1]
-        has_web = bool((init.field("website") or "").strip())
-        has_gh = bool((init.field("github_org") or "").strip())
         needs_enrich = p in (1, 3)
         needs_score = p in (1, 2)
         if needs_enrich:
@@ -568,12 +579,21 @@ def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
             action = "score"
         else:
             action = "re-enrich"
-        queue.append({
-            "id": init.id, "name": init.name, "uni": init.uni,
-            "has_website": has_web, "has_github": has_gh,
+        item: dict = {
+            "id": init.id, "name": init.name,
             "needs_enrichment": needs_enrich, "needs_scoring": needs_score,
             "recommended_action": action,
-        })
+        }
+        # Include entity-type-relevant context
+        if init.uni:
+            item["uni"] = init.uni
+        has_web = bool((init.field("website") or "").strip())
+        has_gh = bool((init.field("github_org") or "").strip())
+        if has_web:
+            item["has_website"] = True
+        if has_gh:
+            item["has_github"] = True
+        queue.append(item)
     return queue
 
 

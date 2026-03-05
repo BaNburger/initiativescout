@@ -128,14 +128,20 @@ class Initiative(Base):
             self.metadata_json = json.dumps(meta)
 
     def all_fields(self) -> dict:
-        """Return all non-empty fields from columns + metadata_json + custom_fields_json."""
+        """Return all non-empty fields from columns + metadata_json + custom_fields_json.
+
+        Skips default/empty column values (None, "", 0, False) so that
+        custom entity types don't return 30+ irrelevant initiative-specific
+        columns with default values.
+        """
         result = {}
         for col_name in self._columns():
             if col_name in self._SKIP_FIELDS or col_name == "id":
                 continue
             val = getattr(self, col_name, None)
-            if val is not None and val != "":
-                result[col_name] = val
+            if val is None or val == "" or val == 0 or val is False:
+                continue
+            result[col_name] = val
         for parsed in (self._parsed_meta(), self._parsed_custom()):
             for k, v in parsed.items():
                 if v is not None and k not in result:

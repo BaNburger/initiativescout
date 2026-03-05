@@ -432,6 +432,7 @@ def _build_dossier(
     enrichments: list[Enrichment] | None = None,
     source_filter: dict[str, int] | None = None,
     header: list[str] | None = None,
+    include_metadata: bool = False,
 ) -> str:
     """Build a dossier string from an object's attributes and enrichment data.
 
@@ -444,10 +445,14 @@ def _build_dossier(
         source_filter: If given, only include enrichments whose source_type is a key,
             with the value being the max text length. ``None`` means include all.
         header: Initial header lines (e.g. ``["INITIATIVE: Foo", "UNIVERSITY: TUM"]``).
+        include_metadata: If True, append all metadata_json fields. Used for
+            custom entity types that store their domain data in metadata.
     """
     sections: list[str] = list(header or [])
     _field = getattr(obj, "field", None)
+    seen_attrs: set[str] = set()
     for label, attr in fields:
+        seen_attrs.add(attr)
         if _field is not None:
             val = _field(attr, default="")
         else:
@@ -458,6 +463,18 @@ def _build_dossier(
             sections.append(label)
         else:
             sections.append(f"{label}: {val}")
+
+    # For custom entity types: include metadata_json fields not already in the
+    # hardcoded field list. This ensures domain-specific data (director, authors,
+    # industry, etc.) appears in scoring dossiers.
+    if include_metadata:
+        _parsed_meta = getattr(obj, "_parsed_meta", None)
+        if _parsed_meta is not None:
+            for key, val in _parsed_meta().items():
+                if key in seen_attrs or val is None or val == "":
+                    continue
+                label = key.upper().replace("_", " ")
+                sections.append(f"{label}: {val}")
 
     if enrichments is not None:
         for e in enrichments:
@@ -574,24 +591,34 @@ _OPPORTUNITY_FIELDS: list[tuple[str, str]] = [
 ]
 
 
+def _is_builtin_entity(entity_type: str) -> bool:
+    """Return True if this is a built-in entity type with hardcoded field lists."""
+    return entity_type in ENTITY_CONFIG
+
+
 def build_team_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:
-    """Assemble team-relevant data for the Team dimension LLM call."""
+    """Assemble team-relevant data for the first scoring dimension."""
+    builtin = _is_builtin_entity(entity_type)
     return _build_dossier(
-        init, _TEAM_FIELDS,
+        init, _TEAM_FIELDS if builtin else [],
         enrichments=enrichments,
+        # For built-in types: filter to team-relevant sources.
+        # For custom types: include all enrichments (LLM-submitted data is all relevant).
         source_filter={
             "team_page": 5000, "website": 3000, "github": 3000,
             "linkedin": 3000, "instagram": 2000, "facebook": 2000,
             "careers": 3000, "structured_data": 2000,
-        },
+        } if builtin else None,
         header=_initiative_header(init, entity_type),
+        include_metadata=not builtin,
     )
 
 
 def build_tech_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:
-    """Assemble tech-relevant data for the Tech dimension LLM call."""
+    """Assemble tech-relevant data for the second scoring dimension."""
+    builtin = _is_builtin_entity(entity_type)
     return _build_dossier(
-        init, _TECH_FIELDS,
+        init, _TECH_FIELDS if builtin else [],
         enrichments=enrichments,
         source_filter={
             "github": 5000, "website": 3000,
@@ -599,18 +626,21 @@ def build_tech_dossier(init: Initiative, enrichments: list[Enrichment], entity_t
             "openalex": 3000, "semantic_scholar": 3000,
             "google_scholar": 3000, "orcid": 3000,
             "git_deep": 4000, "tech_stack": 2000,
-        },
+        } if builtin else None,
         header=_initiative_header(init, entity_type),
+        include_metadata=not builtin,
     )
 
 
 def build_full_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:
-    """Assemble full dossier for the Opportunity dimension (needs big picture)."""
+    """Assemble full dossier for the last scoring dimension (needs big picture)."""
+    builtin = _is_builtin_entity(entity_type)
     return _build_dossier(
-        init, _OPPORTUNITY_FIELDS,
+        init, _OPPORTUNITY_FIELDS if builtin else [],
         enrichments=enrichments,
         source_filter=None,  # include all enrichment sources
         header=_initiative_header(init, entity_type),
+        include_metadata=not builtin,
     )
 
 
@@ -665,8 +695,18 @@ def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_ty
     source_types = {e.source_type for e in enrichments}
     cfg = get_entity_config(entity_type)
     configured_enrichers = set(cfg.get("enrichers", []))
-    prof = entity_type == "professor"
 
+    # For custom entity types with no configured enrichers, the primary gap
+    # is simply having few/no enrichments at all.
+    if not _is_builtin_entity(entity_type):
+        if not enrichments:
+            gaps.append("No enrichment data — use submit_enrichment() to add research findings")
+        elif len(enrichments) < 2:
+            gaps.append("Only 1 enrichment source — more data improves scoring accuracy")
+        return gaps
+
+    # Built-in entity types: check specific enricher coverage
+    prof = entity_type == "professor"
     if "website" in configured_enrichers and "website" not in source_types:
         gaps.append("No website enrichment data available")
     if "team_page" in configured_enrichers and "team_page" not in source_types:
