@@ -6,11 +6,12 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import httpx
 from lxml import etree, html as lxml_html
 
-from scout.models import Initiative
+from scout.models import Enrichment, Initiative
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +106,29 @@ def _normalize_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         return "https://" + url
     return url
+
+
+def _get_website_url(initiative: Initiative) -> str | None:
+    """Extract and normalize the website URL from an initiative, or None if absent."""
+    url = (initiative.field("website") or "").strip()
+    if not url:
+        return None
+    return _normalize_url(url)
+
+
+def _make_enrichment(
+    initiative: Initiative, source_type: str, source_url: str,
+    raw_text: str, summary: str | None = None,
+) -> Enrichment:
+    """Create an Enrichment with automatic truncation and timestamp."""
+    return Enrichment(
+        initiative_id=initiative.id,
+        source_type=source_type,
+        source_url=source_url,
+        raw_text=raw_text[:_MAX_TEXT],
+        summary=(summary or raw_text)[:_MAX_SUMMARY],
+        fetched_at=datetime.now(UTC),
+    )
 
 
 def _parse_html(raw_html: str):

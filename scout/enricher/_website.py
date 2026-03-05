@@ -5,18 +5,18 @@ import asyncio
 import logging
 import re
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from urllib.parse import urljoin, urlparse
 
 from scout.enricher._core import (
     _CRAWL4AI_AVAILABLE,
-    _MAX_SUMMARY,
     _MAX_TEXT,
     AsyncWebCrawler,
     BrowserConfig,
     CrawlerRunConfig,
     _extract_text,
     _fetch_url,
+    _get_website_url,
+    _make_enrichment,
     _normalize_url,
     _parse_html,
     _summarize_text,
@@ -89,14 +89,7 @@ async def _enrich_page(
         return None
 
     summary = _summarize_text(text, url)
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type=source_type,
-        source_url=url,
-        raw_text=text[:_MAX_TEXT],
-        summary=summary,
-        fetched_at=datetime.now(UTC),
-    )
+    return _make_enrichment(initiative, source_type, url, text, summary)
 
 
 # Keywords that indicate important subpages worth scraping
@@ -153,10 +146,9 @@ async def enrich_website(
     initiative: Initiative, crawler: object | None = None,
 ) -> list[Enrichment]:
     """Fetch initiative website + important subpages, extract text content."""
-    url = (initiative.field("website") or "").strip()
+    url = _get_website_url(initiative)
     if not url:
         return []
-    url = _normalize_url(url)
 
     main = await _enrich_page(initiative, url, "website", crawler)
     if main is None:
@@ -253,10 +245,9 @@ _CAREER_PATH_PATTERNS = [
 
 async def enrich_careers(initiative: Initiative) -> Enrichment | None:
     """Discover and parse career/job pages for growth signals."""
-    url = (initiative.field("website") or "").strip()
+    url = _get_website_url(initiative)
     if not url:
         return None
-    url = _normalize_url(url)
 
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -278,17 +269,8 @@ async def enrich_careers(initiative: Initiative) -> Enrichment | None:
             )):
                 continue
 
-            lines = [f"CAREER PAGE: {career_url}", text[:_MAX_TEXT - 200]]
-            full_text = "\n".join(lines)
-
-            return Enrichment(
-                initiative_id=initiative.id,
-                source_type="careers",
-                source_url=career_url,
-                raw_text=full_text[:_MAX_TEXT],
-                summary=full_text[:_MAX_SUMMARY],
-                fetched_at=datetime.now(UTC),
-            )
+            full_text = f"CAREER PAGE: {career_url}\n{text[:_MAX_TEXT - 200]}"
+            return _make_enrichment(initiative, "careers", career_url, full_text)
         except Exception:
             continue
 

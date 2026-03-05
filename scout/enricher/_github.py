@@ -6,11 +6,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from scout.enricher._core import (
-    _MAX_SUMMARY,
-    _MAX_TEXT,
     _github_get,
     _github_headers,
     _github_org_from_field,
+    _make_enrichment,
 )
 from scout.models import Enrichment, Initiative
 
@@ -84,18 +83,11 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
         except Exception as exc:
             log.warning("GitHub repo fetch failed for %s/%s: %s", org, repo, exc)
 
-    text = "\n".join(lines)
     if len(lines) <= 1:
         return None
 
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="github",
-        source_url=f"https://github.com/{org}",
-        raw_text=text,
-        summary=text[:500],
-        fetched_at=datetime.now(UTC),
-    )
+    text = "\n".join(lines)
+    return _make_enrichment(initiative, "github", f"https://github.com/{org}", text)
 
 
 async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
@@ -179,11 +171,4 @@ async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
         return None
 
     text = "\n".join(lines)
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="git_deep",
-        source_url=f"https://github.com/{org}/{repo}",
-        raw_text=text[:_MAX_TEXT],
-        summary=text[:_MAX_SUMMARY],
-        fetched_at=datetime.now(UTC),
-    )
+    return _make_enrichment(initiative, "git_deep", f"https://github.com/{org}/{repo}", text)

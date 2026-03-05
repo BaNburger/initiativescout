@@ -6,14 +6,13 @@ import json as json_mod
 import logging
 import re
 import socket
-from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from scout.enricher._core import (
     _EXTRUCT_AVAILABLE,
-    _MAX_SUMMARY,
-    _MAX_TEXT,
     _fetch_url,
+    _get_website_url,
+    _make_enrichment,
     _normalize_url,
     _parse_html,
     extruct,
@@ -142,10 +141,9 @@ def _extract_structured_data(raw_html: str) -> str | None:
 
 async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
     """Extract JSON-LD, OpenGraph, and meta tags from the initiative's website."""
-    url = (initiative.field("website") or "").strip()
+    url = _get_website_url(initiative)
     if not url:
         return None
-    url = _normalize_url(url)
 
     try:
         raw_html = await _fetch_url(url)
@@ -157,14 +155,7 @@ async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
     if not text:
         return None
 
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="structured_data",
-        source_url=url,
-        raw_text=text[:_MAX_TEXT],
-        summary=text[:_MAX_SUMMARY],
-        fetched_at=datetime.now(UTC),
-    )
+    return _make_enrichment(initiative, "structured_data", url, text)
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +227,9 @@ def _detect_tech_stack(raw_html: str) -> str | None:
 
 async def enrich_tech_stack(initiative: Initiative) -> Enrichment | None:
     """Detect the technology stack from the initiative's website HTML."""
-    url = (initiative.field("website") or "").strip()
+    url = _get_website_url(initiative)
     if not url:
         return None
-    url = _normalize_url(url)
 
     try:
         raw_html = await _fetch_url(url)
@@ -251,14 +241,7 @@ async def enrich_tech_stack(initiative: Initiative) -> Enrichment | None:
     if not text:
         return None
 
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="tech_stack",
-        source_url=url,
-        raw_text=text[:_MAX_TEXT],
-        summary=text[:_MAX_SUMMARY],
-        fetched_at=datetime.now(UTC),
-    )
+    return _make_enrichment(initiative, "tech_stack", url, text)
 
 
 # ---------------------------------------------------------------------------
@@ -332,10 +315,9 @@ async def _dns_lookup(domain: str) -> str | None:
 
 async def enrich_dns(initiative: Initiative) -> Enrichment | None:
     """Look up DNS records (MX, TXT) for the initiative's domain."""
-    url = (initiative.field("website") or "").strip()
+    url = _get_website_url(initiative)
     if not url:
         return None
-    url = _normalize_url(url)
     domain = urlparse(url).netloc
     if not domain:
         return None
@@ -346,14 +328,7 @@ async def enrich_dns(initiative: Initiative) -> Enrichment | None:
     if not text:
         return None
 
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="dns",
-        source_url=url,
-        raw_text=text[:_MAX_TEXT],
-        summary=text[:_MAX_SUMMARY],
-        fetched_at=datetime.now(UTC),
-    )
+    return _make_enrichment(initiative, "dns", url, text)
 
 
 # ---------------------------------------------------------------------------
@@ -363,10 +338,9 @@ async def enrich_dns(initiative: Initiative) -> Enrichment | None:
 
 async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
     """Parse robots.txt and sitemap.xml for site structure signals."""
-    url = (initiative.field("website") or "").strip()
+    url = _get_website_url(initiative)
     if not url:
         return None
-    url = _normalize_url(url)
 
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -419,11 +393,7 @@ async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
             lines.append(f"  Career page found: {found_url}")
             break
 
-    return Enrichment(
-        initiative_id=initiative.id,
-        source_type="sitemap",
-        source_url=f"{base}/sitemap.xml",
-        raw_text="\n".join(lines)[:_MAX_TEXT],
-        summary="\n".join(lines)[:_MAX_SUMMARY],
-        fetched_at=datetime.now(UTC),
-    ) if len(lines) > 1 else None
+    if len(lines) <= 1:
+        return None
+    text = "\n".join(lines)
+    return _make_enrichment(initiative, "sitemap", f"{base}/sitemap.xml", text)
