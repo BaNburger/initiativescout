@@ -38,28 +38,8 @@
   <div class="stat"><span class="verdict-badge verdict-monitor" id="stat-monitor">0 monitor</span></div>
 </div>
 
-<!-- Filters -->
-<div class="filters">
-  <select class="filter-select" id="filter-verdict" onchange="applyFilters()">
-    <option value="">All Verdicts</option>
-    <option value="reach_out_now">Reach Out Now</option>
-    <option value="reach_out_soon">Reach Out Soon</option>
-    <option value="monitor">Monitor</option>
-    <option value="skip">Skip</option>
-    <option value="unscored">Unscored</option>
-  </select>
-  <select class="filter-select" id="filter-class" onchange="applyFilters()">
-    <option value="">All Types</option>
-  </select>
-  <select class="filter-select" id="filter-uni" onchange="applyFilters()">
-    <option value="">All Unis</option>
-  </select>
-  <select class="filter-select" id="filter-faculty" onchange="applyFilters()">
-    <option value="">All Faculties</option>
-  </select>
-  <input class="search-input" id="filter-search" type="text" placeholder="Search..." oninput="applyFilters()">
-  <button class="btn-clear-filters" id="btn-clear-filters" onclick="clearFilters()">Clear filters</button>
-</div>
+<!-- Filters (built dynamically by JS from entity schema) -->
+<div class="filters" id="filters-bar"></div>
 
 <!-- Main layout -->
 <div class="main">

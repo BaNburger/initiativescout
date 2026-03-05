@@ -17,6 +17,7 @@ from scout.enricher import (
     enrich_careers, enrich_git_deep,
 )
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
+from scout.schema import get_schema
 from scout.scorer import LLMClient, get_entity_config, score_initiative, score_project
 from scout.utils import json_parse
 
@@ -58,53 +59,37 @@ def get_entity(session: Session, model, entity_id: int):
 # Shared field tuples
 # ---------------------------------------------------------------------------
 
-# Light fields for list views (compact, token-efficient)
+# Score fields (universal — not entity-type-specific)
 SCORE_LIST_FIELDS = (
     "verdict", "score", "classification",
     "grade_team", "grade_tech", "grade_opportunity",
 )
-
-# Full fields for detail views (includes reasoning, contact info, evidence)
 SCORE_DETAIL_FIELDS = (
     "verdict", "score", "classification", "reasoning", "contact_who",
     "contact_channel", "engagement_hook", "grade_team", "grade_team_num",
     "grade_tech", "grade_tech_num", "grade_opportunity", "grade_opportunity_num",
 )
-
-
-DETAIL_FIELDS = (
-    "team_page", "team_size", "linkedin", "github_org", "key_repos",
-    "sponsors", "competitions", "market_domains", "member_examples",
-    "member_roles", "github_repo_count", "github_contributors",
-    "github_commits_90d", "github_ci_present", "huggingface_model_hits",
-    "openalex_hits", "semantic_scholar_hits", "dd_key_roles",
-    "dd_references_count", "dd_is_investable", "profile_coverage_score",
-    "known_url_count", "linkedin_hits", "researchgate_hits",
-)
-
-UPDATABLE_FIELDS = (
-    "name", "uni", "faculty", "sector", "mode", "description", "website", "email",
-    "relevance", "team_page", "team_size", "linkedin", "github_org",
-    "key_repos", "sponsors", "competitions",
-)
-
 PROJECT_SCORE_KEYS = (
     "verdict", "score", "classification",
     "grade_team", "grade_team_num", "grade_tech", "grade_tech_num",
     "grade_opportunity", "grade_opportunity_num",
 )
 
-# Fields allowed in compact list mode (the `fields` parameter).
-COMPACT_FIELDS = {
-    "id", "name", "uni", "faculty", "sector", "mode", "description",
-    "website", "email", "relevance", "sheet_source",
-    "enriched", "enriched_at",
-    "verdict", "score", "classification",
-    "grade_team", "grade_tech", "grade_opportunity",
-    "technology_domains", "categories", "member_count",
-    "outreach_now_score", "venture_upside_score",
-    "custom_fields",
-}
+
+# Schema-driven field accessors (replace old hardcoded tuples)
+def get_detail_fields() -> tuple[str, ...]:
+    return tuple(get_schema()["detail_fields"])
+
+def get_updatable_fields() -> tuple[str, ...]:
+    return tuple(get_schema()["updatable_fields"])
+
+def get_compact_fields() -> set[str]:
+    return set(get_schema()["compact_fields"])
+
+# Backward-compat aliases (initiative defaults)
+DETAIL_FIELDS = tuple(get_schema("initiative")["detail_fields"])
+UPDATABLE_FIELDS = tuple(get_schema("initiative")["updatable_fields"])
+COMPACT_FIELDS = set(get_schema("initiative")["compact_fields"])
 
 # ---------------------------------------------------------------------------
 # Serialization helpers
@@ -146,40 +131,26 @@ def latest_score_fields(scores: list[OutreachScore], detail: bool = True) -> dic
     return score_response_dict(latest, extended=detail)
 
 
-# Base initiative fields read directly from the Initiative ORM object.
-_SUMMARY_BASE_FIELDS = (
-    "id", "name", "uni", "faculty", "sector", "mode", "description",
-    "website", "email", "relevance", "sheet_source",
-)
-_SUMMARY_EXTRA_FIELDS = (
-    "technology_domains", "categories", "member_count",
-    "outreach_now_score", "venture_upside_score",
-)
-
-
 def _build_initiative_dict(
     init: Initiative,
     enriched: bool,
     enriched_at_iso: str | None,
     score_fields: dict[str, Any],
 ) -> dict:
-    """Assemble the standard initiative summary dict from pre-computed parts.
+    """Assemble the standard entity summary dict from pre-computed parts.
 
-    This is the single source of truth for the initiative list-view shape,
-    used by both ``initiative_summary`` (ORM-based) and ``query_initiatives``
-    (SQL-based).
-
-    Includes metadata_json fields so custom entity types (company, article,
-    movie, etc.) have their domain-specific data in the response.
+    Schema-driven: reads summary_fields and summary_extra from the current
+    entity type schema. Uses init.field() for entity-type-agnostic access
+    (columns for built-in types, metadata_json for custom types).
     """
-    result: dict[str, Any] = {f: getattr(init, f) for f in _SUMMARY_BASE_FIELDS}
+    schema = get_schema()
+    result: dict[str, Any] = {f: init.field(f) for f in schema["summary_fields"]}
     result["enriched"] = enriched
     result["enriched_at"] = enriched_at_iso
     result.update(score_fields)
-    for f in _SUMMARY_EXTRA_FIELDS:
-        result[f] = getattr(init, f)
+    for f in schema.get("summary_extra", []):
+        result[f] = init.field(f)
     result["custom_fields"] = json_parse(init.custom_fields_json, {})
-    # Include metadata fields so custom entity types surface their data
     metadata = json_parse(init.metadata_json, {})
     if metadata:
         result["metadata"] = metadata
@@ -208,9 +179,9 @@ def initiative_detail(init: Initiative, *, sources: set[str] | None = None) -> d
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=True),
     )
-    # Add detail fields, skipping None/empty-string but keeping 0 and False
-    for f in DETAIL_FIELDS:
-        val = getattr(init, f)
+    # Add detail fields from schema, skipping empty but keeping 0 and False
+    for f in get_detail_fields():
+        val = init.field(f)
         if val is not None and val != "":
             base[f] = val
     extra = json_parse(init.extra_links_json)
@@ -233,7 +204,7 @@ def initiative_detail_compact(init: Initiative) -> dict:
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=False),
     )
-    base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
+    base.update({f: init.field(f) for f in get_detail_fields()})
     base["enrichment_sources"] = [e.source_type for e in init.enrichments]
     base["project_count"] = len(init.projects)
     # Strip empty/default values to reduce context, but keep id, name, enriched
@@ -261,31 +232,33 @@ def project_summary(proj: Project) -> dict:
 
 def rebuild_fts(session: Session) -> None:
     """Full rebuild of the FTS index from the initiatives table."""
-    session.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
+    from scout.db import _FTS_TABLE
+    session.execute(text(f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES('rebuild')"))
 
 
 def _fts_search(session: Session, query: str) -> list[int] | None:
     """Run FTS5 MATCH search, return ordered IDs by BM25 rank. None on error."""
+    from scout.db import _FTS_TABLE
     try:
         # Strip control characters and escape FTS5 special chars
         safe_q = "".join(c for c in query if c >= " " or c == "\t")
         safe_q = safe_q.replace('"', '""')
         fts_q = f'"{safe_q}"'
         rows = session.execute(text(
-            'SELECT rowid FROM initiative_fts WHERE initiative_fts MATCH :q '
-            'ORDER BY rank LIMIT 500'
+            f'SELECT rowid FROM {_FTS_TABLE} WHERE {_FTS_TABLE} MATCH :q '
+            f'ORDER BY rank LIMIT 500'
         ), {"q": fts_q}).all()
         # Lazy FTS rebuild: if empty result, check if FTS index needs populating
         if not rows:
             has_rows = session.execute(text(
-                "SELECT 1 FROM initiative_fts LIMIT 1"
+                f"SELECT 1 FROM {_FTS_TABLE} LIMIT 1"
             )).first()
             if not has_rows:
                 log.info("FTS index empty — rebuilding lazily")
                 rebuild_fts(session)
                 rows = session.execute(text(
-                    'SELECT rowid FROM initiative_fts WHERE initiative_fts MATCH :q '
-                    'ORDER BY rank LIMIT 500'
+                    f'SELECT rowid FROM {_FTS_TABLE} WHERE {_FTS_TABLE} MATCH :q '
+                    f'ORDER BY rank LIMIT 500'
                 ), {"q": fts_q}).all()
         return [r[0] for r in rows]
     except (OperationalError, ProgrammingError):
@@ -457,7 +430,7 @@ def query_initiatives(
         ))
 
     if fields:
-        allowed = fields & COMPACT_FIELDS
+        allowed = fields & get_compact_fields()
         items = [{k: v for k, v in item.items() if k in allowed} for item in items]
 
     return items, total
@@ -490,14 +463,28 @@ _PROJECT_FIELDS = ("name", "description", "website", "github_url", "team")
 
 
 def create_initiative(session: Session, **kwargs: Any) -> Initiative:
-    """Create a new initiative. Accepts any UPDATABLE_FIELDS as keyword args.
+    """Create a new entity. Accepts fields from the entity type schema.
 
+    Column fields are set directly; other fields go into metadata_json.
     FTS index is updated automatically via SQLAlchemy event listeners (db.py).
     """
-    data = {k: v for k, v in kwargs.items() if k in UPDATABLE_FIELDS and v is not None}
-    init = Initiative(**data)
+    allowed = set(get_updatable_fields())
+    col_names = Initiative._columns()
+    col_data = {}
+    meta_data = {}
+    for k, v in kwargs.items():
+        if k not in allowed or v is None:
+            continue
+        if k in col_names:
+            col_data[k] = v
+        else:
+            meta_data[k] = v
+    init = Initiative(**col_data)
+    if meta_data:
+        import json as _json
+        init.metadata_json = _json.dumps(meta_data)
     session.add(init)
-    session.flush()  # assign ID (triggers after_insert → FTS sync)
+    session.flush()
     return init
 
 
@@ -852,7 +839,7 @@ async def enrich_with_diagnostics(
     failed = sorted(possible - set(succeeded) - set(not_configured))
 
     result = {
-        "initiative_id": init.id, "initiative_name": init.name,
+        "entity_id": init.id, "entity_name": init.name,
         "enrichments_added": len(new),
         "sources_succeeded": succeeded,
         "sources_failed": failed,

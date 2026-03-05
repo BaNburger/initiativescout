@@ -101,10 +101,19 @@ class Grade:
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Labels for the default dimensions per entity type
+def _prompt_labels(entity_type: str) -> dict[str, str]:
+    """Return dimension labels for the given entity type from the schema."""
+    try:
+        from scout.schema import get_schema
+        return get_schema(entity_type).get("dimensions",
+            {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"})
+    except Exception:
+        return {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"}
+
+# Labels for the default dimensions per entity type (kept for backward compat)
 _PROMPT_LABELS: dict[str, dict[str, str]] = {
-    "initiative": {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"},
-    "professor": {"team": "Research Group", "tech": "Research Output", "opportunity": "Collaboration Potential"},
+    "initiative": _prompt_labels("initiative"),
+    "professor": _prompt_labels("professor"),
 }
 
 
@@ -129,11 +138,25 @@ def _load_all_prompts() -> dict[str, dict[str, tuple[str, str]]]:
     return registry
 
 
+def _prompts_for_type(entity_type: str) -> dict[str, tuple[str, str]]:
+    """Get prompt definitions for any entity type (including custom ones)."""
+    if entity_type in _ALL_DEFAULT_PROMPTS:
+        return _ALL_DEFAULT_PROMPTS[entity_type]
+    # Custom entity type — load from schema dimensions with initiative prompt content
+    labels = _prompt_labels(entity_type)
+    prompts: dict[str, tuple[str, str]] = {}
+    for dim, label in labels.items():
+        content = _load_prompt_file(entity_type, dim)
+        if content:
+            prompts[dim] = (label, content)
+    return prompts
+
+
 _ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = _load_all_prompts()
 
 def default_prompts_for(entity_type: str) -> dict[str, tuple[str, str]]:
     """Return default prompt definitions for the given entity type."""
-    return _ALL_DEFAULT_PROMPTS.get(entity_type, _ALL_DEFAULT_PROMPTS["initiative"])
+    return _prompts_for_type(entity_type)
 
 
 VALID_VERDICTS = {"reach_out_now", "reach_out_soon", "monitor", "skip"}
@@ -346,45 +369,33 @@ def _build_dossier(
     return "\n".join(sections)
 
 
-ENTITY_CONFIG: dict[str, dict] = {
-    "initiative": {
-        "label": "initiative", "label_plural": "initiatives",
-        "context": "Munich student initiatives",
-        "enrichers": [
-            "website", "team_page", "github", "extra_links",
-            "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
-        ],
-        "dimensions": ["team", "tech", "opportunity"],
-    },
-    "professor": {
-        "label": "professor", "label_plural": "professors",
-        "context": "TUM professors",
-        "enrichers": [
-            "website", "extra_links", "structured_data", "dns", "sitemap",
-        ],
-        "dimensions": ["team", "tech", "opportunity"],
-    },
-}
-
-
 def get_entity_config(entity_type: str) -> dict:
-    """Return merged entity config: built-in defaults + any DB overrides."""
-    base = ENTITY_CONFIG.get(entity_type)
-    if base:
-        return base
-    # Unknown entity type — try DB-stored config, else build minimal default
+    """Return entity config from the schema — single source of truth."""
     try:
-        from scout.db import get_entity_config_json
-        db_cfg = get_entity_config_json()
+        from scout.schema import get_schema
+        schema = get_schema(entity_type)
+        return {
+            "label": schema.get("label", entity_type),
+            "label_plural": schema.get("label_plural", entity_type + "s"),
+            "context": schema.get("context", entity_type),
+            "enrichers": schema.get("enrichers", ["website", "extra_links", "structured_data"]),
+            "dimensions": list(schema.get("dimensions", {}).keys()),
+        }
     except Exception:
-        db_cfg = {}
-    return {
-        "label": db_cfg.get("label", entity_type),
-        "label_plural": db_cfg.get("label_plural", entity_type + "s"),
-        "context": db_cfg.get("context", entity_type),
-        "enrichers": db_cfg.get("enrichers", ["website", "extra_links", "structured_data"]),
-        "dimensions": db_cfg.get("dimensions", ["team", "tech", "opportunity"]),
-    }
+        return {
+            "label": entity_type,
+            "label_plural": entity_type + "s",
+            "context": entity_type,
+            "enrichers": ["website", "extra_links", "structured_data"],
+            "dimensions": ["team", "tech", "opportunity"],
+        }
+
+
+# Backward-compat alias for code that imports ENTITY_CONFIG directly
+ENTITY_CONFIG: dict[str, dict] = {
+    "initiative": get_entity_config("initiative"),
+    "professor": get_entity_config("professor"),
+}
 
 
 def _initiative_header(init: Initiative, entity_type: str = "initiative") -> list[str]:
@@ -814,7 +825,7 @@ async def score_initiative(
 # Project scoring uses a combined prompt since projects have less data.
 def _project_system_prompt(entity_type: str = "initiative") -> str:
     cls_list = "|".join(sorted(valid_classifications(entity_type)))
-    ctx = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])["context"]
+    ctx = get_entity_config(entity_type)["context"]
     return (
         f"You are an outreach assistant. Read the dossier about a project within "
         f"{ctx} and produce an outreach recommendation.\n\n"
@@ -850,7 +861,7 @@ _PROJECT_DOSSIER_FIELDS: list[tuple[str, str]] = [
 
 def build_project_dossier(project: Project, initiative: Initiative, entity_type: str = "initiative") -> str:
     """Assemble project + parent initiative context into a dossier."""
-    parent_label = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])["label"].upper()
+    parent_label = get_entity_config(entity_type)["label"].upper()
     header = [
         f"PROJECT: {project.name}",
         f"PARENT {parent_label}: {initiative.name}",

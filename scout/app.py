@@ -12,7 +12,7 @@ from typing import Any, Generator
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
@@ -29,11 +29,7 @@ from scout.schemas import (
     CustomColumnCreate,
     CustomColumnUpdate,
     ImportResult,
-    InitiativeDetail,
-    InitiativeOut,
-    InitiativeUpdate,
     ProjectCreate,
-    ProjectOut,
     ProjectUpdate,
     ScoringPromptUpdate,
     StatsOut,
@@ -61,11 +57,11 @@ app = FastAPI(
     ),
     lifespan=lifespan,
     openapi_tags=[
-        {"name": "Initiatives", "description": "Browse, search, and update initiatives."},
+        {"name": "Entities", "description": "Browse, search, and update entities."},
         {"name": "Enrichment", "description": "Fetch live web and GitHub data."},
-        {"name": "Scoring", "description": "LLM-powered outreach scoring. Requires LLM API key (auto-loaded from .mcp.json)."},
-        {"name": "Projects", "description": "Manage sub-projects within initiatives."},
-        {"name": "Import", "description": "Bulk import initiatives from XLSX spreadsheets."},
+        {"name": "Scoring", "description": "LLM-powered scoring. Requires LLM API key (auto-loaded from .mcp.json)."},
+        {"name": "Projects", "description": "Manage sub-projects within entities."},
+        {"name": "Import", "description": "Bulk import entities from XLSX spreadsheets."},
         {"name": "Stats", "description": "Aggregate statistics and breakdowns."},
         {"name": "Databases", "description": "Manage multiple Scout databases and custom columns."},
         {"name": "Admin", "description": "Administrative operations."},
@@ -175,18 +171,24 @@ async def get_entity_type_route():
     return {"entity_type": get_entity_type()}
 
 
+@app.get("/api/schema", tags=["Stats"], summary="Get entity type schema (columns, filters, dimensions)")
+async def get_schema_route():
+    from scout.schema import get_schema
+    schema = get_schema()
+    # Convert sets to lists for JSON serialization
+    for key in ("compact_fields",):
+        if isinstance(schema.get(key), set):
+            schema[key] = sorted(schema[key])
+    return schema
+
+
 # ---------------------------------------------------------------------------
-# Routes: Initiatives
+# Routes: Entities (aliased as /api/initiatives for backward compat)
 # ---------------------------------------------------------------------------
 
 
-class InitiativeListResponse(BaseModel):
-    items: list[InitiativeOut]
-    total: int
-
-
-@app.get("/api/initiatives", response_model=InitiativeListResponse,
-         tags=["Initiatives"], summary="List initiatives with filtering, sorting, and pagination")
+@app.get("/api/entities",
+         tags=["Entities"], summary="List entities with filtering, sorting, and pagination")
 async def list_initiatives(
     verdict: str | None = Query(None, description="Comma-separated: reach_out_now, reach_out_soon, monitor, skip, unscored"),
     classification: str | None = Query(None, description="Comma-separated classification filter (values depend on entity type)"),
@@ -211,8 +213,8 @@ async def list_initiatives(
     return {"items": items, "total": total}
 
 
-@app.get("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
-         tags=["Initiatives"], summary="Get full initiative detail with enrichments, projects, and scores")
+@app.get("/api/entities/{initiative_id}",
+         tags=["Entities"], summary="Get full entity detail with enrichments, projects, and scores")
 async def get_initiative(
     initiative_id: int,
     sources: str | None = Query(None, description="Comma-separated enrichment source types to include (e.g. 'github,website')"),
@@ -222,14 +224,20 @@ async def get_initiative(
     return services.initiative_detail(_get_or_404(session, Initiative, initiative_id), sources=parse_comma_set(sources))
 
 
-@app.put("/api/initiatives/{initiative_id}", response_model=InitiativeDetail,
-         tags=["Initiatives"], summary="Update initiative fields (partial update, null fields ignored)")
-async def update_initiative(initiative_id: int, body: InitiativeUpdate, session: Session = Depends(db_session)):
+@app.put("/api/entities/{initiative_id}",
+         tags=["Entities"], summary="Update entity fields (partial update, null fields ignored)")
+async def update_initiative(initiative_id: int, body: dict[str, Any] | None = None, session: Session = Depends(db_session)):
     init = _get_or_404(session, Initiative, initiative_id)
-    services.apply_updates(init, body.model_dump(), services.UPDATABLE_FIELDS)
-    if body.custom_fields is not None:
-        services.merge_custom_fields(init, body.custom_fields)
-    session.flush()  # triggers after_update → FTS sync automatically
+    if not body:
+        return services.initiative_detail(init)
+    updatable = set(services.get_updatable_fields())
+    custom_fields = body.pop("custom_fields", None)
+    for key, val in body.items():
+        if val is not None and key in updatable:
+            init.set_field(key, val)
+    if custom_fields is not None:
+        services.merge_custom_fields(init, custom_fields)
+    session.flush()
     session.commit()
     return services.initiative_detail(init)
 
@@ -377,15 +385,15 @@ async def score_one(initiative_id: int, session: Session = Depends(db_session)):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/initiatives/{initiative_id}/projects", response_model=list[ProjectOut],
-         tags=["Projects"], summary="List projects for an initiative")
+@app.get("/api/entities/{initiative_id}/projects",
+         tags=["Projects"], summary="List projects for an entity")
 async def list_projects(initiative_id: int, session: Session = Depends(db_session)):
     init = _get_or_404(session, Initiative, initiative_id)
     return [services.project_summary(p) for p in init.projects]
 
 
-@app.post("/api/initiatives/{initiative_id}/projects", response_model=ProjectOut, status_code=201,
-          tags=["Projects"], summary="Create a new project under an initiative")
+@app.post("/api/entities/{initiative_id}/projects", status_code=201,
+          tags=["Projects"], summary="Create a new project under an entity")
 async def create_project(initiative_id: int, body: ProjectCreate, session: Session = Depends(db_session)):
     _get_or_404(session, Initiative, initiative_id)
     proj = services.create_project(
@@ -398,7 +406,7 @@ async def create_project(initiative_id: int, body: ProjectCreate, session: Sessi
     return services.project_summary(proj)
 
 
-@app.put("/api/projects/{project_id}", response_model=ProjectOut,
+@app.put("/api/projects/{project_id}",
          tags=["Projects"], summary="Update project fields (partial update)")
 async def update_project(project_id: int, body: ProjectUpdate, session: Session = Depends(db_session)):
     proj = _get_or_404(session, Project, project_id)
@@ -638,7 +646,7 @@ async def embed_all(session: Session = Depends(db_session)):
     return {"ok": True, "embedded": count}
 
 
-@app.get("/api/similar/{initiative_id}", tags=["Initiatives"],
+@app.get("/api/similar/{initiative_id}", tags=["Entities"],
          summary="Find initiatives semantically similar to a given one")
 async def find_similar_endpoint(
     initiative_id: int,
@@ -664,7 +672,7 @@ async def find_similar_endpoint(
     ]}
 
 
-@app.get("/api/search/semantic", tags=["Initiatives"],
+@app.get("/api/search/semantic", tags=["Entities"],
          summary="Semantic text search across initiatives using dense embeddings")
 async def semantic_search(
     q: str = Query(..., description="Search query text"),
@@ -711,11 +719,27 @@ async def reset_db(session: Session = Depends(db_session)):
     session.execute(delete(Project))
     session.execute(delete(Initiative))
     try:
-        session.execute(text("INSERT INTO initiative_fts(initiative_fts) VALUES('rebuild')"))
+        from scout.db import _FTS_TABLE
+        session.execute(text(f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES('rebuild')"))
     except Exception:
         log.debug("FTS deleteall skipped (table may not exist)")
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat route aliases (/api/initiatives → /api/entities)
+# ---------------------------------------------------------------------------
+
+for _old, _new, _methods in [
+    ("/api/initiatives", "/api/entities", ["GET"]),
+    ("/api/initiatives/{initiative_id}", "/api/entities/{initiative_id}", ["GET", "PUT"]),
+    ("/api/initiatives/{initiative_id}/projects", "/api/entities/{initiative_id}/projects", ["GET", "POST"]),
+]:
+    for _route in app.routes:
+        if hasattr(_route, "path") and _route.path == _new:
+            app.add_api_route(_old, _route.endpoint, methods=_methods, include_in_schema=False)
+            break
 
 
 # ---------------------------------------------------------------------------

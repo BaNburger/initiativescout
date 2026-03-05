@@ -23,13 +23,8 @@ def engine():
     eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(eng)
     # Create FTS5 table (normally done by init_db / _ensure_fts_table)
-    with eng.begin() as conn:
-        conn.execute(__import__("sqlalchemy").text(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS initiative_fts USING fts5("
-            "name, description, sector, technology_domains, "
-            "categories, market_domains, faculty, "
-            "content='initiatives', content_rowid='id')"
-        ))
+    from scout.db import _ensure_fts_table
+    _ensure_fts_table(eng)
     return eng
 
 
@@ -195,7 +190,7 @@ class TestBatchEnrich:
             mock_crawler.return_value.__aexit__ = AsyncMock(return_value=False)
 
             ids_str = ",".join(str(i.id) for i in three_initiatives[:2])
-            result = await batch_enrich(initiative_ids=ids_str, limit=20)
+            result = await batch_enrich(entity_ids=ids_str, limit=20)
 
         assert result["processed"] == 2
         assert result["succeeded"] == 2
@@ -228,7 +223,7 @@ class TestBatchEnrich:
             mock_crawler.return_value.__aenter__ = AsyncMock(return_value=None)
             mock_crawler.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            result = await batch_enrich(initiative_ids=None, limit=20)
+            result = await batch_enrich(entity_ids=None, limit=20)
 
         assert result["processed"] == 1
         assert result["succeeded"] == 1
@@ -240,7 +235,7 @@ class TestBatchEnrich:
         from scout.mcp_server import batch_enrich
 
         with patch("scout.mcp_server.services.get_work_queue", return_value=[]):
-            result = await batch_enrich(initiative_ids=None, limit=20)
+            result = await batch_enrich(entity_ids=None, limit=20)
 
         assert result["processed"] == 0
         assert "hint" in result
@@ -267,7 +262,7 @@ class TestBatchEnrich:
             mock_crawler.return_value.__aexit__ = AsyncMock(return_value=False)
 
             ids_str = ",".join(str(i.id) for i in three_initiatives)
-            result = await batch_enrich(initiative_ids=ids_str, limit=50)
+            result = await batch_enrich(entity_ids=ids_str, limit=50)
 
         assert result["processed"] == 3
         assert result["succeeded"] == 2
@@ -294,7 +289,7 @@ class TestBatchEnrich:
             mock_crawler.return_value.__aexit__ = AsyncMock(return_value=False)
 
             ids_str = ",".join(str(i.id) for i in three_initiatives)
-            result = await batch_enrich(initiative_ids=ids_str, limit=2)
+            result = await batch_enrich(entity_ids=ids_str, limit=2)
 
         assert result["processed"] == 2
 
@@ -327,7 +322,7 @@ class TestBatchScore:
         from scout.mcp_server import batch_score
 
         with patch.dict("os.environ", {}, clear=True):
-            result = await batch_score(initiative_ids="1,2,3", limit=10)
+            result = await batch_score(entity_ids="1,2,3", limit=10)
 
         assert result["error_code"] == "CONFIG_ERROR"
         assert "ANTHROPIC_API_KEY" in result["error"]
@@ -343,7 +338,7 @@ class TestBatchScore:
 
         with patch("scout.mcp_server.services.run_scoring", side_effect=_fake_run_scoring):
             ids_str = ",".join(str(i.id) for i in enriched_initiatives[:1])
-            result = await batch_score(initiative_ids=ids_str, limit=20)
+            result = await batch_score(entity_ids=ids_str, limit=20)
 
         assert result["succeeded"] == 1
         item = result["results"][0]
@@ -362,7 +357,7 @@ class TestBatchScore:
         from scout.mcp_server import batch_score
 
         with patch("scout.mcp_server.services.get_work_queue", return_value=[]):
-            result = await batch_score(initiative_ids=None, limit=20)
+            result = await batch_score(entity_ids=None, limit=20)
 
         assert result["processed"] == 0
         assert "hint" in result
@@ -384,7 +379,7 @@ class TestBatchScore:
 
         with patch("scout.mcp_server.services.run_scoring", side_effect=_varied_scoring):
             ids_str = ",".join(str(i.id) for i in enriched_initiatives)
-            result = await batch_score(initiative_ids=ids_str, limit=20)
+            result = await batch_score(entity_ids=ids_str, limit=20)
 
         assert result["processed"] == 3
         assert result["succeeded"] == 3
@@ -407,7 +402,7 @@ class TestBatchScore:
 
         with patch("scout.mcp_server.services.run_scoring", side_effect=_flaky_scoring):
             ids_str = ",".join(str(i.id) for i in enriched_initiatives)
-            result = await batch_score(initiative_ids=ids_str, limit=20)
+            result = await batch_score(entity_ids=ids_str, limit=20)
 
         assert result["processed"] == 3
         assert result["succeeded"] == 2

@@ -13,6 +13,9 @@ const state = {
   mode: 'grid', // 'grid' | 'detail'
 };
 
+// Entity type schema — loaded from /api/schema, drives columns, filters, etc.
+let _schema = null;
+
 const _COL_KEY_RE = /^[a-zA-Z0-9_-]+$/;
 
 // ---------------------------------------------------------------------------
@@ -76,8 +79,7 @@ async function pollRevision() {
       _refreshInFlight = true;
       try {
         await loadInitiatives();
-        populateUniFilter();
-        populateClassFilter();
+        populateFilters();
         await loadStats();
         if (state.selectedId) await loadDetail(state.selectedId);
       } finally { _refreshInFlight = false; }
@@ -100,6 +102,92 @@ async function refreshUI(detailId) {
   await loadStats();
   if (detailId) loadDetail(detailId);
   syncRevision();
+}
+
+// ---------------------------------------------------------------------------
+// Schema-driven UI
+// ---------------------------------------------------------------------------
+async function loadSchema() {
+  try {
+    _schema = await api('GET', '/api/schema');
+    buildCoreColumns();
+    buildFilterBar();
+  } catch (e) {
+    console.warn('Failed to load schema, using defaults:', e);
+  }
+}
+
+// NOTE: All user-supplied values passed through esc()/escAttr() before DOM insertion
+function buildFilterBar() {
+  var bar = document.getElementById('filters-bar');
+  if (!bar || !_schema) return;
+  var parts = [];
+  (_schema.filters || []).forEach(function(f) {
+    var opts = '<option value="">' + esc(f.label) + '</option>';
+    if (f.options) {
+      f.options.forEach(function(o) { opts += '<option value="' + escAttr(o.value) + '">' + esc(o.label) + '</option>'; });
+    }
+    parts.push('<select class="filter-select" id="filter-' + escAttr(f.key) + '" onchange="applyFilters()">' + opts + '</select>');
+  });
+  parts.push('<input class="search-input" id="filter-search" type="text" placeholder="Search..." oninput="applyFilters()">');
+  parts.push('<button class="btn-clear-filters" id="btn-clear-filters" onclick="clearFilters()">Clear filters</button>');
+  bar.innerHTML = parts.join('');
+}
+
+function _colRenderer(col) {
+  switch (col.type) {
+    case 'text':
+      if (col.editable) {
+        return function(i) {
+          var val = i[col.key] || '';
+          return '<td class="' + esc(col.key) + '-cell editable" title="' + esc(val) + '"' + editAttr(i.id, col.key, val) + ' ondblclick="editFromAttr(this,event)">' + esc(val) + '</td>';
+        };
+      }
+      return function(i) { return '<td>' + esc(i[col.key] || '') + '</td>'; };
+    case 'verdict':
+      return function(i) { var v = i.verdict || 'unscored'; return '<td><span class="verdict-badge verdict-' + esc(v) + '">' + (VERDICT_SHORT[v] || '\u2014') + '</span></td>'; };
+    case 'grade':
+      return function(i) { return '<td>' + gradeBadge(i[col.key]) + '</td>'; };
+    case 'badge':
+      return function(i) { return '<td class="col-class"><span class="class-badge">' + esc(humanize(i[col.key])) + '</span></td>'; };
+    default:
+      return function(i) { return '<td>' + esc(String(i[col.key] || '')) + '</td>'; };
+  }
+}
+
+function buildCoreColumns() {
+  if (!_schema || !_schema.columns) return;
+  CORE_COLUMNS = _schema.columns.map(function(col) {
+    var c = { key: col.key, label: col.label, sort: col.sort || null, render: _colRenderer(col) };
+    if (col.type === 'badge') c.cssClass = 'col-class';
+    return c;
+  });
+}
+
+// NOTE: All user-supplied values passed through esc()/escAttr() before DOM insertion
+function populateFilters() {
+  if (!_schema) return;
+  _schema.filters.forEach(function(f) {
+    var sel = document.getElementById('filter-' + f.key);
+    if (!sel) return;
+    var current = sel.value;
+    if (f.type === 'dynamic' && f.source) {
+      var values = [];
+      var seen = {};
+      state.initiatives.forEach(function(i) {
+        var v = i[f.source];
+        if (v && !seen[v]) { seen[v] = true; values.push(v); }
+      });
+      values.sort();
+      sel.innerHTML = '<option value="">' + esc(f.label) + '</option>' +
+        values.map(function(v) { return '<option value="' + escAttr(v) + '"' + (v === current ? ' selected' : '') + '>' + esc(f.key === 'classification' ? humanize(v) : v) + '</option>'; }).join('');
+    } else if (f.type === 'api' && f.endpoint) {
+      api('GET', f.endpoint).then(function(items) {
+        sel.innerHTML = '<option value="">' + esc(f.label) + '</option>' +
+          items.map(function(v) { return '<option value="' + escAttr(v) + '"' + (v === current ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
+      }).catch(function() {});
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -359,13 +447,10 @@ function btnLoading(btn, loading) {
 async function loadInitiatives() {
   showListSkeleton();
   const f = getFilters();
-  const compact = 'id,name,uni,faculty,verdict,score,classification,grade_team,grade_tech,grade_opportunity,enriched,custom_fields';
-  let url = `/api/initiatives?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500&fields=${compact}`;
-  if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
-  if (f.classification) url += `&classification=${encodeURIComponent(f.classification)}`;
-  if (f.uni) url += `&uni=${encodeURIComponent(f.uni)}`;
-  if (f.faculty) url += `&faculty=${encodeURIComponent(f.faculty)}`;
-  if (f.search) url += `&search=${encodeURIComponent(f.search)}`;
+  const compact = _schema && _schema.compact_fields ? _schema.compact_fields.join(',')
+    : 'id,name,uni,faculty,verdict,score,classification,grade_team,grade_tech,grade_opportunity,enriched,custom_fields';
+  let url = `/api/entities?sort_by=${state.sort.by}&sort_dir=${state.sort.dir}&per_page=500&fields=${compact}`;
+  Object.keys(f).forEach(function(key) { if (f[key]) url += '&' + key + '=' + encodeURIComponent(f[key]); });
   const data = await api('GET', url);
   state.initiatives = data.items;
   renderList();
@@ -397,7 +482,7 @@ async function loadDetail(id) {
   _loadDetailInFlight = true;
   showDetailSkeleton();
   try {
-    const data = await api('GET', `/api/initiatives/${id}`);
+    const data = await api('GET', `/api/entities/${id}`);
     state.mode = 'detail';
     state.selectedId = id;
     state.currentDetail = data;
@@ -416,13 +501,16 @@ async function loadDetail(id) {
 // Filters & sort
 // ---------------------------------------------------------------------------
 function getFilters() {
-  return {
-    verdict: document.getElementById('filter-verdict').value,
-    classification: document.getElementById('filter-class').value,
-    uni: document.getElementById('filter-uni').value,
-    faculty: document.getElementById('filter-faculty').value,
-    search: document.getElementById('filter-search').value,
-  };
+  var f = {};
+  if (_schema && _schema.filters) {
+    _schema.filters.forEach(function(filter) {
+      var el = document.getElementById('filter-' + filter.key);
+      if (el && el.value) f[filter.key] = el.value;
+    });
+  }
+  var search = document.getElementById('filter-search');
+  if (search && search.value.trim()) f.search = search.value.trim();
+  return f;
 }
 
 let _filterTimeout;
@@ -434,22 +522,29 @@ function applyFilters() {
 }
 
 function updateFilterIndicators() {
-  const f = getFilters();
-  const hasAny = f.verdict || f.classification || f.uni || f.faculty || f.search;
-  document.getElementById('filter-verdict').classList.toggle('filter-active', !!f.verdict);
-  document.getElementById('filter-class').classList.toggle('filter-active', !!f.classification);
-  document.getElementById('filter-uni').classList.toggle('filter-active', !!f.uni);
-  document.getElementById('filter-faculty').classList.toggle('filter-active', !!f.faculty);
-  document.getElementById('filter-search').classList.toggle('filter-active', !!f.search);
-  document.getElementById('btn-clear-filters').classList.toggle('visible', !!hasAny);
+  var f = getFilters();
+  var hasAny = Object.values(f).some(Boolean);
+  if (_schema && _schema.filters) {
+    _schema.filters.forEach(function(filter) {
+      var el = document.getElementById('filter-' + filter.key);
+      if (el) el.classList.toggle('filter-active', !!f[filter.key]);
+    });
+  }
+  var searchEl = document.getElementById('filter-search');
+  if (searchEl) searchEl.classList.toggle('filter-active', !!f.search);
+  var clearBtn = document.getElementById('btn-clear-filters');
+  if (clearBtn) clearBtn.classList.toggle('visible', !!hasAny);
 }
 
 function clearFilters() {
-  document.getElementById('filter-verdict').value = '';
-  document.getElementById('filter-class').value = '';
-  document.getElementById('filter-uni').value = '';
-  document.getElementById('filter-faculty').value = '';
-  document.getElementById('filter-search').value = '';
+  if (_schema && _schema.filters) {
+    _schema.filters.forEach(function(filter) {
+      var el = document.getElementById('filter-' + filter.key);
+      if (el) el.value = '';
+    });
+  }
+  var searchEl = document.getElementById('filter-search');
+  if (searchEl) searchEl.value = '';
   updateFilterIndicators();
   loadInitiatives();
 }
@@ -463,47 +558,20 @@ function updateResultCount(shown, total) {
     const listPanel = document.getElementById('list-panel');
     listPanel.insertBefore(el, listPanel.firstChild);
   }
+  var entityLabel = (_schema && _schema.label_plural) ? _schema.label_plural.toLowerCase() : 'items';
   if (total === 0) {
     el.textContent = 'No results';
   } else if (shown < total) {
-    el.textContent = `Showing ${shown} of ${total} initiatives`;
+    el.textContent = `Showing ${shown} of ${total} ${entityLabel}`;
   } else {
-    el.textContent = `${total} initiatives`;
+    el.textContent = `${total} ${entityLabel}`;
   }
 }
 
-async function populateFacultyFilter() {
-  const sel = document.getElementById('filter-faculty');
-  const current = sel.value;
-  try {
-    const faculties = await api('GET', '/api/faculties');
-    sel.innerHTML = '<option value="">All Faculties</option>' +
-      faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
-  } catch (e) {
-    // Fallback: derive from current page data
-    const faculties = [...new Set(state.initiatives.map(i => i.faculty).filter(Boolean))].sort();
-    sel.innerHTML = '<option value="">All Faculties</option>' +
-      faculties.map(f => `<option value="${escAttr(f)}"${f === current ? ' selected' : ''}>${esc(f)}</option>`).join('');
-  }
-}
-
-function populateUniFilter() {
-  const sel = document.getElementById('filter-uni');
-  const current = sel.value;
-  const unis = [...new Set(state.initiatives.map(i => i.uni).filter(Boolean))].sort();
-  // Safe: esc() and escAttr() sanitize user content (same pattern as populateFacultyFilter)
-  sel.innerHTML = '<option value="">All Unis</option>' +
-    unis.map(u => `<option value="${escAttr(u)}"${u === current ? ' selected' : ''}>${esc(u)}</option>`).join('');
-}
-
-function populateClassFilter() {
-  const sel = document.getElementById('filter-class');
-  const current = sel.value;
-  const classes = [...new Set(state.initiatives.map(i => i.classification).filter(Boolean))].sort();
-  // Safe: esc() and escAttr() sanitize user content (same pattern as populateFacultyFilter)
-  sel.innerHTML = '<option value="">All Types</option>' +
-    classes.map(c => `<option value="${escAttr(c)}"${c === current ? ' selected' : ''}>${esc(humanize(c))}</option>`).join('');
-}
+// Legacy aliases for backward compat (now handled by populateFilters())
+function populateFacultyFilter() { populateFilters(); }
+function populateUniFilter() { populateFilters(); }
+function populateClassFilter() { populateFilters(); }
 
 function sortBy(field) {
   if (state.sort.by === field) {
@@ -531,7 +599,7 @@ function editFromAttr(el, e) {
   inlineEdit(el, +el.dataset.editId, el.dataset.editField, el.dataset.editValue, el.dataset.editType);
 }
 
-const CORE_COLUMNS = [
+let CORE_COLUMNS = [
   { key: 'name', label: 'Initiative', sort: 'name',
     render: i => `<td class="name-cell editable" title="${esc(i.name)}"${editAttr(i.id,'name',i.name)} ondblclick="editFromAttr(this,event)">${esc(i.name)}</td>` },
   { key: 'uni', label: 'Uni', sort: 'uni',
@@ -605,7 +673,7 @@ function inlineEdit(el, id, field, currentValue, type) {
       } else {
         body = { [field]: newVal };
       }
-      const updated = await api('PUT', `/api/initiatives/${id}`, body);
+      const updated = await api('PUT', `/api/entities/${id}`, body);
       // Update local state from PUT response instead of re-fetching
       const idx = state.initiatives.findIndex(i => i.id === id);
       if (idx !== -1) Object.assign(state.initiatives[idx], updated);
@@ -731,14 +799,15 @@ function renderDetail(d) {
   const vLabel = VERDICT_LONG[v] || 'Not Scored';
 
   const ea = (f,v,t) => editAttr(d.id,f,v,t);
+  var metaFields = _schema && _schema.meta_fields ? _schema.meta_fields : ['uni', 'sector', 'mode', 'relevance'];
+  var metaHtml = metaFields.map(function(f) {
+    return `<span class="editable"${ea(f,d[f]||'')} ondblclick="editFromAttr(this)">${esc(d[f]) || esc(humanize(f))}</span>`;
+  }).join('');
   let html = `
     <div class="detail-header">
       <h2 class="editable"${ea('name',d.name)} ondblclick="editFromAttr(this)">${esc(d.name)}</h2>
       <div class="meta">
-        <span class="editable"${ea('uni',d.uni)} ondblclick="editFromAttr(this)">${esc(d.uni)}</span>
-        <span class="editable"${ea('sector',d.sector)} ondblclick="editFromAttr(this)">${esc(d.sector) || 'Sector'}</span>
-        <span class="editable"${ea('mode',d.mode)} ondblclick="editFromAttr(this)">${esc(d.mode) || 'Mode'}</span>
-        <span class="editable"${ea('relevance',d.relevance)} ondblclick="editFromAttr(this)">Rating: ${esc(d.relevance) || '\u2014'}</span>
+        ${metaHtml}
         ${d.enriched ? `<span>Enriched</span>` : '<span class="text-amber">Not enriched</span>'}
       </div>
     </div>`;
@@ -752,10 +821,14 @@ function renderDetail(d) {
     </div>`;
   }
 
-  // Dimension grades
+  // Dimension grades (labels from schema)
   if (d.grade_team || d.grade_tech || d.grade_opportunity) {
-    html += `<div class="grade-cards">${[['grade_team','Team'],['grade_tech','Tech'],['grade_opportunity','Opportunity']].map(
-      ([k,l]) => `<div class="card card--compact"><div class="grade-value ${gradeColorClass(d[k])}">${esc(d[k]||'\u2014')}</div><div class="card-label">${l}</div></div>`
+    var dims = _schema && _schema.dimensions ? _schema.dimensions : {team:'Team',tech:'Tech',opportunity:'Opportunity'};
+    var dimKeys = Object.keys(dims);
+    var gradeKeys = ['grade_team','grade_tech','grade_opportunity'];
+    var gradeCards = gradeKeys.map(function(gk,i) { return [gk, Object.values(dims)[i] || dimKeys[i] || 'Dim']; });
+    html += `<div class="grade-cards">${gradeCards.map(
+      ([k,l]) => `<div class="card card--compact"><div class="grade-value ${gradeColorClass(d[k])}">${esc(d[k]||'\u2014')}</div><div class="card-label">${esc(l)}</div></div>`
     ).join('')}</div>`;
   }
 
@@ -841,8 +914,13 @@ function renderDetail(d) {
     html += `</ul></div>`;
   }
 
-  // Links (with edit pencils)
-  const LINK_FIELDS = [['Website','website',d.website,d.website],['Email','email',d.email,'mailto:'+d.email],['LinkedIn','linkedin',d.linkedin,d.linkedin],['GitHub','github_org',d.github_org,d.github_org],['Team','team_page',d.team_page,d.team_page]];
+  // Links (with edit pencils) — driven by schema link_fields
+  var schemaLinks = _schema && _schema.link_fields ? _schema.link_fields : [{key:'website',label:'Website'},{key:'email',label:'Email'},{key:'linkedin',label:'LinkedIn'},{key:'github_org',label:'GitHub'},{key:'team_page',label:'Team'}];
+  var LINK_FIELDS = schemaLinks.map(function(lf) {
+    var raw = d[lf.key] || '';
+    var url = lf.key === 'email' ? 'mailto:' + raw : raw;
+    return [lf.label, lf.key, raw, url];
+  });
   html += `<div class="detail-section"><h3>Links</h3><div class="link-row">`;
   LINK_FIELDS.forEach(([label, field, raw, url]) => {
     if (raw) {
@@ -854,12 +932,15 @@ function renderDetail(d) {
   });
   html += `</div></div>`;
 
-  // Extra info (editable)
-  html += `<div class="detail-section"><h3>Additional Info</h3><ul>`;
-  [['team_size','Team size'],['key_repos','Key repos'],['sponsors','Sponsors'],['competitions','Competitions']].forEach(([f,l]) => {
-    html += `<li class="editable"${ea(f,d[f])} ondblclick="editFromAttr(this)">${l}: ${esc(d[f]) || '\u2014'}</li>`;
-  });
-  html += `</ul></div>`;
+  // Extra info (editable) — driven by schema info_fields
+  var infoFields = _schema && _schema.info_fields ? _schema.info_fields : [{key:'team_size',label:'Team size'},{key:'key_repos',label:'Key repos'},{key:'sponsors',label:'Sponsors'},{key:'competitions',label:'Competitions'}];
+  if (infoFields.length > 0) {
+    html += `<div class="detail-section"><h3>Additional Info</h3><ul>`;
+    infoFields.forEach(function(inf) {
+      html += `<li class="editable"${ea(inf.key,d[inf.key]||'')} ondblclick="editFromAttr(this)">${esc(inf.label)}: ${esc(d[inf.key]) || '\u2014'}</li>`;
+    });
+    html += `</ul></div>`;
+  }
 
   // Custom fields
   if (state.customColumns.length > 0) {
@@ -1392,7 +1473,7 @@ async function submitProject(initiativeId, projectId) {
     if (projectId) {
       await api('PUT', `/api/projects/${projectId}`, body);
     } else {
-      await api('POST', `/api/initiatives/${initiativeId}/projects`, body);
+      await api('POST', `/api/entities/${initiativeId}/projects`, body);
     }
     loadDetail(initiativeId);
   } catch (err) {
@@ -1439,9 +1520,11 @@ async function _activateDb(dbName) {
   localStorage.setItem('scout-selected-db', dbName);
   _lastRevision = null;
   _resetDetailPanel();
+  await loadSchema();
   loadColumnOrder();
   await loadCustomColumns();
   await refreshUI();
+  populateFilters();
 }
 
 async function loadDatabases() {
@@ -1904,11 +1987,10 @@ async function initApp() {
   if (savedDb && savedDb !== state.currentDb) {
     try { await switchDatabase(savedDb); } catch (_) { /* fallback to default */ }
   }
+  await loadSchema();
   await loadCustomColumns();
   await loadInitiatives();
-  populateFacultyFilter();
-  populateUniFilter();
-  populateClassFilter();
+  populateFilters();
   loadStats();
   updateExportLink();
   await syncRevision();

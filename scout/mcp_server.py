@@ -285,7 +285,7 @@ async def _do_enrich(s, init, *, crawler=None):
     if new:
         return {"sources": len(new)}
     return {"ok": False, "sources": 0,
-            "warning": "No data fetched — add website/github URLs or run enrich_initiative(id, discover=True)"}
+            "warning": "No data fetched — add website/github URLs or run enrich_entity(id, discover=True)"}
 
 
 async def _do_score(s, init, *, client=None, entity_type="initiative"):
@@ -366,19 +366,19 @@ def scout_overview() -> str:
                 "2. get_work_queue() — prioritized items needing work.",
                 "3. process_queue(limit=20) — enriches AND scores in one call.",
                 "4. Repeat until remaining_in_queue=0.",
-                f"5. list_initiatives(verdict='reach_out_now') — review top {lp}.",
+                f"5. list_entities(verdict='reach_out_now') — review top {lp}.",
             ],
             "single_item": [
-                f"1. manage_initiative(action='create', name=..., uni=...) — add new {cfg['label']}.",
-                "2. enrich_initiative(id, discover=True) — find URLs + fetch data.",
-                "3. score_initiative(id) — LLM scoring (3 parallel dimensions).",
-                "4. get_initiative(id) — inspect full details.",
+                f"1. manage_entity(action='create', name=..., uni=...) — add new {cfg['label']}.",
+                "2. enrich_entity(id, discover=True) — find URLs + fetch data.",
+                "3. score_entity(id) — LLM scoring (3 parallel dimensions).",
+                "4. get_entity(id) — inspect full details.",
             ],
             "llm_enrichment": [
                 "1. Search the web for information about the entity.",
                 "2. submit_enrichment(id, source_type='...', content='...') — store what you found.",
                 "3. Repeat for different sources (LinkedIn, news, patents, etc.).",
-                "4. score_initiative(id) — score with enriched data.",
+                "4. score_entity(id) — score with enriched data.",
             ],
             "llm_free_scoring": [
                 "1. get_scoring_dossier(id) — get prompts + dossiers.",
@@ -387,12 +387,12 @@ def scout_overview() -> str:
             ],
         },
         "tools_by_frequency": {
-            "core": "list_initiatives, get_initiative, process_queue, get_work_queue, get_overview",
-            "single_item": "enrich_initiative, score_initiative, manage_initiative",
+            "core": "list_entities, get_entity, process_queue, get_work_queue, get_overview",
+            "single_item": "enrich_entity, score_entity, manage_entity",
             "llm_enrichment": "submit_enrichment — store data you find via web search",
             "scoring": "get_scoring_dossier, submit_score",
             "search": "find_similar",
-            "admin": "manage_project, manage_database, list_scoring_prompts, update_scoring_prompt, get_custom_columns, create_custom_column, export_initiatives, embed_all_tool, show_llm_config, configure_llm",
+            "admin": "manage_project, manage_database, list_scoring_prompts, update_scoring_prompt, get_custom_columns, create_custom_column, export_entities, embed_all_tool, show_llm_config, configure_llm",
         },
         "performance": {
             "enrichment": f"2-10s per {cfg['label']} (web scraping).",
@@ -427,7 +427,7 @@ def scout_overview() -> str:
 
 
 @mcp.tool(annotations=_READ)
-def list_initiatives(
+def list_entities(
     verdict: str | None = None, classification: str | None = None,
     uni: str | None = None, faculty: str | None = None,
     search: str | None = None,
@@ -461,21 +461,21 @@ def list_initiatives(
 
 
 @mcp.tool(annotations=_READ)
-def get_initiative(initiative_id: int, compact: bool = False, sources: str = "") -> dict:
+def get_entity(entity_id: int, compact: bool = False, sources: str = "") -> dict:
     """Get full details for one entity: profile, enrichments, projects, scores, data gaps.
 
-    WHEN: After list_initiatives() to inspect before enriching or scoring.
+    WHEN: After list_entities() to inspect before enriching or scoring.
     TIP: Use compact=True first to see available enrichment sources, then call again
     with sources="github,website" to drill into specific ones (saves tokens).
 
     Args:
-        initiative_id: Entity ID.
+        entity_id: Entity ID.
         compact: Lighter payload (skips enrichment summaries, projects, reasoning).
         sources: Comma-separated enrichment source types to include (e.g. "github,website").
             Empty = all sources. Only applies when compact=False.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id)
+        init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
         if compact:
@@ -484,21 +484,21 @@ def get_initiative(initiative_id: int, compact: bool = False, sources: str = "")
             data = services.initiative_detail(init, sources=parse_comma_set(sources))
         actions = []
         if not data.get("enriched", False):
-            actions.append(_next("enrich_initiative", "Not yet enriched", initiative_id=initiative_id))
+            actions.append(_next("enrich_entity", "Not yet enriched", entity_id=entity_id))
         if data.get("verdict") is None:
-            actions.append(_next("score_initiative", "Not yet scored", initiative_id=initiative_id))
+            actions.append(_next("score_entity", "Not yet scored", entity_id=entity_id))
         return _trim(_suggest(data, *actions))
 
 
 # ---------------------------------------------------------------------------
-# Tools: Manage Initiative (Create / Update / Delete)
+# Tools: Manage Entity (Create / Update / Delete)
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
-def manage_initiative(
+def manage_entity(
     action: str,
-    initiative_id: int | None = None,
+    entity_id: int | None = None,
     name: str | None = None,
     uni: str | None = None,
     updates: dict | None = None,
@@ -514,13 +514,13 @@ def manage_initiative(
         team_page, team_size, linkedin, github_org, key_repos, sponsors,
         competitions, mode, relevance, custom_fields.
         Skips duplicates (same name+uni). Returns {created, skipped, items}.
-    - update: Requires initiative_id. Pass updates={field: value} for changes.
+    - update: Requires entity_id. Pass updates={field: value} for changes.
         For custom entity types, any key not in the standard columns is stored in metadata.
-    - delete: Requires initiative_id + confirm=True.
+    - delete: Requires entity_id + confirm=True.
 
     Args:
         action: "create", "bulk_create", "update", or "delete".
-        initiative_id: Entity ID (required for update/delete).
+        entity_id: Entity ID (required for update/delete).
         name: Entity name (required for create).
         uni: University/institution (optional; mainly for initiative/professor types).
         updates: Dict of field->value. Standard keys: faculty, sector, description,
@@ -619,19 +619,19 @@ def manage_initiative(
                 result_data["metadata"] = metadata_fields
             result = _suggest(
                 result_data,
-                _next("enrich_initiative", "Fetch web data or submit_enrichment()", initiative_id=init.id),
+                _next("enrich_entity", "Fetch web data or submit_enrichment()", entity_id=init.id),
             )
             result["_db"] = _db_pulse(session)
             return result
 
     if action == "update":
-        if initiative_id is None:
-            return _error("initiative_id is required for update", "VALIDATION_ERROR")
+        if entity_id is None:
+            return _error("entity_id is required for update", "VALIDATION_ERROR")
         if not updates:
             return _error("updates dict is required", "VALIDATION_ERROR")
         updates = dict(updates)  # copy
         with session_scope() as session:
-            init, err = _get_or_error(session, Initiative, initiative_id)
+            init, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
             old_name = init.name
@@ -651,24 +651,24 @@ def manage_initiative(
             return detail
 
     if action == "delete":
-        if initiative_id is None:
-            return _error("initiative_id is required for delete", "VALIDATION_ERROR")
+        if entity_id is None:
+            return _error("entity_id is required for delete", "VALIDATION_ERROR")
         if not confirm:
             with session_scope() as session:
-                init, err = _get_or_error(session, Initiative, initiative_id)
+                init, err = _get_or_error(session, Initiative, entity_id)
                 if err:
                     return err
                 return {
                     "ok": False, "action": "delete",
-                    "initiative_id": init.id, "initiative_name": init.name,
+                    "entity_id": init.id, "entity_name": init.name,
                     "warning": f"Will permanently delete '{init.name}' and all data. "
                                "Call again with confirm=True.",
                 }
         with session_scope() as session:
-            if not services.delete_initiative(session, initiative_id):
-                return _error(f"Initiative {initiative_id} not found", "NOT_FOUND")
+            if not services.delete_initiative(session, entity_id):
+                return _error(f"Entity {entity_id} not found", "NOT_FOUND")
             session.commit()
-            result = {"ok": True, "deleted_initiative_id": initiative_id}
+            result = {"ok": True, "deleted_entity_id": entity_id}
             result["_db"] = _db_pulse(session)
             return result
 
@@ -681,20 +681,20 @@ def manage_initiative(
 
 
 @mcp.tool(annotations=_WRITE)
-async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
+async def enrich_entity(entity_id: int, discover: bool = False) -> dict:
     """Fetch enrichment data from website, GitHub, extra links, plus extended sources.
 
     WHAT: Scrapes all known URLs + extracts structured data (JSON-LD/OpenGraph), tech stack,
     DNS records, sitemap structure, career pages, and deep git analysis (README, deps, releases).
     Takes 5-20s. Auto-enables discovery when no URLs are configured.
-    WHEN: Before score_initiative(). Discovery finds LinkedIn, GitHub, HuggingFace URLs via DuckDuckGo.
+    WHEN: Before score_entity(). Discovery finds LinkedIn, GitHub, HuggingFace URLs via DuckDuckGo.
 
     Args:
-        initiative_id: Entity ID.
+        entity_id: Entity ID.
         discover: Run DuckDuckGo URL discovery first (adds ~12s). Auto-enabled when no URLs configured.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id)
+        init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
 
@@ -704,7 +704,7 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         result["_db"] = _db_pulse(session)
         return _suggest(
             result,
-            _next("score_initiative", "Score using enrichment data", initiative_id=init.id),
+            _next("score_entity", "Score using enrichment data", entity_id=init.id),
         )
 
 
@@ -763,12 +763,12 @@ def submit_enrichment(
                 "content_length": len(enrichment.raw_text),
                 "_db": _db_pulse(session),
             },
-            _next("score_initiative", "Score with new enrichment data", initiative_id=init.id),
+            _next("score_entity", "Score with new enrichment data", entity_id=init.id),
         )
 
 
 @mcp.tool(annotations=_WRITE)
-async def score_initiative(initiative_id: int) -> dict:
+async def score_entity(entity_id: int) -> dict:
     """Score an entity on 3 dimensions (team, tech, opportunity) via parallel LLM calls.
 
     WHAT: 3 parallel LLM calls -> deterministic verdict + score. Takes 5-15s. Requires API key.
@@ -776,14 +776,14 @@ async def score_initiative(initiative_id: int) -> dict:
     ALTERNATIVE: get_scoring_dossier() + submit_score() for API-key-free scoring.
 
     Args:
-        initiative_id: Entity ID.
+        entity_id: Entity ID.
     """
     key_err = _check_api_key()
     if key_err:
         return key_err
     with session_scope() as session:
         try:
-            init, err = _get_or_error(session, Initiative, initiative_id)
+            init, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
 
@@ -807,8 +807,8 @@ async def score_initiative(initiative_id: int) -> dict:
             )
             session.commit()
             result = services.score_response_dict(outreach, extended=True)
-            result["initiative_id"] = init.id
-            result["initiative_name"] = init.name
+            result["entity_id"] = init.id
+            result["entity_name"] = init.name
             if auto_enriched:
                 result["auto_enriched"] = True
             result["_db"] = _db_pulse(session)
@@ -818,7 +818,7 @@ async def score_initiative(initiative_id: int) -> dict:
 
 
 @mcp.tool(annotations=_READ)
-def get_scoring_dossier(initiative_id: int) -> dict:
+def get_scoring_dossier(entity_id: int) -> dict:
     """Build scoring dossiers and prompts WITHOUT making LLM calls.
 
     WHAT: Returns 3 dimension dossiers + system prompts for LLM-free scoring. No API key needed.
@@ -826,10 +826,10 @@ def get_scoring_dossier(initiative_id: int) -> dict:
     NEXT: Evaluate each dimension, then submit_score() with results.
 
     Args:
-        initiative_id: Entity ID.
+        entity_id: Entity ID.
     """
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id)
+        init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
         enrichments = session.execute(
@@ -861,18 +861,18 @@ def get_scoring_dossier(initiative_id: int) -> dict:
 
         return _suggest(
             {
-                "initiative_id": init.id, "initiative_name": init.name,
+                "entity_id": init.id, "entity_name": init.name,
                 "entity_type": et, "enriched": len(enrichments) > 0,
                 "dimensions": dimensions_out,
             },
             _next("submit_score", "Submit your evaluation",
-                  initiative_id=init.id, **grade_args),
+                  entity_id=init.id, **grade_args),
         )
 
 
 @mcp.tool(annotations=_WRITE)
 def submit_score(
-    initiative_id: int,
+    entity_id: int,
     grade_team: str = "", grade_tech: str = "", grade_opportunity: str = "",
     classification: str = "",
     contact_who: str = "", contact_channel: str = "website_form",
@@ -890,7 +890,7 @@ def submit_score(
       The dimension names must match those from get_scoring_dossier().
 
     Args:
-        initiative_id: Entity ID.
+        entity_id: Entity ID.
         grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D). For standard types.
         grade_tech: Tech grade (same scale). For standard types.
         grade_opportunity: Opportunity grade (same scale). For standard types.
@@ -963,7 +963,7 @@ def submit_score(
                       "VALIDATION_ERROR")
 
     with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, initiative_id)
+        init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
 
@@ -986,7 +986,7 @@ def submit_score(
         session.commit()
 
         result: dict = {
-            "initiative_id": init.id, "initiative_name": init.name,
+            "entity_id": init.id, "entity_name": init.name,
             "verdict": outreach.verdict, "score": outreach.score,
             "classification": outreach.classification,
         }
@@ -1010,10 +1010,10 @@ def submit_score(
 # ---------------------------------------------------------------------------
 
 
-async def batch_enrich(initiative_ids: str | None = None, limit: int = 20) -> dict:
+async def batch_enrich(entity_ids: str | None = None, limit: int = 20) -> dict:
     """Enrich multiple entities (internal, used by process_queue and tests)."""
     limit = max(1, min(limit, 50))
-    ids = _parse_ids(initiative_ids)
+    ids = _parse_ids(entity_ids)
 
     with session_scope() as session:
         if ids is None:
@@ -1034,14 +1034,14 @@ async def batch_enrich(initiative_ids: str | None = None, limit: int = 20) -> di
     return result
 
 
-async def batch_score(initiative_ids: str | None = None, limit: int = 20) -> dict:
+async def batch_score(entity_ids: str | None = None, limit: int = 20) -> dict:
     """Score multiple entities (internal, used by process_queue and tests)."""
     key_err = _check_api_key()
     if key_err:
         return key_err
 
     limit = max(1, min(limit, 50))
-    ids = _parse_ids(initiative_ids)
+    ids = _parse_ids(entity_ids)
 
     with session_scope() as session:
         if ids is None:
@@ -1071,7 +1071,7 @@ async def batch_score(initiative_ids: str | None = None, limit: int = 20) -> dic
 @mcp.tool(annotations=_WRITE)
 async def process_queue(
     limit: int = 20, discover: bool = False, enrich: bool = True, score: bool = True,
-    initiative_ids: str | None = None,
+    entity_ids: str | None = None,
 ) -> dict:
     """Autonomous pipeline: enrich then score. The primary tool for batch processing.
 
@@ -1084,7 +1084,7 @@ async def process_queue(
         discover: Run DuckDuckGo URL discovery before enrichment (adds ~12s/item).
         enrich: Run enrichment step (default true).
         score: Run scoring step (default true). Requires API key.
-        initiative_ids: Comma-separated IDs. If omitted, auto-selects from work queue.
+        entity_ids: Comma-separated IDs. If omitted, auto-selects from work queue.
     """
     api_key_warning = None
     if score:
@@ -1102,7 +1102,7 @@ async def process_queue(
 
     limit = max(1, min(limit, 50))
     et = get_entity_type()
-    explicit_ids = _parse_ids(initiative_ids)
+    explicit_ids = _parse_ids(entity_ids)
 
     with session_scope() as session:
         if explicit_ids is not None:
@@ -1116,7 +1116,7 @@ async def process_queue(
         return _suggest(
             {"enrichment": None, "scoring": None, "remaining_in_queue": 0,
              "hint": f"Work queue is empty. All {_entity_cfg()['label_plural']} are processed."},
-            _next("list_initiatives", "Review results", verdict="reach_out_now"),
+            _next("list_entities", "Review results", verdict="reach_out_now"),
         )
 
     enrich_ids = [item["id"] for item in queue if item["needs_enrichment"]]
@@ -1190,7 +1190,7 @@ async def process_queue(
         return _suggest(result, _next("process_queue", "Process next batch"))
     else:
         return _suggest(result,
-                        _next("list_initiatives", "Review top results", verdict="reach_out_now"))
+                        _next("list_entities", "Review top results", verdict="reach_out_now"))
 
 
 # ---------------------------------------------------------------------------
@@ -1214,8 +1214,8 @@ def get_work_queue(limit: int = 10) -> dict:
         result = {"queue": queue, "database_stats": stats}
         if queue:
             ids = ",".join(str(q["id"]) for q in queue)
-            return _suggest(result, _next("process_queue", "Process these items", initiative_ids=ids))
-        return _suggest(result, _next("list_initiatives", "All items processed"))
+            return _suggest(result, _next("process_queue", "Process these items", entity_ids=ids))
+        return _suggest(result, _next("list_entities", "All items processed"))
 
 
 @mcp.tool(annotations=_READ)
@@ -1245,7 +1245,7 @@ def get_overview(detail: bool = False) -> dict:
 
 @mcp.tool(annotations=_READ)
 def find_similar(
-    query: str | None = None, initiative_id: int | None = None,
+    query: str | None = None, entity_id: int | None = None,
     uni: str | None = None, verdict: str | None = None,
     limit: int = 10,
 ) -> dict:
@@ -1255,8 +1255,8 @@ def find_similar(
     WHEN: Find related entities, thematic clusters, or "show me entities like X".
 
     Args:
-        query: Free-text query (e.g. "robotics research"). Either query or initiative_id required.
-        initiative_id: Find entities similar to this one.
+        query: Free-text query (e.g. "robotics research"). Either query or entity_id required.
+        entity_id: Find entities similar to this one.
         uni: Pre-filter by university (comma-separated).
         verdict: Pre-filter by verdict (comma-separated).
         limit: Max results (default 10, max 100).
@@ -1269,7 +1269,7 @@ def find_similar(
             return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
 
         results = _find_similar(
-            query_text=query, initiative_id=initiative_id,
+            query_text=query, initiative_id=entity_id,
             top_k=max(1, min(limit, 100)), id_mask=id_mask,
         )
 
@@ -1302,7 +1302,7 @@ def find_similar(
 async def manage_project(
     action: str,
     project_id: int | None = None,
-    initiative_id: int | None = None,
+    entity_id: int | None = None,
     name: str | None = None,
     updates: dict | None = None,
     confirm: bool = False,
@@ -1310,7 +1310,7 @@ async def manage_project(
     """Create, update, delete, or score projects under an entity.
 
     ACTIONS:
-    - create: Requires initiative_id, name. Optional updates={description, website, github_url, team}.
+    - create: Requires entity_id, name. Optional updates={description, website, github_url, team}.
     - update: Requires project_id. Pass updates={field: value}.
     - delete: Requires project_id + confirm=True.
     - score: Requires project_id. Runs LLM scoring. Requires API key.
@@ -1318,7 +1318,7 @@ async def manage_project(
     Args:
         action: "create", "update", "delete", or "score".
         project_id: Project ID (required for update/delete/score).
-        initiative_id: Parent entity ID (required for create).
+        entity_id: Parent entity ID (required for create).
         name: Project name (required for create).
         updates: Dict of field->value. Valid: description, website, github_url, team.
         confirm: Must be True for delete.
@@ -1326,14 +1326,14 @@ async def manage_project(
     action = (action or "").strip().lower()
 
     if action == "create":
-        if initiative_id is None or not name:
-            return _error("initiative_id and name required for create", "VALIDATION_ERROR")
+        if entity_id is None or not name:
+            return _error("entity_id and name required for create", "VALIDATION_ERROR")
         with session_scope() as session:
-            _, err = _get_or_error(session, Initiative, initiative_id)
+            _, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
             proj = services.create_project(
-                session, initiative_id, name=name, **(updates or {}),
+                session, entity_id, name=name, **(updates or {}),
             )
             session.commit()
             return _suggest(
@@ -1365,7 +1365,7 @@ async def manage_project(
                 return {
                     "ok": False, "action": "delete_project",
                     "project_id": proj.id, "project_name": proj.name,
-                    "initiative_id": proj.initiative_id,
+                    "entity_id": proj.initiative_id,
                     "warning": f"Will permanently delete project '{proj.name}'. "
                                "Call again with confirm=True.",
                 }
@@ -1394,8 +1394,8 @@ async def manage_project(
                 result = services.score_response_dict(outreach, extended=True)
                 result["project_id"] = proj.id
                 result["project_name"] = proj.name
-                result["initiative_id"] = init.id
-                result["initiative_name"] = init.name
+                result["entity_id"] = init.id
+                result["entity_name"] = init.name
                 return result
             except Exception as exc:
                 return _llm_error(exc)
@@ -1656,7 +1656,7 @@ def delete_custom_column(column_id: int) -> dict:
 
 
 @mcp.tool(annotations=_READ)
-def export_initiatives(
+def export_entities(
     verdict: str | None = None, uni: str | None = None,
     include_enrichments: bool = True, include_scores: bool = True,
     include_extras: bool = False,

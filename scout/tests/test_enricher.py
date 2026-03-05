@@ -1123,20 +1123,20 @@ class TestEntityConfig:
     def test_initiative_config(self):
         from scout.scorer import get_entity_config
         cfg = get_entity_config("initiative")
-        assert cfg["label"] == "initiative"
+        assert cfg["label"] == "Initiative"
         assert "team" in cfg["dimensions"]
         assert "website" in cfg["enrichers"]
 
     def test_professor_config(self):
         from scout.scorer import get_entity_config
         cfg = get_entity_config("professor")
-        assert cfg["label"] == "professor"
+        assert cfg["label"] == "Professor"
         assert "team_page" not in cfg.get("enrichers", [])
 
     def test_unknown_type_returns_default(self):
         from scout.scorer import get_entity_config
         cfg = get_entity_config("patent")
-        assert cfg["label"] == "patent"
+        assert cfg["label"] == "Patent"
         assert isinstance(cfg["dimensions"], list)
 
     def test_compute_data_gaps_respects_config(self):

@@ -31,6 +31,11 @@
 - Scores: deterministic from grade numerics, never from LLM text
 - Tests: `python -m pytest scout/tests/ -x -q`
 
+## What to do
+- Think like an architect - build an elegant technical solution
+- Where you can, always conduct research on best practices and the state of the art and academic research
+- Think if you can write it better with less lines of code
+
 ## What NOT to do
 
 - Don't add dependencies to core — use optional extras
@@ -38,3 +43,4 @@
 - Don't embed prompts in Python — use scout/prompts/*.txt files
 - Don't add LLM calls to the verdict/score computation path
 - Don't use `session.query()` — use `select()` (SQLAlchemy 2.0 style)
+- Don't patch solutions, solve challenges through improving architecture and research. Try to strengthen the codebase even if this takes extra effort

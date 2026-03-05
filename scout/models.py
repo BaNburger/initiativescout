@@ -109,9 +109,11 @@ class Initiative(Base):
         """
         if key not in self._SKIP_FIELDS and key in self._columns():
             val = getattr(self, key, None)
-            # Only fall through for None and empty string — 0 and False
-            # are valid column values (e.g. github_repo_count=0).
-            if val is not None and val != "":
+            # Return non-trivial column values directly (including None for
+            # nullable columns like floats/ints). Only fall through to
+            # metadata for empty strings, which indicate "not set" for text
+            # columns and could be overridden by metadata_json.
+            if val != "":
                 return val
         val = self._parsed_meta().get(key)
         if val is not None:

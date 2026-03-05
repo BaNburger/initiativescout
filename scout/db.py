@@ -330,36 +330,57 @@ def set_entity_config_json(config: dict) -> None:
         ), {"cfg": _json.dumps(config)})
 
 
+_FTS_TABLE = "initiative_fts"
+
+# Cached FTS fields — set at table creation time, avoids DB calls inside event handlers
+_fts_fields: tuple[str, ...] = ("name", "description", "sector", "technology_domains",
+                                "categories", "market_domains", "faculty")
+
+
+def _get_fts_fields() -> tuple[str, ...]:
+    """Return the cached FTS searchable fields."""
+    return _fts_fields
+
+
 def _ensure_fts_table(engine) -> None:
     """Create the FTS5 table structure (rebuild deferred to first search)."""
+    global _fts_fields
+    try:
+        # Read entity type directly from DB to avoid lock re-entry
+        with engine.connect() as conn:
+            et_row = conn.execute(text(
+                "SELECT value FROM _meta WHERE key = 'entity_type'"
+            )).scalar()
+        entity_type = str(et_row) if et_row else "initiative"
+        from scout.schema import get_schema
+        _fts_fields = tuple(get_schema(entity_type)["searchable_fields"])
+    except Exception:
+        pass  # keep default
+    cols = ", ".join(_fts_fields)
     with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS initiative_fts USING fts5(
-                name, description, sector, technology_domains,
-                categories, market_domains, faculty,
-                content='initiatives', content_rowid='id'
-            )
-        """))
+        conn.execute(text(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS {_FTS_TABLE} USING fts5("
+            f"    {cols},"
+            f"    content='initiatives', content_rowid='id'"
+            f")"
+        ))
 
 
 # ---------------------------------------------------------------------------
 # FTS auto-sync via SQLAlchemy ORM events
 # ---------------------------------------------------------------------------
 
-_FTS_FIELDS = ("name", "description", "sector", "technology_domains",
-               "categories", "market_domains", "faculty")
-
-
 def _fts_insert(connection, initiative) -> None:
     """Insert a single initiative into the FTS index."""
+    fields = _get_fts_fields()
     params = {"id": initiative.id}
-    for f in _FTS_FIELDS:
+    for f in fields:
         params[f] = getattr(initiative, f, "") or ""
+    cols = ", ".join(fields)
+    placeholders = ", ".join(f":{f}" for f in fields)
     connection.execute(text(
-        "INSERT INTO initiative_fts(rowid, name, description, sector, "
-        "technology_domains, categories, market_domains, faculty) "
-        "VALUES (:id, :name, :description, :sector, "
-        ":technology_domains, :categories, :market_domains, :faculty)"
+        f"INSERT INTO {_FTS_TABLE}(rowid, {cols}) "
+        f"VALUES (:id, {placeholders})"
     ), params)
 
 
@@ -370,19 +391,20 @@ def _fts_delete_by_values(connection, initiative_id: int, field_values: dict[str
     Using a SELECT from the content table is wrong in after_update handlers
     because the row already contains the new values at that point.
     """
+    fields = _get_fts_fields()
+    cols = ", ".join(fields)
+    placeholders = ", ".join(f":{f}" for f in fields)
     params = {"id": initiative_id}
     params.update(field_values)
     connection.execute(text(
-        "INSERT INTO initiative_fts(initiative_fts, rowid, name, description, sector, "
-        "technology_domains, categories, market_domains, faculty) "
-        "VALUES ('delete', :id, :name, :description, :sector, "
-        ":technology_domains, :categories, :market_domains, :faculty)"
+        f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}, rowid, {cols}) "
+        f"VALUES ('delete', :id, {placeholders})"
     ), params)
 
 
 def _fts_field_values(initiative) -> dict[str, str]:
     """Extract current FTS field values from an Initiative ORM object."""
-    return {f: getattr(initiative, f, "") or "" for f in _FTS_FIELDS}
+    return {f: getattr(initiative, f, "") or "" for f in _get_fts_fields()}
 
 
 @event.listens_for(Initiative, "after_insert")
@@ -399,7 +421,7 @@ def _on_initiative_before_update(mapper, connection, target):
     from sqlalchemy import inspect as orm_inspect
     state = orm_inspect(target)
     old_vals = {}
-    for f in _FTS_FIELDS:
+    for f in _get_fts_fields():
         hist = state.attrs[f].history
         # history.deleted contains old value(s) if the field changed
         if hist.deleted:

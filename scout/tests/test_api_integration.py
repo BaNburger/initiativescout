@@ -76,7 +76,7 @@ def seeded_client(client):
 class TestInitiativeEndpoints:
     def test_list_initiatives(self, seeded_client):
         c, _, _ = seeded_client
-        resp = c.get("/api/initiatives")
+        resp = c.get("/api/entities")
         assert resp.status_code == 200
         data = resp.json()
         assert "items" in data
@@ -92,7 +92,7 @@ class TestInitiativeEndpoints:
 
     def test_get_initiative(self, seeded_client):
         c, _, init_id = seeded_client
-        resp = c.get(f"/api/initiatives/{init_id}")
+        resp = c.get(f"/api/entities/{init_id}")
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "TestAPI"
@@ -102,18 +102,18 @@ class TestInitiativeEndpoints:
 
     def test_get_initiative_404(self, client):
         c, _ = client
-        resp = c.get("/api/initiatives/9999")
+        resp = c.get("/api/entities/9999")
         assert resp.status_code == 404
 
     def test_update_initiative(self, seeded_client):
         c, _, init_id = seeded_client
-        resp = c.put(f"/api/initiatives/{init_id}", json={"sector": "BioTech"})
+        resp = c.put(f"/api/entities/{init_id}", json={"sector": "BioTech"})
         assert resp.status_code == 200
         assert resp.json()["sector"] == "BioTech"
 
     def test_update_initiative_custom_fields(self, seeded_client):
         c, _, init_id = seeded_client
-        resp = c.put(f"/api/initiatives/{init_id}", json={"custom_fields": {"stage": "seed"}})
+        resp = c.put(f"/api/entities/{init_id}", json={"custom_fields": {"stage": "seed"}})
         assert resp.status_code == 200
         assert resp.json()["custom_fields"]["stage"] == "seed"
 
@@ -121,7 +121,7 @@ class TestInitiativeEndpoints:
 class TestProjectEndpoints:
     def test_create_project(self, seeded_client):
         c, _, init_id = seeded_client
-        resp = c.post(f"/api/initiatives/{init_id}/projects", json={
+        resp = c.post(f"/api/entities/{init_id}/projects", json={
             "name": "Side Project", "description": "Testing create_project",
         })
         assert resp.status_code == 201
@@ -131,7 +131,7 @@ class TestProjectEndpoints:
 
     def test_create_project_with_extra_links(self, seeded_client):
         c, _, init_id = seeded_client
-        resp = c.post(f"/api/initiatives/{init_id}/projects", json={
+        resp = c.post(f"/api/entities/{init_id}/projects", json={
             "name": "Linked", "extra_links": {"demo": "https://demo.dev"},
         })
         assert resp.status_code == 201
@@ -139,7 +139,7 @@ class TestProjectEndpoints:
 
     def test_update_project(self, seeded_client):
         c, _, init_id = seeded_client
-        create_resp = c.post(f"/api/initiatives/{init_id}/projects", json={"name": "ToUpdate"})
+        create_resp = c.post(f"/api/entities/{init_id}/projects", json={"name": "ToUpdate"})
         proj_id = create_resp.json()["id"]
         resp = c.put(f"/api/projects/{proj_id}", json={"name": "Updated"})
         assert resp.status_code == 200
@@ -147,7 +147,7 @@ class TestProjectEndpoints:
 
     def test_delete_project(self, seeded_client):
         c, _, init_id = seeded_client
-        create_resp = c.post(f"/api/initiatives/{init_id}/projects", json={"name": "ToDelete"})
+        create_resp = c.post(f"/api/entities/{init_id}/projects", json={"name": "ToDelete"})
         proj_id = create_resp.json()["id"]
         resp = c.delete(f"/api/projects/{proj_id}")
         assert resp.status_code == 200
@@ -155,9 +155,9 @@ class TestProjectEndpoints:
 
     def test_list_projects(self, seeded_client):
         c, _, init_id = seeded_client
-        c.post(f"/api/initiatives/{init_id}/projects", json={"name": "P1"})
-        c.post(f"/api/initiatives/{init_id}/projects", json={"name": "P2"})
-        resp = c.get(f"/api/initiatives/{init_id}/projects")
+        c.post(f"/api/entities/{init_id}/projects", json={"name": "P1"})
+        c.post(f"/api/entities/{init_id}/projects", json={"name": "P2"})
+        resp = c.get(f"/api/entities/{init_id}/projects")
         assert resp.status_code == 200
         assert len(resp.json()) >= 2
 
@@ -246,5 +246,5 @@ class TestResetEndpoint:
         resp = c.delete("/api/reset")
         assert resp.status_code == 200
         # Verify data is gone
-        list_resp = c.get("/api/initiatives")
+        list_resp = c.get("/api/entities")
         assert list_resp.json()["total"] == 0

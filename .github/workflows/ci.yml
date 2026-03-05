@@ -21,7 +21,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[anthropic,openai,dev]"
+        run: pip install -e ".[anthropic,openai,mcp,dev]"
 
       - name: Run tests
         run: python -m pytest scout/tests/ -v --tb=short
