@@ -1056,6 +1056,14 @@ class TestInitiativeFieldAccessors:
         session.flush()
         assert init.field("website") == "https://meta.com"
 
+    def test_field_zero_is_valid_column_value(self, session):
+        """0 and False are valid column values — should NOT fall through."""
+        init = Initiative(name="Test", github_repo_count=0, github_ci_present=False)
+        session.add(init)
+        session.flush()
+        assert init.field("github_repo_count") == 0
+        assert init.field("github_ci_present") is False
+
     def test_set_field_column(self, session):
         init = Initiative(name="Test")
         session.add(init)

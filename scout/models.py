@@ -6,6 +6,8 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from scout.utils import json_parse
+
 
 class Base(DeclarativeBase):
     pass
@@ -85,44 +87,58 @@ class Initiative(Base):
         "enrichments", "scores", "projects",
     })
 
+    @classmethod
+    def _columns(cls) -> frozenset:
+        cache = getattr(cls, "_column_names_cache", None)
+        if cache is None:
+            cache = frozenset(c.name for c in cls.__table__.columns)
+            cls._column_names_cache = cache
+        return cache
+
+    def _parsed_meta(self) -> dict:
+        return json_parse(self.metadata_json)
+
+    def _parsed_custom(self) -> dict:
+        return json_parse(self.custom_fields_json)
+
     def field(self, key: str, default=""):
         """Read a field — checks column first, falls back to metadata_json.
 
         Works for both hardcoded initiative columns AND arbitrary entity types
         that store their data in metadata_json.
         """
-        if key not in self._SKIP_FIELDS and key in self.__table__.columns:
+        if key not in self._SKIP_FIELDS and key in self._columns():
             val = getattr(self, key, None)
-            if val is not None and val != "" and val != 0 and val is not False:
+            # Only fall through for None and empty string — 0 and False
+            # are valid column values (e.g. github_repo_count=0).
+            if val is not None and val != "":
                 return val
-        meta = json.loads(self.metadata_json or "{}")
-        val = meta.get(key)
+        val = self._parsed_meta().get(key)
         if val is not None:
             return val
-        custom = json.loads(self.custom_fields_json or "{}")
-        return custom.get(key, default)
+        return self._parsed_custom().get(key, default)
 
     def set_field(self, key: str, value) -> None:
         """Set a field — direct column if it exists, else metadata_json."""
-        if key not in self._SKIP_FIELDS and key in self.__table__.columns:
+        if key not in self._SKIP_FIELDS and key in self._columns():
             setattr(self, key, value)
         else:
-            meta = json.loads(self.metadata_json or "{}")
+            meta = self._parsed_meta()
             meta[key] = value
             self.metadata_json = json.dumps(meta)
 
     def all_fields(self) -> dict:
         """Return all non-empty fields from columns + metadata_json + custom_fields_json."""
         result = {}
-        for col in self.__table__.columns:
-            if col.name in self._SKIP_FIELDS or col.name == "id":
+        for col_name in self._columns():
+            if col_name in self._SKIP_FIELDS or col_name == "id":
                 continue
-            val = getattr(self, col.name, None)
-            if val is not None and val != "" and val != 0 and val is not False:
-                result[col.name] = val
-        for src in (self.metadata_json, self.custom_fields_json):
-            for k, v in json.loads(src or "{}").items():
-                if v and k not in result:
+            val = getattr(self, col_name, None)
+            if val is not None and val != "":
+                result[col_name] = val
+        for parsed in (self._parsed_meta(), self._parsed_custom()):
+            for k, v in parsed.items():
+                if v is not None and k not in result:
                     result[k] = v
         return result
 

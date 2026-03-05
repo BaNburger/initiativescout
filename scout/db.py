@@ -276,19 +276,14 @@ def set_entity_type(entity_type: str) -> None:
 
 def get_entity_config_json() -> dict:
     """Read custom entity type config from _meta (if any)."""
-    import json as _json
+    from scout.utils import json_parse
     with _lock:
         engine = _engine
     if engine is None:
         return {}
     with engine.connect() as conn:
         row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_config'")).scalar()
-    if row:
-        try:
-            return _json.loads(str(row))
-        except (ValueError, TypeError):
-            return {}
-    return {}
+    return json_parse(str(row) if row else None)
 
 
 def set_entity_config_json(config: dict) -> None:

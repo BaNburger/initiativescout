@@ -6,7 +6,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -31,9 +31,9 @@ from scout.utils import json_parse
 log = logging.getLogger(__name__)
 
 
-def _entity_cfg() -> dict[str, str]:
-    """Return ENTITY_CONFIG for the current database's entity type."""
-    return ENTITY_CONFIG.get(get_entity_type(), ENTITY_CONFIG["initiative"])
+def _entity_cfg() -> dict:
+    """Return entity config for the current database's entity type."""
+    return get_entity_config(get_entity_type())
 
 
 # ---------------------------------------------------------------------------
@@ -706,7 +706,6 @@ def submit_enrichment(
     if not source_type or not source_type.strip():
         return _error("source_type cannot be empty", "VALIDATION_ERROR")
 
-    from datetime import datetime, UTC
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, entity_id)
         if err:

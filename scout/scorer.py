@@ -946,6 +946,11 @@ async def score_project(
     dossier = build_project_dossier(project, initiative, entity_type)
     raw = await client.call(_project_system_prompt(entity_type), dossier)
     v = _validate_project_response(raw, entity_type)
+    dim_grades = {
+        "team": {"letter": v["team_grade"], "numeric": GRADE_MAP[v["team_grade"]]},
+        "tech": {"letter": v["tech_grade"], "numeric": GRADE_MAP[v["tech_grade"]]},
+        "opportunity": {"letter": v["opportunity_grade"], "numeric": GRADE_MAP[v["opportunity_grade"]]},
+    }
     return OutreachScore(
         initiative_id=initiative.id,
         project_id=project.id,
@@ -964,6 +969,7 @@ async def score_project(
         grade_tech_num=GRADE_MAP[v["tech_grade"]],
         grade_opportunity=v["opportunity_grade"],
         grade_opportunity_num=GRADE_MAP[v["opportunity_grade"]],
+        dimension_grades_json=json.dumps(dim_grades),
         llm_model=client.model,
         scored_at=datetime.now(UTC),
     )
