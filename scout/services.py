@@ -10,6 +10,7 @@ from sqlalchemy import and_, case, delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from scout.enricher import (
+    _html_cache,
     discover_urls, enrich_extra_links, enrich_github, enrich_team_page, enrich_website,
     enrich_structured_data, enrich_tech_stack, enrich_dns, enrich_sitemap,
     enrich_careers, enrich_git_deep,
@@ -729,7 +730,9 @@ async def run_enrichment(
         return []
 
     labels, coros = zip(*tasks)
-    results = await asyncio.gather(*coros, return_exceptions=True)
+    # Enable per-entity URL cache so enrichers sharing the same URL don't re-fetch
+    async with _html_cache():
+        results = await asyncio.gather(*coros, return_exceptions=True)
 
     new_enrichments: list[Enrichment] = []
     for label, result in zip(labels, results):

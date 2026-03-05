@@ -24,6 +24,27 @@ _TIMEOUT = 15.0
 _MAX_TEXT = 15_000
 _MAX_SUMMARY = 1500
 
+# ---------------------------------------------------------------------------
+# Per-entity URL cache — avoids re-fetching the same page across enrichers
+# ---------------------------------------------------------------------------
+
+_url_cache: dict[str, str] = {}
+_url_cache_lock = asyncio.Lock()
+_url_cache_enabled = False
+
+
+@asynccontextmanager
+async def _html_cache():
+    """Context manager that enables per-entity URL caching for _fetch_url."""
+    global _url_cache_enabled
+    _url_cache.clear()
+    _url_cache_enabled = True
+    try:
+        yield
+    finally:
+        _url_cache_enabled = False
+        _url_cache.clear()
+
 GITHUB_API = "https://api.github.com"
 
 # ---------------------------------------------------------------------------
@@ -543,6 +564,26 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+_JSONLD_KEYS = (
+    "name", "description", "url", "foundingDate",
+    "numberOfEmployees", "address", "sameAs",
+    "founder", "email", "telephone", "logo",
+    "areaServed", "knowsAbout", "memberOf",
+    "author", "datePublished", "publisher",
+    "genre", "director", "actor", "brand",
+    "offers", "aggregateRating",
+)
+
+
+def _format_jsonld_value(val) -> str:
+    """Format a JSON-LD value for display."""
+    if isinstance(val, list):
+        return ", ".join(str(v)[:100] for v in val[:5])
+    if isinstance(val, dict):
+        return val.get("name") or val.get("value") or str(val)[:200]
+    return str(val)[:300]
+
+
 def _extract_structured_data(raw_html: str) -> str | None:
     """Extract JSON-LD, OpenGraph, microdata, and meta tags from HTML.
 
@@ -562,20 +603,10 @@ def _extract_structured_data(raw_html: str) -> str | None:
                 ld_type = item.get("@type", "")
                 if ld_type:
                     lines.append(f"Schema.org type: {ld_type}")
-                for key in ("name", "description", "url", "foundingDate",
-                            "numberOfEmployees", "address", "sameAs",
-                            "founder", "email", "telephone", "logo",
-                            "areaServed", "knowsAbout", "memberOf",
-                            "author", "datePublished", "publisher",
-                            "genre", "director", "actor", "brand",
-                            "offers", "aggregateRating"):
+                for key in _JSONLD_KEYS:
                     val = item.get(key)
                     if val:
-                        if isinstance(val, list):
-                            val = ", ".join(str(v)[:100] for v in val[:5])
-                        elif isinstance(val, dict):
-                            val = val.get("name") or val.get("value") or str(val)[:200]
-                        lines.append(f"  {key}: {str(val)[:300]}")
+                        lines.append(f"  {key}: {_format_jsonld_value(val)}")
 
             # OpenGraph
             for og in (data.get("opengraph") or [])[:3]:
@@ -624,17 +655,10 @@ def _extract_structured_data(raw_html: str) -> str | None:
                 ld_type = item.get("@type", "")
                 if ld_type:
                     lines.append(f"Schema.org type: {ld_type}")
-                for key in ("name", "description", "url", "foundingDate",
-                            "numberOfEmployees", "address", "sameAs",
-                            "founder", "email", "telephone", "logo",
-                            "areaServed", "knowsAbout", "memberOf"):
+                for key in _JSONLD_KEYS:
                     val = item.get(key)
                     if val:
-                        if isinstance(val, list):
-                            val = ", ".join(str(v) for v in val[:5])
-                        elif isinstance(val, dict):
-                            val = val.get("name") or val.get("value") or str(val)[:200]
-                        lines.append(f"  {key}: {str(val)[:300]}")
+                        lines.append(f"  {key}: {_format_jsonld_value(val)}")
         except (json_mod.JSONDecodeError, TypeError):
             continue
 
@@ -1146,6 +1170,20 @@ async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:
 
 
 async def _fetch_url(url: str) -> str:
+    """Fetch a URL, using per-entity cache when enabled."""
+    if _url_cache_enabled:
+        async with _url_cache_lock:
+            if url in _url_cache:
+                return _url_cache[url]
+        # Not in cache — fetch and store
+        text = await _fetch_url_uncached(url)
+        async with _url_cache_lock:
+            _url_cache[url] = text
+        return text
+    return await _fetch_url_uncached(url)
+
+
+async def _fetch_url_uncached(url: str) -> str:
     async with httpx.AsyncClient(
         follow_redirects=True,
         timeout=httpx.Timeout(_TIMEOUT),
