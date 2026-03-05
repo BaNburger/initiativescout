@@ -171,43 +171,46 @@ async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
 # Technology stack detection
 # ---------------------------------------------------------------------------
 
-_TECH_FINGERPRINTS: list[tuple[str, str, str]] = [
-    ("framework", "React", r'react(?:\.production|\.development|dom)'),
-    ("framework", "Next.js", r'(?:_next/static|__next|next/dist)'),
-    ("framework", "Vue.js", r'(?:vue\.(?:min\.)?js|__vue__|v-cloak)'),
-    ("framework", "Nuxt.js", r'(?:_nuxt/|__nuxt)'),
-    ("framework", "Angular", r'(?:ng-version|angular(?:\.min)?\.js)'),
-    ("framework", "Svelte", r'(?:svelte-[\w]+|__svelte)'),
-    ("framework", "WordPress", r'(?:wp-content|wp-includes|wordpress)'),
-    ("framework", "Shopify", r'(?:cdn\.shopify\.com|Shopify\.theme)'),
-    ("framework", "Webflow", r'(?:webflow\.com|wf-page)'),
-    ("framework", "Wix", r'(?:wix\.com|wixstatic\.com)'),
-    ("framework", "Squarespace", r'(?:squarespace\.com|sqsp)'),
-    ("framework", "Ghost", r'(?:ghost\.(?:io|org)|ghost-(?:url|api))'),
-    ("framework", "Hugo", r'(?:gohugo\.io|powered.*hugo)'),
-    ("framework", "Gatsby", r'gatsby'),
-    ("framework", "Django", r'(?:csrfmiddlewaretoken|django)'),
-    ("framework", "Ruby on Rails", r'(?:csrf-token.*authenticity|rails-ujs)'),
-    ("framework", "Laravel", r'(?:laravel|XSRF-TOKEN)'),
-    ("analytics", "Google Analytics", r'(?:google-analytics\.com|gtag|googletagmanager)'),
-    ("analytics", "Plausible", r'plausible\.io'),
-    ("analytics", "Matomo", r'(?:matomo|piwik)'),
-    ("analytics", "Mixpanel", r'mixpanel'),
-    ("analytics", "Hotjar", r'hotjar'),
-    ("analytics", "PostHog", r'posthog'),
-    ("marketing", "HubSpot", r'(?:hubspot|hs-scripts|hbspt)'),
-    ("marketing", "Intercom", r'(?:intercom|intercomSettings)'),
-    ("marketing", "Drift", r'drift\.com'),
-    ("marketing", "Crisp", r'crisp\.chat'),
-    ("marketing", "Mailchimp", r'mailchimp'),
-    ("marketing", "Typeform", r'typeform'),
-    ("payments", "Stripe", r'(?:stripe\.com/v|Stripe\()'),
-    ("payments", "PayPal", r'paypal'),
-    ("infrastructure", "Cloudflare", r'(?:cloudflare|cf-ray)'),
-    ("infrastructure", "Vercel", r'(?:vercel|\.vercel\.app)'),
-    ("infrastructure", "Netlify", r'(?:netlify)'),
-    ("infrastructure", "Heroku", r'heroku'),
-    ("infrastructure", "Firebase", r'(?:firebase|firebaseapp)'),
+_TECH_FINGERPRINTS: list[tuple[str, str, re.Pattern]] = [
+    (cat, name, re.compile(pattern, re.IGNORECASE))
+    for cat, name, pattern in [
+        ("framework", "React", r'react(?:\.production|\.development|dom)'),
+        ("framework", "Next.js", r'(?:_next/static|__next|next/dist)'),
+        ("framework", "Vue.js", r'(?:vue\.(?:min\.)?js|__vue__|v-cloak)'),
+        ("framework", "Nuxt.js", r'(?:_nuxt/|__nuxt)'),
+        ("framework", "Angular", r'(?:ng-version|angular(?:\.min)?\.js)'),
+        ("framework", "Svelte", r'(?:svelte-[\w]+|__svelte)'),
+        ("framework", "WordPress", r'(?:wp-content|wp-includes|wordpress)'),
+        ("framework", "Shopify", r'(?:cdn\.shopify\.com|Shopify\.theme)'),
+        ("framework", "Webflow", r'(?:webflow\.com|wf-page)'),
+        ("framework", "Wix", r'(?:wix\.com|wixstatic\.com)'),
+        ("framework", "Squarespace", r'(?:squarespace\.com|sqsp)'),
+        ("framework", "Ghost", r'(?:ghost\.(?:io|org)|ghost-(?:url|api))'),
+        ("framework", "Hugo", r'(?:gohugo\.io|powered.*hugo)'),
+        ("framework", "Gatsby", r'gatsby'),
+        ("framework", "Django", r'(?:csrfmiddlewaretoken|django)'),
+        ("framework", "Ruby on Rails", r'(?:csrf-token.*authenticity|rails-ujs)'),
+        ("framework", "Laravel", r'(?:laravel|XSRF-TOKEN)'),
+        ("analytics", "Google Analytics", r'(?:google-analytics\.com|gtag|googletagmanager)'),
+        ("analytics", "Plausible", r'plausible\.io'),
+        ("analytics", "Matomo", r'(?:matomo|piwik)'),
+        ("analytics", "Mixpanel", r'mixpanel'),
+        ("analytics", "Hotjar", r'hotjar'),
+        ("analytics", "PostHog", r'posthog'),
+        ("marketing", "HubSpot", r'(?:hubspot|hs-scripts|hbspt)'),
+        ("marketing", "Intercom", r'(?:intercom|intercomSettings)'),
+        ("marketing", "Drift", r'drift\.com'),
+        ("marketing", "Crisp", r'crisp\.chat'),
+        ("marketing", "Mailchimp", r'mailchimp'),
+        ("marketing", "Typeform", r'typeform'),
+        ("payments", "Stripe", r'(?:stripe\.com/v|Stripe\()'),
+        ("payments", "PayPal", r'paypal'),
+        ("infrastructure", "Cloudflare", r'(?:cloudflare|cf-ray)'),
+        ("infrastructure", "Vercel", r'(?:vercel|\.vercel\.app)'),
+        ("infrastructure", "Netlify", r'(?:netlify)'),
+        ("infrastructure", "Heroku", r'heroku'),
+        ("infrastructure", "Firebase", r'(?:firebase|firebaseapp)'),
+    ]
 ]
 
 
@@ -218,7 +221,7 @@ def _detect_tech_stack(raw_html: str) -> str | None:
 
     found: dict[str, list[str]] = {}
     for category, name, pattern in _TECH_FINGERPRINTS:
-        if re.search(pattern, raw_html, re.IGNORECASE):
+        if pattern.search(raw_html):
             found.setdefault(category, []).append(name)
 
     if not found:
@@ -384,18 +387,16 @@ async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
         pass
 
     sitemap_urls = [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml"]
-    page_count = 0
     page_types: dict[str, int] = {}
-    sitemap_text = ""
+    all_urls: list[str] = []
 
     for sitemap_url in sitemap_urls:
         try:
             sitemap_text = await _fetch_url(sitemap_url)
             if not sitemap_text or "<urlset" not in sitemap_text.lower() and "<sitemapindex" not in sitemap_text.lower():
                 continue
-            urls_found = re.findall(r"<loc>([^<]+)</loc>", sitemap_text)
-            page_count += len(urls_found)
-            for found_url in urls_found[:500]:
+            all_urls = re.findall(r"<loc>([^<]+)</loc>", sitemap_text)
+            for found_url in all_urls[:500]:
                 path = urlparse(found_url).path.strip("/")
                 prefix = path.split("/")[0] if path else "root"
                 page_types[prefix] = page_types.get(prefix, 0) + 1
@@ -403,15 +404,16 @@ async def enrich_sitemap(initiative: Initiative) -> Enrichment | None:
         except Exception:
             continue
 
-    if page_count:
-        lines.append(f"  Total pages in sitemap: {page_count}")
+    if all_urls:
+        lines.append(f"  Total pages in sitemap: {len(all_urls)}")
         if page_types:
             sorted_types = sorted(page_types.items(), key=lambda x: x[1], reverse=True)
             lines.append("  Site sections:")
             for prefix, count in sorted_types[:10]:
                 lines.append(f"    /{prefix}: {count} pages")
 
-    for found_url in re.findall(r"<loc>([^<]+)</loc>", sitemap_text if page_count else ""):
+    # Identify career/job pages from already-parsed URLs
+    for found_url in all_urls:
         path_lower = found_url.lower()
         if any(kw in path_lower for kw in ("career", "job", "stellen", "hiring", "join")):
             lines.append(f"  Career page found: {found_url}")
