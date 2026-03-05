@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import threading
+from datetime import datetime
 
 log = logging.getLogger(__name__)
 from contextlib import contextmanager
@@ -32,6 +33,7 @@ _current_db_path: Path | None = None
 _cached_entity_type: str | None = None
 
 DATA_DIR = Path(__file__).parent / "data"
+BACKUP_DIR = DATA_DIR / "backups"
 
 
 def init_db(db_path: str | Path | None = None) -> None:
@@ -183,17 +185,66 @@ def delete_database(name: str) -> None:
 
 
 def backup_database(name: str) -> str:
-    """Copy a database file to a timestamped backup. Returns the backup filename."""
+    """Copy a database file to a timestamped backup in the backups directory."""
     import shutil
-    from datetime import datetime
     db_path = _safe_db_path(name)
     if not db_path.exists():
         raise ValueError(f"Database '{name}' not found")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_name = f"{name}-backup-{ts}"
-    backup_path = DATA_DIR / f"{backup_name}.db"
+    backup_path = BACKUP_DIR / f"{backup_name}.db"
     shutil.copy2(db_path, backup_path)
     return backup_name
+
+
+def list_backups() -> list[dict]:
+    """Return sorted list of backups with metadata."""
+    if not BACKUP_DIR.exists():
+        return []
+    backups = []
+    for p in sorted(BACKUP_DIR.glob("*.db"), reverse=True):
+        # Parse original DB name from backup filename: {name}-backup-{ts}
+        stem = p.stem
+        parts = stem.rsplit("-backup-", 1)
+        origin = parts[0] if len(parts) == 2 else stem
+        stat = p.stat()
+        backups.append({
+            "name": stem,
+            "origin": origin,
+            "size_bytes": stat.st_size,
+            "created": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return backups
+
+
+def restore_database(backup_name: str) -> str:
+    """Restore a backup, replacing the original database. Returns the restored DB name."""
+    import shutil
+    backup_path = (BACKUP_DIR / f"{backup_name}.db").resolve()
+    if not backup_path.is_relative_to(BACKUP_DIR.resolve()):
+        raise ValueError("Invalid backup path")
+    if not backup_path.exists():
+        raise ValueError(f"Backup '{backup_name}' not found")
+    # Derive original DB name
+    parts = backup_name.rsplit("-backup-", 1)
+    origin = parts[0] if len(parts) == 2 else backup_name
+    target_path = _safe_db_path(origin)
+    # Cannot overwrite the currently active database — switch away first
+    if _current_db_path is not None and target_path.resolve() == _current_db_path.resolve():
+        raise ValueError("Cannot restore over the currently active database. Switch to another database first.")
+    shutil.copy2(backup_path, target_path)
+    return origin
+
+
+def delete_backup(backup_name: str) -> None:
+    """Delete a backup file."""
+    backup_path = (BACKUP_DIR / f"{backup_name}.db").resolve()
+    if not backup_path.is_relative_to(BACKUP_DIR.resolve()):
+        raise ValueError("Invalid backup path")
+    if not backup_path.exists():
+        raise ValueError(f"Backup '{backup_name}' not found")
+    backup_path.unlink()
 
 
 def _ensure_revision_tracking(engine) -> None:

@@ -818,6 +818,15 @@ textarea.inline-input { resize: vertical; min-height: 60px; }
   .stats-bar { flex-wrap: wrap; gap: 10px; }
 }
 
+/* Backups panel */
+.backups-table { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.backup-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--bg); gap: 12px; }
+.backup-row:hover { background: var(--bg-hover); }
+.backup-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.backup-origin { font-weight: 500; color: var(--fg); font-size: 13px; }
+.backup-meta { font-size: 11px; color: var(--fg-muted); }
+.backup-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
 @media (max-width: 600px) {
   .list-panel { flex: 0 0 60%; }
   .header { padding: 8px 12px; }
