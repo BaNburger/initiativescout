@@ -4,10 +4,16 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
-import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
 from sqlalchemy import func, select
+
+try:
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    _OPENPYXL_AVAILABLE = True
+except ImportError:
+    openpyxl = None  # type: ignore[assignment]
+    _OPENPYXL_AVAILABLE = False
 from sqlalchemy.orm import Session
 
 from scout.models import Enrichment, Initiative, OutreachScore
@@ -135,6 +141,11 @@ def export_xlsx(
         include_scores: Include score columns (verdict, grades, reasoning, etc.).
         include_extras: Include extra profile fields (domains, member count, etc.).
     """
+    if not _OPENPYXL_AVAILABLE:
+        raise ImportError(
+            "openpyxl is required for XLSX export. "
+            "Install it with: pip install 'scout[xlsx]'"
+        )
     # Pre-load related data in bulk (before filtering, so verdict filter can reuse)
     score_map = _latest_scores(session) if (include_scores or verdict) else {}
     enrich_map = _enrichment_summaries(session) if include_enrichments else {}

@@ -7,14 +7,38 @@ import logging
 from typing import Any
 
 from sqlalchemy import and_, case, delete, func, or_, select, text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from scout.enricher import (
+    _html_cache,
     discover_urls, enrich_extra_links, enrich_github, enrich_team_page, enrich_website,
+    enrich_structured_data, enrich_tech_stack, enrich_dns, enrich_sitemap,
+    enrich_careers, enrich_git_deep,
 )
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
-from scout.scorer import LLMClient, score_initiative, score_project
+from scout.scorer import LLMClient, get_entity_config, score_initiative, score_project
 from scout.utils import json_parse
+
+# ---------------------------------------------------------------------------
+# Enricher registry — maps name to async callable
+# ---------------------------------------------------------------------------
+
+ENRICHER_REGISTRY: dict[str, Any] = {
+    "website": enrich_website,
+    "team_page": enrich_team_page,
+    "github": enrich_github,
+    "extra_links": enrich_extra_links,
+    "structured_data": enrich_structured_data,
+    "tech_stack": enrich_tech_stack,
+    "dns": enrich_dns,
+    "sitemap": enrich_sitemap,
+    "careers": enrich_careers,
+    "git_deep": enrich_git_deep,
+}
+
+# Enrichers that need a crawler argument
+_CRAWLER_ENRICHERS = {"website", "team_page", "extra_links"}
 
 log = logging.getLogger(__name__)
 
@@ -96,31 +120,30 @@ def score_response_dict(outreach: OutreachScore, extended: bool = False) -> dict
     """
     result = {f: getattr(outreach, f) for f in SCORE_LIST_FIELDS}
     if extended:
-        result.update({
-            "reasoning": outreach.reasoning,
-            "contact_who": outreach.contact_who,
-            "contact_channel": outreach.contact_channel,
-            "engagement_hook": outreach.engagement_hook,
-            "key_evidence": json_parse(outreach.key_evidence_json, []),
-            "data_gaps": json_parse(outreach.data_gaps_json, []),
-        })
+        for f in SCORE_DETAIL_FIELDS:
+            if f not in result:
+                result[f] = getattr(outreach, f)
+        result["key_evidence"] = json_parse(outreach.key_evidence_json, [])
+        result["data_gaps"] = json_parse(outreach.data_gaps_json, [])
+    return result
+
+
+def _empty_score_fields(detail: bool) -> dict[str, Any]:
+    """Return a score dict with all None values (no scores available)."""
+    fields = SCORE_DETAIL_FIELDS if detail else SCORE_LIST_FIELDS
+    result: dict[str, Any] = {f: None for f in fields}
+    if detail:
+        result["key_evidence"] = []
+        result["data_gaps"] = []
     return result
 
 
 def latest_score_fields(scores: list[OutreachScore], detail: bool = True) -> dict[str, Any]:
-    fields = SCORE_DETAIL_FIELDS if detail else SCORE_LIST_FIELDS
+    """Extract score fields from the most recent score in the list."""
     if not scores:
-        result: dict[str, Any] = {f: None for f in fields}
-        if detail:
-            result["key_evidence"] = []
-            result["data_gaps"] = []
-        return result
+        return _empty_score_fields(detail)
     latest = max(scores, key=lambda s: s.scored_at)
-    result = {f: getattr(latest, f) for f in fields}
-    if detail:
-        result["key_evidence"] = json_parse(latest.key_evidence_json, [])
-        result["data_gaps"] = json_parse(latest.data_gaps_json, [])
-    return result
+    return score_response_dict(latest, extended=detail)
 
 
 # Base initiative fields read directly from the Initiative ORM object.
@@ -145,6 +168,9 @@ def _build_initiative_dict(
     This is the single source of truth for the initiative list-view shape,
     used by both ``initiative_summary`` (ORM-based) and ``query_initiatives``
     (SQL-based).
+
+    Includes metadata_json fields so custom entity types (company, article,
+    movie, etc.) have their domain-specific data in the response.
     """
     result: dict[str, Any] = {f: getattr(init, f) for f in _SUMMARY_BASE_FIELDS}
     result["enriched"] = enriched
@@ -153,6 +179,10 @@ def _build_initiative_dict(
     for f in _SUMMARY_EXTRA_FIELDS:
         result[f] = getattr(init, f)
     result["custom_fields"] = json_parse(init.custom_fields_json, {})
+    # Include metadata fields so custom entity types surface their data
+    metadata = json_parse(init.metadata_json, {})
+    if metadata:
+        result["metadata"] = metadata
     return result
 
 
@@ -178,8 +208,14 @@ def initiative_detail(init: Initiative) -> dict:
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=True),
     )
-    base.update({f: getattr(init, f) for f in DETAIL_FIELDS})
-    base["extra_links"] = json_parse(init.extra_links_json)
+    # Add detail fields, skipping None/empty-string but keeping 0 and False
+    for f in DETAIL_FIELDS:
+        val = getattr(init, f)
+        if val is not None and val != "":
+            base[f] = val
+    extra = json_parse(init.extra_links_json)
+    if extra:
+        base["extra_links"] = extra
     base["enrichments"] = [
         {"id": e.id, "source_type": e.source_type, "source_url": e.source_url,
          "summary": e.summary, "fetched_at": e.fetched_at.isoformat()}
@@ -251,7 +287,7 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
                     'ORDER BY rank LIMIT 500'
                 ), {"q": fts_q}).all()
         return [r[0] for r in rows]
-    except Exception:
+    except (OperationalError, ProgrammingError):
         log.warning("FTS5 search failed for query %r, falling back to LIKE", query, exc_info=True)
         return None
 
@@ -261,14 +297,8 @@ def _fts_search(session: Session, query: str) -> list[int] | None:
 # ---------------------------------------------------------------------------
 
 
-def _latest_score_subquery(detail: bool = False):
-    """Subquery returning the latest initiative-level score per initiative.
-
-    Args:
-        detail: If True, include heavy text columns (reasoning, contact info,
-                evidence, data gaps). If False, only include lightweight fields
-                needed for list views.
-    """
+def _latest_score_subquery():
+    """Subquery returning the latest initiative-level score per initiative (lightweight fields)."""
     columns = [
         OutreachScore.initiative_id,
         OutreachScore.verdict,
@@ -281,24 +311,13 @@ def _latest_score_subquery(detail: bool = False):
         OutreachScore.grade_opportunity,
         OutreachScore.grade_opportunity_num,
         OutreachScore.scored_at,
-    ]
-    if detail:
-        columns.extend([
-            OutreachScore.reasoning,
-            OutreachScore.contact_who,
-            OutreachScore.contact_channel,
-            OutreachScore.engagement_hook,
-            OutreachScore.key_evidence_json,
-            OutreachScore.data_gaps_json,
-        ])
-    columns.append(
         func.row_number()
         .over(
             partition_by=OutreachScore.initiative_id,
             order_by=OutreachScore.scored_at.desc(),
         )
         .label("rn"),
-    )
+    ]
     return (
         select(*columns)
         .where(OutreachScore.project_id.is_(None))
@@ -321,7 +340,7 @@ def query_initiatives(
     fields: set[str] | None = None,
 ) -> tuple[list[dict], int]:
     """Return (items, total) with filtering, sorting, and pagination in SQL."""
-    ls = _latest_score_subquery(detail=False)
+    ls = _latest_score_subquery()
 
     # Enrichment aggregates as a subquery
     enrich_sub = (
@@ -536,8 +555,6 @@ def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
     for row in rows:
         init = row[0]
         p = row[1]
-        has_web = bool((init.website or "").strip())
-        has_gh = bool((init.github_org or "").strip())
         needs_enrich = p in (1, 3)
         needs_score = p in (1, 2)
         if needs_enrich:
@@ -546,12 +563,21 @@ def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
             action = "score"
         else:
             action = "re-enrich"
-        queue.append({
-            "id": init.id, "name": init.name, "uni": init.uni,
-            "has_website": has_web, "has_github": has_gh,
+        item: dict = {
+            "id": init.id, "name": init.name,
             "needs_enrichment": needs_enrich, "needs_scoring": needs_score,
             "recommended_action": action,
-        })
+        }
+        # Include entity-type-relevant context
+        if init.uni:
+            item["uni"] = init.uni
+        has_web = bool((init.field("website") or "").strip())
+        has_gh = bool((init.field("github_org") or "").strip())
+        if has_web:
+            item["has_website"] = True
+        if has_gh:
+            item["has_github"] = True
+        queue.append(item)
     return queue
 
 
@@ -616,6 +642,61 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Import helpers
+# ---------------------------------------------------------------------------
+
+
+def import_scraped_entities(
+    session: Session, entities: list[dict[str, str]],
+) -> dict[str, int]:
+    """Import a list of scraped entity dicts, deduplicating by name.
+
+    Each dict should have at least 'name', plus optional 'uni', 'faculty', 'website'.
+    Returns {"created": N, "skipped_duplicates": N}.
+    """
+    created = skipped = 0
+    for ent in entities:
+        existing = session.execute(
+            select(Initiative).where(Initiative.name == ent["name"])
+        ).scalars().first()
+        if existing:
+            skipped += 1
+            continue
+        session.add(Initiative(
+            name=ent["name"], uni=ent.get("uni", ""),
+            faculty=ent.get("faculty", ""), website=ent.get("website", ""),
+        ))
+        created += 1
+    session.flush()
+    return {"created": created, "skipped_duplicates": skipped}
+
+
+def build_similarity_id_mask(
+    session: Session,
+    uni: str | None = None,
+    verdict: str | None = None,
+) -> set[int] | None:
+    """Build an ID mask for similarity search pre-filtering.
+
+    Returns None if no filters are applied, or a set of matching initiative IDs.
+    """
+    if not uni and not verdict:
+        return None
+    q_filter = select(Initiative.id)
+    if uni:
+        us = {u.strip().upper() for u in uni.split(",")}
+        q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
+    if verdict:
+        ls = _latest_score_subquery()
+        vs = {v.strip().lower() for v in verdict.split(",")}
+        q_filter = q_filter.join(
+            ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
+        ).where(ls.c.verdict.in_(vs))
+    rows = session.execute(q_filter).scalars().all()
+    return set(rows)
+
+
+# ---------------------------------------------------------------------------
 # Operations
 # ---------------------------------------------------------------------------
 
@@ -623,23 +704,38 @@ def delete_custom_column(session: Session, column_id: int) -> bool:
 async def run_enrichment(
     session: Session, init: Initiative, crawler: object | None = None,
 ) -> list[Enrichment]:
-    """Run all enrichers in parallel; only delete old enrichments if at least one succeeds.
+    """Run entity-type-aware enrichers in parallel; only delete old enrichments if at least one succeeds.
 
-    Args:
-        crawler: Optional AsyncWebCrawler instance for Crawl4AI.
-                 Pass ``None`` to use the httpx+lxml fallback.
+    Uses ENRICHER_REGISTRY + entity type config to determine which enrichers
+    to run. Enrichers that need a crawler get one; others are called directly.
 
     Returns new enrichments (caller must commit).
     """
-    # Standard enrichers (website returns list, others return single)
-    results = await asyncio.gather(
-        enrich_website(init, crawler),
-        enrich_team_page(init, crawler),
-        enrich_github(init),
-        return_exceptions=True,
-    )
+    from scout.db import get_entity_type
+    entity_type = get_entity_type()
+    cfg = get_entity_config(entity_type)
+    configured = set(cfg.get("enrichers", list(ENRICHER_REGISTRY.keys())))
+
+    # Build tasks from registry, respecting entity type config
+    tasks: list[tuple[str, Any]] = []
+    for name in ENRICHER_REGISTRY:
+        if name not in configured:
+            continue
+        fn = ENRICHER_REGISTRY[name]
+        if name in _CRAWLER_ENRICHERS:
+            tasks.append((name, fn(init, crawler)))
+        else:
+            tasks.append((name, fn(init)))
+
+    if not tasks:
+        return []
+
+    labels, coros = zip(*tasks)
+    # Enable per-entity URL cache so enrichers sharing the same URL don't re-fetch
+    async with _html_cache():
+        results = await asyncio.gather(*coros, return_exceptions=True)
+
     new_enrichments: list[Enrichment] = []
-    labels = ("enrich_website", "enrich_team_page", "enrich_github")
     for label, result in zip(labels, results):
         if isinstance(result, Exception):
             log.warning("Enrichment failed (%s) for %s: %s", label, init.name, result)
@@ -647,13 +743,6 @@ async def run_enrichment(
             new_enrichments.extend(result)
         elif result:
             new_enrichments.append(result)
-
-    # Extra links enrichment (crawl all URLs in extra_links_json)
-    try:
-        extras = await enrich_extra_links(init, crawler)
-        new_enrichments.extend(extras)
-    except Exception as exc:
-        log.warning("Extra links enrichment failed for %s: %s", init.name, exc)
 
     if new_enrichments:
         session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))

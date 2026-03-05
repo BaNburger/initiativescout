@@ -155,6 +155,7 @@ async def export_file(
           summary="Scrape TUM professor directory and import")
 async def scrape_tum_professors_route(body: dict[str, Any] | None = None):
     from scout.scrapers import scrape_tum_professors as _scrape
+    from scout.services import import_scraped_entities
     params = body or {}
     professors = await _scrape()
     school = params.get("school")
@@ -163,22 +164,10 @@ async def scrape_tum_professors_route(body: dict[str, Any] | None = None):
     limit = min(int(params.get("limit", 50)), 1000)
     professors = professors[:limit]
 
-    created = skipped = 0
     with next(session_generator()) as session:
-        for prof in professors:
-            existing = session.execute(
-                select(Initiative).where(Initiative.name == prof["name"])
-            ).scalars().first()
-            if existing:
-                skipped += 1
-                continue
-            session.add(Initiative(
-                name=prof["name"], uni=prof.get("uni", "TUM"),
-                faculty=prof.get("faculty", ""), website=prof.get("website", ""),
-            ))
-            created += 1
+        result = import_scraped_entities(session, professors)
         session.commit()
-    return {"created": created, "skipped_duplicates": skipped, "total_found": len(professors)}
+    return {**result, "total_found": len(professors)}
 
 
 @app.get("/api/entity-type", tags=["Stats"], summary="Get entity type for current database")
@@ -685,26 +674,11 @@ async def semantic_search(
     session: Session = Depends(db_session),
 ):
     from scout.embedder import find_similar
+    from scout.services import build_similarity_id_mask
 
-    # Optional SQL pre-filter to build ID mask
-    id_mask = None
-    if uni or verdict:
-        q_filter = select(Initiative.id)
-        if uni:
-            us = {u.strip().upper() for u in uni.split(",")}
-            q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
-        if verdict:
-            from scout.services import _latest_score_subquery
-            from sqlalchemy import and_
-            ls = _latest_score_subquery()
-            vs = {v.strip().lower() for v in verdict.split(",")}
-            q_filter = q_filter.join(
-                ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
-            ).where(ls.c.verdict.in_(vs))
-        rows = session.execute(q_filter).scalars().all()
-        id_mask = set(rows)
-        if not id_mask:
-            return {"results": []}
+    id_mask = build_similarity_id_mask(session, uni=uni, verdict=verdict)
+    if id_mask is not None and not id_mask:
+        return {"results": []}
 
     results = find_similar(query_text=q, top_k=limit, id_mask=id_mask)
     if not results:

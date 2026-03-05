@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from scout.utils import json_parse
 
 
 class Base(DeclarativeBase):
@@ -66,6 +69,9 @@ class Initiative(Base):
     linkedin_hits: Mapped[int] = mapped_column(Integer, default=0)
     researchgate_hits: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Flexible metadata for arbitrary entity types
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
     __table_args__ = (
         Index("ix_initiative_uni", "uni"),
     )
@@ -73,6 +79,74 @@ class Initiative(Base):
     enrichments: Mapped[list[Enrichment]] = relationship("Enrichment", back_populates="initiative", cascade="all, delete-orphan")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="initiative", cascade="all, delete-orphan")
     projects: Mapped[list[Project]] = relationship("Project", back_populates="initiative", cascade="all, delete-orphan")
+
+    # --- Field accessors for entity-type-agnostic access ---
+
+    _SKIP_FIELDS = frozenset({
+        "metadata_json", "custom_fields_json", "extra_links_json",
+        "enrichments", "scores", "projects",
+    })
+
+    @classmethod
+    def _columns(cls) -> frozenset:
+        cache = getattr(cls, "_column_names_cache", None)
+        if cache is None:
+            cache = frozenset(c.name for c in cls.__table__.columns)
+            cls._column_names_cache = cache
+        return cache
+
+    def _parsed_meta(self) -> dict:
+        return json_parse(self.metadata_json)
+
+    def _parsed_custom(self) -> dict:
+        return json_parse(self.custom_fields_json)
+
+    def field(self, key: str, default=""):
+        """Read a field — checks column first, falls back to metadata_json.
+
+        Works for both hardcoded initiative columns AND arbitrary entity types
+        that store their data in metadata_json.
+        """
+        if key not in self._SKIP_FIELDS and key in self._columns():
+            val = getattr(self, key, None)
+            # Only fall through for None and empty string — 0 and False
+            # are valid column values (e.g. github_repo_count=0).
+            if val is not None and val != "":
+                return val
+        val = self._parsed_meta().get(key)
+        if val is not None:
+            return val
+        return self._parsed_custom().get(key, default)
+
+    def set_field(self, key: str, value) -> None:
+        """Set a field — direct column if it exists, else metadata_json."""
+        if key not in self._SKIP_FIELDS and key in self._columns():
+            setattr(self, key, value)
+        else:
+            meta = self._parsed_meta()
+            meta[key] = value
+            self.metadata_json = json.dumps(meta)
+
+    def all_fields(self) -> dict:
+        """Return all non-empty fields from columns + metadata_json + custom_fields_json.
+
+        Skips default/empty column values (None, "", 0, False) so that
+        custom entity types don't return 30+ irrelevant initiative-specific
+        columns with default values.
+        """
+        result = {}
+        for col_name in self._columns():
+            if col_name in self._SKIP_FIELDS or col_name == "id":
+                continue
+            val = getattr(self, col_name, None)
+            if val is None or val == "" or val == 0 or val is False:
+                continue
+            result[col_name] = val
+        for parsed in (self._parsed_meta(), self._parsed_custom()):
+            for k, v in parsed.items():
+                if v is not None and k not in result:
+                    result[k] = v
+        return result
 
 
 class Enrichment(Base):
@@ -106,6 +180,10 @@ class Project(Base):
     extra_links_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    __table_args__ = (
+        Index("ix_project_initiative", "initiative_id"),
+    )
+
     initiative: Mapped[Initiative] = relationship("Initiative", back_populates="projects")
     scores: Mapped[list[OutreachScore]] = relationship("OutreachScore", back_populates="project", cascade="all, delete-orphan")
 
@@ -132,6 +210,8 @@ class OutreachScore(Base):
     grade_tech_num: Mapped[float] = mapped_column(Float, default=5.0)
     grade_opportunity: Mapped[str] = mapped_column(String(3), default="")
     grade_opportunity_num: Mapped[float] = mapped_column(Float, default=5.0)
+    # Flexible dimension grades for custom scoring dimensions
+    dimension_grades_json: Mapped[str] = mapped_column(Text, default="{}")
     llm_model: Mapped[str] = mapped_column(String(100), default="")
     scored_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

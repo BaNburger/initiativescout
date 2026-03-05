@@ -6,11 +6,12 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
+
+from sqlalchemy import and_, delete, func, select
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-from sqlalchemy import and_, delete, func, select
 
 from scout import services
 from scout.db import (
@@ -24,16 +25,17 @@ from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import (
     ENTITY_CONFIG, GRADE_MAP, VALID_GRADES, Grade,
     LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
-    create_score_from_grades, default_prompts_for, valid_classifications,
+    create_score_from_grades, default_prompts_for, get_entity_config,
+    valid_classifications,
 )
 from scout.utils import json_parse
 
 log = logging.getLogger(__name__)
 
 
-def _entity_cfg() -> dict[str, str]:
-    """Return ENTITY_CONFIG for the current database's entity type."""
-    return ENTITY_CONFIG.get(get_entity_type(), ENTITY_CONFIG["initiative"])
+def _entity_cfg() -> dict:
+    """Return entity config for the current database's entity type."""
+    return get_entity_config(get_entity_type())
 
 
 # ---------------------------------------------------------------------------
@@ -43,11 +45,12 @@ def _entity_cfg() -> dict[str, str]:
 
 def _build_instructions(entity_type: str) -> str:
     """Compact instructions — details live in scout://overview resource."""
-    cfg = ENTITY_CONFIG.get(entity_type, ENTITY_CONFIG["initiative"])
+    cfg = get_entity_config(entity_type)
     return (
-        f"Scout: outreach intelligence for {cfg['context']}. "
+        f"Scout: sourcing, enrichment & scoring engine for {cfg['context']}. "
         "Read scout://overview for workflows, grading scale, and classifications. "
         "QUICK: get_overview() → get_work_queue() → process_queue(). "
+        "Use submit_enrichment() to store data you find via web search. "
         "All errors return {error, error_code, retryable, fix}."
     )
 
@@ -87,6 +90,50 @@ def _get_or_error(session, model, entity_id):
     if not obj:
         return None, _error(f"{model.__name__} {entity_id} not found", "NOT_FOUND")
     return obj, None
+
+
+def _seed_custom_prompts(entity_type: str, cfg: dict) -> None:
+    """Seed generic scoring prompts for a custom entity type."""
+    from scout.db import session_scope as _ss
+    from scout.models import ScoringPrompt
+    dims = cfg.get("dimensions", ["team", "tech", "opportunity"])
+    ctx = cfg.get("context", entity_type)
+    label = cfg.get("label", entity_type)
+    with _ss() as session:
+        for dim in dims:
+            existing = session.execute(
+                select(ScoringPrompt).where(ScoringPrompt.key == dim)
+            ).scalar_one_or_none()
+            if existing:
+                continue
+            is_last = dim == dims[-1]
+            extra_json = ""
+            if is_last:
+                extra_json = (
+                    ',\n  "classification": "<your classification>",\n'
+                    '  "contact_who": "<contact recommendation>",\n'
+                    '  "contact_channel": "<email|linkedin|event|website_form>",\n'
+                    '  "engagement_hook": "<specific opener>"'
+                )
+            prompt = (
+                f"You are evaluating the {dim.upper()} dimension of a {label} "
+                f"in the context of {ctx}.\n\n"
+                f"Assess quality and strength based on all available evidence.\n\n"
+                f"Valid grades: A+, A, A-, B+, B, B-, C+, C, C-, D\n"
+                f"(A+ = exceptional, D = no evidence)\n\n"
+                f"Respond with ONLY valid JSON:\n"
+                "{\n"
+                '  "grade": "<A+|A|A-|B+|B|B-|C+|C|C-|D>",\n'
+                '  "reasoning": "<2-3 sentences explaining the grade>"'
+                f'{extra_json}\n'
+                "}\n"
+            )
+            session.add(ScoringPrompt(
+                key=dim,
+                label=dim.replace("_", " ").title(),
+                content=prompt,
+            ))
+        session.commit()
 
 
 def _check_api_key() -> dict | None:
@@ -281,23 +328,29 @@ def scout_overview() -> str:
     lp = cfg["label_plural"]
     et = get_entity_type()
     cls_list = sorted(valid_classifications(et))
+    ecfg = get_entity_config(et)
+    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
     return json.dumps({
-        "system": f"Scout — Outreach Intelligence for {cfg['context'].title()}",
+        "system": f"Scout — Sourcing, Enrichment & Scoring Engine for {cfg['context'].title()}",
         "entity_type": et,
         "description": (
-            f"Scout discovers, enriches, and scores {lp} "
-            "for outreach. Contains profiles with web/GitHub enrichment "
-            "data and LLM-powered outreach verdicts."
+            f"Scout discovers, enriches, and scores {lp}. "
+            "Contains profiles with enrichment data and LLM-powered scoring verdicts. "
+            "Use submit_enrichment() to store data you find via your own web search."
         ),
         "data_model": {
             cfg["label"]: f"A {cfg['label']} record with profile, enrichments, scores, and projects.",
-            "enrichment": "Web-scraped data from website, team page, GitHub, and extra links.",
+            "enrichment": (
+                "Data attached to an entity — from automated scrapers or submitted by the LLM "
+                "via submit_enrichment(). Source type is freeform (website, github, linkedin, "
+                "patent_data, news, etc.)."
+            ),
             "project": f"A sub-project within a {cfg['label']}. Can be scored independently.",
             "outreach_score": "LLM-generated verdict, score (1-5), classification, reasoning.",
         },
         "grading_scale": {
             "grades": {g: GRADE_MAP[g] for g in sorted(VALID_GRADES, key=lambda g: GRADE_MAP[g])},
-            "dimensions": ["team", "tech", "opportunity"],
+            "dimensions": dims,
             "verdict_thresholds": {
                 "reach_out_now": "avg_grade <= 1.7",
                 "reach_out_soon": "avg_grade <= 2.7",
@@ -321,6 +374,12 @@ def scout_overview() -> str:
                 "3. score_initiative(id) — LLM scoring (3 parallel dimensions).",
                 "4. get_initiative(id) — inspect full details.",
             ],
+            "llm_enrichment": [
+                "1. Search the web for information about the entity.",
+                "2. submit_enrichment(id, source_type='...', content='...') — store what you found.",
+                "3. Repeat for different sources (LinkedIn, news, patents, etc.).",
+                "4. score_initiative(id) — score with enriched data.",
+            ],
             "llm_free_scoring": [
                 "1. get_scoring_dossier(id) — get prompts + dossiers.",
                 "2. Evaluate each dimension per its prompt.",
@@ -330,9 +389,10 @@ def scout_overview() -> str:
         "tools_by_frequency": {
             "core": "list_initiatives, get_initiative, process_queue, get_work_queue, get_overview",
             "single_item": "enrich_initiative, score_initiative, manage_initiative",
+            "llm_enrichment": "submit_enrichment — store data you find via web search",
             "scoring": "get_scoring_dossier, submit_score",
             "search": "find_similar",
-            "admin": "manage_project, manage_database, manage_settings",
+            "admin": "manage_project, manage_database, list_scoring_prompts, update_scoring_prompt, get_custom_columns, create_custom_column, export_initiatives, embed_all_tool, show_llm_config, configure_llm",
         },
         "performance": {
             "enrichment": f"2-10s per {cfg['label']} (web scraping).",
@@ -448,16 +508,18 @@ def manage_initiative(
         competitions, mode, relevance, custom_fields.
         Skips duplicates (same name+uni). Returns {created, skipped, items}.
     - update: Requires initiative_id. Pass updates={field: value} for changes.
+        For custom entity types, any key not in the standard columns is stored in metadata.
     - delete: Requires initiative_id + confirm=True.
 
     Args:
         action: "create", "bulk_create", "update", or "delete".
         initiative_id: Entity ID (required for update/delete).
         name: Entity name (required for create).
-        uni: University (required for create).
-        updates: Dict of field->value. Valid keys: faculty, sector, description,
+        uni: University/institution (optional; mainly for initiative/professor types).
+        updates: Dict of field->value. Standard keys: faculty, sector, description,
             website, email, team_page, team_size, linkedin, github_org, key_repos,
             sponsors, competitions, mode, relevance, custom_fields.
+            Any other keys are stored in metadata (for custom entity types).
         confirm: Must be True for delete.
         items: List of dicts for bulk_create. Each dict needs at least name and uni.
     """
@@ -510,24 +572,44 @@ def manage_initiative(
             return result
 
     if action == "create":
-        if not name or not uni:
-            return _error("name and uni are required for create", "VALIDATION_ERROR")
-        all_fields: dict = {"name": name, "uni": uni}
+        if not name:
+            return _error("name is required for create", "VALIDATION_ERROR")
+        all_fields: dict = {"name": name}
+        if uni:
+            all_fields["uni"] = uni
         custom_fields = None
+        metadata_fields: dict = {}
         if updates:
             updates = dict(updates)  # copy to avoid mutation
             custom_fields = updates.pop("custom_fields", None)
-            all_fields.update(updates)
+            # Separate standard fields from metadata fields
+            for k, v in updates.items():
+                if k in services.UPDATABLE_FIELDS:
+                    all_fields[k] = v
+                else:
+                    metadata_fields[k] = v
         with session_scope() as session:
             init = services.create_initiative(session, **all_fields)
             if custom_fields and isinstance(custom_fields, dict):
                 init.custom_fields_json = json.dumps(custom_fields)
-                session.flush()
+            # Store non-standard fields in metadata_json
+            if metadata_fields:
+                for k, v in metadata_fields.items():
+                    init.set_field(k, v)
+            session.flush()
             session.commit()
+            result_data: dict = {"id": init.id, "name": init.name}
+            if init.uni:
+                result_data["uni"] = init.uni
+            if init.website:
+                result_data["website"] = init.website
+            if init.field("github_org"):
+                result_data["github_org"] = init.field("github_org")
+            if metadata_fields:
+                result_data["metadata"] = metadata_fields
             result = _suggest(
-                {"id": init.id, "name": init.name, "uni": init.uni,
-                 "website": init.website or None, "github_org": init.github_org or None},
-                _next("enrich_initiative", "Fetch web/GitHub data", initiative_id=init.id),
+                result_data,
+                _next("enrich_initiative", "Fetch web data or submit_enrichment()", initiative_id=init.id),
             )
             result["_db"] = _db_pulse(session)
             return result
@@ -593,9 +675,11 @@ def manage_initiative(
 
 @mcp.tool(annotations=_WRITE)
 async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
-    """Fetch enrichment data from website, team page, GitHub, and extra links.
+    """Fetch enrichment data from website, GitHub, extra links, plus extended sources.
 
-    WHAT: Scrapes all known URLs. Takes 2-10s. Auto-enables discovery when no URLs are configured.
+    WHAT: Scrapes all known URLs + extracts structured data (JSON-LD/OpenGraph), tech stack,
+    DNS records, sitemap structure, career pages, and deep git analysis (README, deps, releases).
+    Takes 5-20s. Auto-enables discovery when no URLs are configured.
     WHEN: Before score_initiative(). Discovery finds LinkedIn, GitHub, HuggingFace URLs via DuckDuckGo.
 
     Args:
@@ -611,8 +695,8 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         auto_discover = False
         if not discover:
             has_urls = bool(
-                (init.website or "").strip()
-                or (init.github_org or "").strip()
+                (init.field("website") or "").strip()
+                or (init.field("github_org") or "").strip()
                 or json_parse(init.extra_links_json)
             )
             if not has_urls:
@@ -637,17 +721,20 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         session.commit()
 
         succeeded = [e.source_type for e in new]
-        possible = {"website", "team_page", "github"}
+        possible = {"website", "team_page", "github",
+                    "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"}
         extra = json_parse(init.extra_links_json)
         if extra:
             possible.update(k.removesuffix("_urls").removesuffix("_url") for k in extra if extra[k])
         not_configured = []
-        if not (init.website or "").strip():
-            not_configured.append("website")
-        if not (init.team_page or "").strip():
+        has_website = bool((init.field("website") or "").strip())
+        has_github = bool((init.field("github_org") or "").strip())
+        if not has_website:
+            not_configured.extend(["website", "structured_data", "tech_stack", "dns", "sitemap", "careers"])
+        if not (init.field("team_page") or "").strip():
             not_configured.append("team_page")
-        if not (init.github_org or "").strip():
-            not_configured.append("github")
+        if not has_github:
+            not_configured.extend(["github", "git_deep"])
         failed = sorted(possible - set(succeeded) - set(not_configured))
 
         result = {
@@ -663,6 +750,65 @@ async def enrich_initiative(initiative_id: int, discover: bool = False) -> dict:
         return _suggest(
             result,
             _next("score_initiative", "Score using enrichment data", initiative_id=init.id),
+        )
+
+
+@mcp.tool(annotations=_WRITE)
+def submit_enrichment(
+    entity_id: int,
+    source_type: str,
+    content: str,
+    source_url: str = "",
+    summary: str = "",
+) -> dict:
+    """Store enrichment data that you (the LLM) found via your own research.
+
+    Use this after you've searched the web, read documents, or gathered
+    information about an entity. This persists your findings so they
+    feed into dossiers and scoring.
+
+    WHEN: After using web search/URL reading to gather info about an entity.
+    WHY: Your findings become part of the scoring dossier automatically.
+
+    Args:
+        entity_id: Entity ID to enrich.
+        source_type: Category label (e.g. "web_research", "linkedin", "patent_data",
+            "citation_graph", "news", "funding", or any custom string).
+        content: The information you found (raw text, extracted data, etc.).
+        source_url: URL where you found it (recommended but optional).
+        summary: Brief summary (optional; auto-truncated from content if omitted).
+    """
+    if not content or not content.strip():
+        return _error("Content cannot be empty", "VALIDATION_ERROR")
+    if not source_type or not source_type.strip():
+        return _error("source_type cannot be empty", "VALIDATION_ERROR")
+
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, entity_id)
+        if err:
+            return err
+
+        enrichment = Enrichment(
+            initiative_id=init.id,
+            source_type=source_type.strip(),
+            source_url=source_url.strip() if source_url else None,
+            raw_text=content.strip()[:15000],
+            summary=(summary.strip() if summary else content.strip()[:500]),
+            fetched_at=datetime.now(UTC),
+        )
+        session.add(enrichment)
+        session.commit()
+
+        return _suggest(
+            {
+                "entity_id": init.id,
+                "entity_name": init.name,
+                "enrichment_id": enrichment.id,
+                "source_type": enrichment.source_type,
+                "content_length": len(enrichment.raw_text),
+                "_db": _db_pulse(session),
+            },
+            _next("score_initiative", "Score with new enrichment data", initiative_id=init.id),
         )
 
 
@@ -738,67 +884,126 @@ def get_scoring_dossier(initiative_id: int) -> dict:
         et = get_entity_type()
         defaults = default_prompts_for(et)
 
-        team_prompt = prompts.get("team", defaults["team"][1])
-        tech_prompt = prompts.get("tech", defaults["tech"][1])
-        opp_prompt = prompts.get("opportunity", defaults["opportunity"][1])
+        ecfg = get_entity_config(et)
+        dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+
+        # Build dimension dossiers: first dim gets team dossier, second gets tech,
+        # last gets full (includes all enrichments for big-picture assessment).
+        dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
+        dimensions_out = {}
+        for i, dim in enumerate(dims):
+            builder_idx = min(i, len(dossier_builders) - 1)
+            # Last dimension always gets the full dossier
+            if i == len(dims) - 1:
+                builder_idx = len(dossier_builders) - 1
+            builder = dossier_builders[builder_idx]
+            prompt = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
+            dimensions_out[dim] = {"prompt": prompt, "dossier": builder(init, enrichments, et)}
+
+        # Build grade args hint for submit_score
+        grade_args = {f"grade_{dim}": "" for dim in dims}
+        grade_args["classification"] = ""
+
         return _suggest(
             {
                 "initiative_id": init.id, "initiative_name": init.name,
                 "entity_type": et, "enriched": len(enrichments) > 0,
-                "dimensions": {
-                    "team": {"prompt": team_prompt, "dossier": build_team_dossier(init, enrichments, et)},
-                    "tech": {"prompt": tech_prompt, "dossier": build_tech_dossier(init, enrichments, et)},
-                    "opportunity": {"prompt": opp_prompt, "dossier": build_full_dossier(init, enrichments, et)},
-                },
+                "dimensions": dimensions_out,
             },
             _next("submit_score", "Submit your evaluation",
-                  initiative_id=init.id,
-                  grade_team="", grade_tech="", grade_opportunity="", classification=""),
+                  initiative_id=init.id, **grade_args),
         )
 
 
 @mcp.tool(annotations=_WRITE)
 def submit_score(
     initiative_id: int,
-    grade_team: str, grade_tech: str, grade_opportunity: str,
-    classification: str,
+    grade_team: str = "", grade_tech: str = "", grade_opportunity: str = "",
+    classification: str = "",
     contact_who: str = "", contact_channel: str = "website_form",
     engagement_hook: str = "", reasoning: str = "",
+    dimension_grades: dict | None = None,
 ) -> dict:
     """Submit externally-evaluated scores. No LLM call needed.
 
     WHAT: Validates grades, computes verdict/score deterministically, saves the score.
     WHEN: After get_scoring_dossier() when you've evaluated the dossiers.
 
+    Supports both standard and custom scoring dimensions:
+    - Standard (initiative/professor): use grade_team, grade_tech, grade_opportunity.
+    - Custom entity types: use dimension_grades={"dim_name": "grade", ...}.
+      The dimension names must match those from get_scoring_dossier().
+
     Args:
         initiative_id: Entity ID.
-        grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D).
-        grade_tech: Tech grade (same scale).
-        grade_opportunity: Opportunity grade (same scale).
-        classification: Entity classification. See scout://overview for valid values.
+        grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D). For standard types.
+        grade_tech: Tech grade (same scale). For standard types.
+        grade_opportunity: Opportunity grade (same scale). For standard types.
+        classification: Entity classification (optional for custom types).
         contact_who: Recommended contact person/role.
         contact_channel: email, linkedin, event, or website_form.
         engagement_hook: Suggested opening line.
-        reasoning: Brief reasoning for the opportunity assessment.
+        reasoning: Brief reasoning for the assessment.
+        dimension_grades: Dict of dimension->grade for custom entity types.
+            Example: {"novelty": "A", "methodology": "B+", "impact": "A-"}.
     """
-    for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
-                       ("grade_opportunity", grade_opportunity)]:
-        normalized = raw.strip().upper().replace(" ", "")
-        if normalized not in VALID_GRADES:
-            return _error(f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
-                          "VALIDATION_ERROR")
+    et = get_entity_type()
+    ecfg = get_entity_config(et)
+    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+    is_standard = (dims == ["team", "tech", "opportunity"])
 
-    grades = {
-        "team": Grade.parse(grade_team),
-        "tech": Grade.parse(grade_tech),
-        "opportunity": Grade.parse(grade_opportunity),
-    }
+    # Build grades dict from either standard params or dimension_grades
+    grades: dict[str, Grade] = {}
+    if dimension_grades and isinstance(dimension_grades, dict):
+        # Custom dimensions
+        for dim, raw_grade in dimension_grades.items():
+            raw_str = str(raw_grade).strip().upper().replace(" ", "")
+            if raw_str not in VALID_GRADES:
+                return _error(
+                    f"Invalid grade for '{dim}': {raw_grade!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
+                    "VALIDATION_ERROR")
+            grades[dim] = Grade.parse(raw_grade)
+    elif is_standard:
+        # Standard team/tech/opportunity
+        for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
+                           ("grade_opportunity", grade_opportunity)]:
+            if not raw:
+                return _error(f"{label} is required", "VALIDATION_ERROR")
+            normalized = raw.strip().upper().replace(" ", "")
+            if normalized not in VALID_GRADES:
+                return _error(
+                    f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
+                    "VALIDATION_ERROR")
+        grades = {
+            "team": Grade.parse(grade_team),
+            "tech": Grade.parse(grade_tech),
+            "opportunity": Grade.parse(grade_opportunity),
+        }
+    else:
+        # Non-standard dims, but no dimension_grades provided — try grade_ params
+        # as positional mapping to configured dimensions
+        positional = [grade_team, grade_tech, grade_opportunity]
+        for i, dim in enumerate(dims):
+            raw = positional[i] if i < len(positional) else ""
+            if not raw:
+                return _error(
+                    f"Missing grade for dimension '{dim}'. Use dimension_grades={{'{dim}': 'grade'}} "
+                    f"or provide grades positionally.",
+                    "VALIDATION_ERROR")
+            normalized = raw.strip().upper().replace(" ", "")
+            if normalized not in VALID_GRADES:
+                return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
+            grades[dim] = Grade.parse(raw)
 
-    classification = classification.strip().lower()
-    valid_cls = valid_classifications(get_entity_type())
-    if classification not in valid_cls:
-        return _error(f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
-                      "VALIDATION_ERROR")
+    # Validate classification (relaxed for custom types)
+    if classification:
+        classification = classification.strip().lower()
+        valid_cls = valid_classifications(et)
+        # For custom types, accept any classification
+        if is_standard and classification not in valid_cls:
+            return _error(
+                f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
+                "VALIDATION_ERROR")
 
     contact_channel = contact_channel.strip().lower()
     if contact_channel and contact_channel not in VALID_CHANNELS:
@@ -828,13 +1033,22 @@ def submit_score(
         session.add(outreach)
         session.commit()
 
-        result = {
+        result: dict = {
             "initiative_id": init.id, "initiative_name": init.name,
             "verdict": outreach.verdict, "score": outreach.score,
             "classification": outreach.classification,
-            "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-            "grade_opportunity": outreach.grade_opportunity,
         }
+        # Include dimension grades — use dimension_grades_json for full picture
+        dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
+        if dim_grades_stored:
+            result["dimension_grades"] = {
+                k: v.get("letter", "") for k, v in dim_grades_stored.items()
+            }
+        else:
+            result.update({
+                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+                "grade_opportunity": outreach.grade_opportunity,
+            })
         result["_db"] = _db_pulse(session)
         return result
 
@@ -1098,22 +1312,9 @@ def find_similar(
     from scout.embedder import find_similar as _find_similar
 
     with session_scope() as session:
-        id_mask = None
-        if uni or verdict:
-            q_filter = select(Initiative.id)
-            if uni:
-                us = {u.strip().upper() for u in uni.split(",")}
-                q_filter = q_filter.where(func.upper(Initiative.uni).in_(us))
-            if verdict:
-                ls = services._latest_score_subquery()
-                vs = {v.strip().lower() for v in verdict.split(",")}
-                q_filter = q_filter.join(
-                    ls, and_(Initiative.id == ls.c.initiative_id, ls.c.rn == 1)
-                ).where(ls.c.verdict.in_(vs))
-            rows = session.execute(q_filter).scalars().all()
-            id_mask = set(rows)
-            if not id_mask:
-                return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
+        id_mask = services.build_similarity_id_mask(session, uni=uni, verdict=verdict)
+        if id_mask is not None and not id_mask:
+            return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
 
         results = _find_similar(
             query_text=query, initiative_id=initiative_id,
@@ -1123,7 +1324,7 @@ def find_similar(
         if not results:
             return _suggest(
                 {"results": []},
-                _next("manage_settings", "Build embeddings first", action="rebuild_embeddings"),
+                _next("embed_all_tool", "Build embeddings first"),
             )
 
         ids = [r[0] for r in results]
@@ -1261,13 +1462,15 @@ def manage_database(
     action: str,
     name: str | None = None,
     entity_type: str = "initiative",
+    context: str = "",
+    dimensions: str = "",
 ) -> dict:
     """List, select, create, delete, backup, or restore Scout databases.
 
     ACTIONS:
     - list: Show all databases and which is active.
     - select: Switch to a database (creates if needed). Requires name.
-    - create: Create a new empty database. Requires name.
+    - create: Create a new empty database. Requires name. Supports ANY entity type.
     - delete: Delete a database. Requires name. Cannot delete the active database.
     - backup: Create a timestamped backup copy. Requires name.
     - list_backups: Show all available backups with metadata.
@@ -1303,15 +1506,23 @@ def manage_database(
             name = validate_db_name(name)
         except ValueError as exc:
             return _error(str(exc), "VALIDATION_ERROR")
-        if entity_type not in ENTITY_CONFIG:
-            return _error(
-                f"Unknown entity_type: {entity_type!r}. Valid: {', '.join(sorted(ENTITY_CONFIG))}",
-                "VALIDATION_ERROR",
-            )
         try:
             create_database(name, entity_type=entity_type)
         except ValueError as exc:
             return _error(str(exc), "ALREADY_EXISTS")
+        # Store custom entity config for non-built-in types
+        if entity_type not in ENTITY_CONFIG:
+            from scout.db import set_entity_config_json
+            custom_cfg = {
+                "label": entity_type.replace("_", " "),
+                "label_plural": entity_type.replace("_", " ") + "s",
+                "context": context or entity_type.replace("_", " "),
+            }
+            if dimensions:
+                custom_cfg["dimensions"] = [d.strip() for d in dimensions.split(",") if d.strip()]
+            set_entity_config_json(custom_cfg)
+            # Seed scoring prompts for custom dimensions
+            _seed_custom_prompts(entity_type, custom_cfg)
         mcp._mcp_server.instructions = _build_instructions(entity_type)
         return {"current": current_db_name(), "entity_type": entity_type,
                 "message": f"Created and switched to '{name}'"}
@@ -1362,163 +1573,155 @@ def manage_database(
 
 
 # ---------------------------------------------------------------------------
-# Tools: Manage Settings
+# Tools: Scoring Prompts
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_DESTRUCTIVE)
-async def manage_settings(
-    action: str,
-    # Column params
-    column_id: int | None = None, key: str | None = None, label: str | None = None,
-    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
-    # Prompt params
-    content: str | None = None,
-    # Export params
-    verdict: str | None = None, uni: str | None = None,
-    include_enrichments: bool = True, include_scores: bool = True, include_extras: bool = False,
-    # Scraper params
-    school: str | None = None, limit: int = 50,
-    # Prompt list param
-    compact: bool = False,
-    # LLM config params
-    provider: str | None = None, model: str | None = None,
-    api_key: str | None = None, base_url: str | None = None,
-) -> dict | list:
-    """Admin operations: custom columns, scoring prompts, LLM config, export, embeddings, TUM scraper.
-
-    ACTIONS:
-    - list_columns: Show custom column definitions.
-    - create_column: Create column. Requires key, label.
-    - update_column: Update column. Requires column_id.
-    - delete_column: Delete column. Requires column_id.
-    - list_prompts: Show scoring prompt definitions.
-    - update_prompt: Update prompt. Requires key ("team"/"tech"/"opportunity"), content.
-    - configure_llm: Set LLM provider/model/api_key at runtime. All params optional.
-    - show_llm_config: Show current LLM configuration (keys masked).
-    - export: Export to XLSX. Optional verdict, uni filters.
-    - rebuild_embeddings: Rebuild all dense embeddings.
-    - scrape_tum: Scrape TUM professor directory. Optional school filter, limit.
+@mcp.tool(annotations=_READ)
+def list_scoring_prompts(compact: bool = False) -> list | dict:
+    """List scoring prompt definitions.
 
     Args:
-        action: The operation to perform (see above).
-        column_id: Custom column ID (for update_column/delete_column).
-        key: Column key or prompt key.
-        label: Column display label.
-        col_type: Column type: text, number, boolean, url.
-        show_in_list: Show column in list view.
-        sort_order: Column display order.
-        content: New prompt content (for update_prompt).
-        verdict: Export filter (comma-separated).
-        uni: Export filter (comma-separated).
-        include_enrichments: Include enrichments in export.
-        include_scores: Include scores in export.
-        include_extras: Include extra fields in export.
-        school: TUM school filter (CIT, ED, LS, MGT, MED, NAT).
-        limit: Scraper limit.
-        compact: For list_prompts, return only key/label/updated_at.
-        provider: LLM provider (anthropic, openai, openai_compatible, gemini).
-        model: LLM model name.
-        api_key: API key for the provider.
-        base_url: Custom base URL (for openai_compatible).
+        compact: If True, return only key/label/updated_at (omit full content).
     """
-    action = (action or "").strip().lower()
-
-    if action == "show_llm_config":
-        p = os.environ.get("LLM_PROVIDER", "anthropic")
-        m = os.environ.get("LLM_MODEL", "")
-        has_key = bool(
-            os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or os.environ.get("GOOGLE_API_KEY")
-            or os.environ.get("GEMINI_API_KEY")
-        )
-        return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
-                "base_url": os.environ.get("OPENAI_BASE_URL", "")}
-
-    if action == "configure_llm":
-        if provider:
-            os.environ["LLM_PROVIDER"] = provider
-        if model:
-            os.environ["LLM_MODEL"] = model
-        if api_key:
-            p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
-            if p == "anthropic":
-                os.environ["ANTHROPIC_API_KEY"] = api_key
-            elif p == "gemini":
-                os.environ["GOOGLE_API_KEY"] = api_key
-            else:
-                os.environ["OPENAI_API_KEY"] = api_key
-        if base_url:
-            os.environ["OPENAI_BASE_URL"] = base_url
-        return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
-                "model": os.environ.get("LLM_MODEL", "") or "(default)",
-                "api_key_set": bool(api_key or _check_api_key() is None)}
-
-    if action == "list_columns":
-        with session_scope() as session:
-            return services.get_custom_columns(session, database=current_db_name())
-
-    if action == "create_column":
-        if not key or not label:
-            return _error("key and label required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            result = services.create_custom_column(
-                session, key=key, label=label, col_type=col_type,
-                show_in_list=show_in_list, sort_order=sort_order,
-                database=current_db_name(),
-            )
-            if result is None:
-                return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
-            session.commit()
-            return result
-
-    if action == "update_column":
-        if column_id is None:
-            return _error("column_id required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            result = services.update_custom_column(
-                session, column_id, label=label, col_type=col_type,
-                show_in_list=show_in_list, sort_order=sort_order,
-            )
-            if result is None:
-                return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-            session.commit()
-            return result
-
-    if action == "delete_column":
-        if column_id is None:
-            return _error("column_id required", "VALIDATION_ERROR")
-        with session_scope() as session:
-            if not services.delete_custom_column(session, column_id):
-                return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-            session.commit()
-            return {"ok": True, "deleted_column_id": column_id}
-
-    # --- Scoring Prompts ---
-    if action == "list_prompts":
+    try:
         with session_scope() as session:
             prompts_list = services.get_scoring_prompts(session)
             if compact:
                 return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
                         for p in prompts_list]
             return prompts_list
+    except Exception as exc:
+        return _error(f"Failed to list scoring prompts: {exc}", "DB_ERROR")
 
-    if action == "update_prompt":
-        if not key or not content:
-            return _error("key and content required", "VALIDATION_ERROR")
+
+@mcp.tool(annotations=_WRITE)
+def update_scoring_prompt(key: str, content: str) -> dict:
+    """Update a scoring prompt's content.
+
+    Args:
+        key: Prompt key (e.g. "team", "tech", "opportunity").
+        content: New prompt content text.
+    """
+    with session_scope() as session:
+        result = services.update_scoring_prompt(session, key, content)
+        if result is None:
+            return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
+        session.commit()
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Tools: Custom Columns
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READ)
+def get_custom_columns() -> list:
+    """List custom column definitions for the current database."""
+    try:
         with session_scope() as session:
-            result = services.update_scoring_prompt(session, key, content)
-            if result is None:
-                return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
-            session.commit()
-            return result
+            return services.get_custom_columns(session, database=current_db_name())
+    except Exception as exc:
+        return [_error(f"Failed to list custom columns: {exc}", "DB_ERROR")]
 
-    # --- Export ---
-    if action == "export":
-        from scout.db import DATA_DIR
-        from scout.exporter import export_xlsx
 
+@mcp.tool(annotations=_WRITE)
+def create_custom_column(
+    key: str, label: str,
+    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+) -> dict:
+    """Create a custom column definition.
+
+    Args:
+        key: Unique column key (e.g. "funding_stage").
+        label: Display label (e.g. "Funding Stage").
+        col_type: Column type: text, number, boolean, url.
+        show_in_list: Show column in list view.
+        sort_order: Column display order.
+    """
+    with session_scope() as session:
+        result = services.create_custom_column(
+            session, key=key, label=label, col_type=col_type,
+            show_in_list=show_in_list, sort_order=sort_order,
+            database=current_db_name(),
+        )
+        if result is None:
+            return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
+        session.commit()
+        return result
+
+
+@mcp.tool(annotations=_WRITE)
+def update_custom_column(
+    column_id: int,
+    label: str | None = None, col_type: str | None = None,
+    show_in_list: bool | None = None, sort_order: int | None = None,
+) -> dict:
+    """Update a custom column definition.
+
+    Args:
+        column_id: The column ID to update.
+        label: New display label.
+        col_type: New column type.
+        show_in_list: New visibility setting.
+        sort_order: New display order.
+    """
+    kwargs = {}
+    if label is not None:
+        kwargs["label"] = label
+    if col_type is not None:
+        kwargs["col_type"] = col_type
+    if show_in_list is not None:
+        kwargs["show_in_list"] = show_in_list
+    if sort_order is not None:
+        kwargs["sort_order"] = sort_order
+    with session_scope() as session:
+        result = services.update_custom_column(session, column_id, **kwargs)
+        if result is None:
+            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+        session.commit()
+        return result
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+def delete_custom_column(column_id: int) -> dict:
+    """Delete a custom column definition.
+
+    Args:
+        column_id: The column ID to delete.
+    """
+    with session_scope() as session:
+        if not services.delete_custom_column(session, column_id):
+            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+        session.commit()
+        return {"ok": True, "deleted_column_id": column_id}
+
+
+# ---------------------------------------------------------------------------
+# Tools: Export
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READ)
+def export_initiatives(
+    verdict: str | None = None, uni: str | None = None,
+    include_enrichments: bool = True, include_scores: bool = True,
+    include_extras: bool = False,
+) -> dict:
+    """Export entities to XLSX file.
+
+    Args:
+        verdict: Filter by verdict (comma-separated, e.g. "reach_out_now,reach_out_soon").
+        uni: Filter by university (comma-separated).
+        include_enrichments: Include enrichment summary column.
+        include_scores: Include score columns.
+        include_extras: Include extra profile fields.
+    """
+    from scout.db import DATA_DIR
+    from scout.exporter import export_xlsx
+
+    try:
         with session_scope() as session:
             buf = export_xlsx(
                 session, verdict=verdict, uni=uni,
@@ -1531,60 +1734,119 @@ async def manage_settings(
         out_path = DATA_DIR / filename
         out_path.write_bytes(buf.getvalue())
         return {"ok": True, "file": str(out_path), "filename": filename}
+    except ImportError:
+        return _error("openpyxl not installed. Run: pip install scout[xlsx]", "MISSING_DEP")
+    except Exception as exc:
+        return _error(f"Export failed: {exc}", "EXPORT_ERROR")
 
-    # --- Embeddings ---
-    if action == "rebuild_embeddings":
-        from scout.embedder import embed_all
-        with session_scope() as session:
-            try:
-                count = embed_all(session)
-            except Exception as exc:
-                return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
-            return _suggest(
-                {"ok": True, "embedded": count},
-                _next("find_similar", "Try semantic search", query=""),
-            )
 
-    # --- TUM Scraper ---
-    if action == "scrape_tum":
+# ---------------------------------------------------------------------------
+# Tools: Embeddings
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+def embed_all_tool() -> dict:
+    """Build or rebuild dense embeddings for all entities (enables semantic search)."""
+    from scout.embedder import embed_all
+    with session_scope() as session:
         try:
-            from scout.scrapers import scrape_tum_professors as _scrape
-        except ImportError as exc:
-            return _error(f"Scraper dependency missing: {exc}", "DEPENDENCY_MISSING")
-
-        try:
-            professors = await _scrape()
+            count = embed_all(session)
         except Exception as exc:
-            return _error(f"Scrape failed: {exc}", "SCRAPE_ERROR", retryable=True)
-
-        if school:
-            professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
-        professors = professors[:max(1, min(limit, 500))]
-
-        created = 0
-        skipped = 0
-        with session_scope() as session:
-            for prof in professors:
-                existing = session.execute(
-                    select(Initiative).where(Initiative.name == prof["name"])
-                ).scalars().first()
-                if existing:
-                    skipped += 1
-                    continue
-                init = Initiative(
-                    name=prof["name"], uni=prof.get("uni", "TUM"),
-                    faculty=prof.get("faculty", ""), website=prof.get("website", ""),
-                )
-                session.add(init)
-                created += 1
-            session.commit()
-
+            return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
         return _suggest(
-            {"created": created, "skipped_duplicates": skipped, "total_found": len(professors)},
-            _next("process_queue", "Enrich and score imported professors"),
+            {"ok": True, "embedded": count},
+            _next("find_similar", "Try semantic search", query=""),
         )
 
-    return _error(f"Unknown action: {action!r}.", "VALIDATION_ERROR")
+
+# ---------------------------------------------------------------------------
+# Tools: LLM Configuration
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_READ)
+def show_llm_config() -> dict:
+    """Show current LLM provider configuration (API keys masked)."""
+    p = os.environ.get("LLM_PROVIDER", "anthropic")
+    m = os.environ.get("LLM_MODEL", "")
+    has_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+    )
+    return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
+            "base_url": os.environ.get("OPENAI_BASE_URL", "")}
+
+
+@mcp.tool(annotations=_WRITE)
+def configure_llm(
+    provider: str | None = None, model: str | None = None,
+    api_key: str | None = None, base_url: str | None = None,
+) -> dict:
+    """Set LLM provider/model/api_key at runtime.
+
+    Args:
+        provider: LLM provider (anthropic, openai, openai_compatible, gemini).
+        model: LLM model name.
+        api_key: API key for the provider.
+        base_url: Custom base URL (for openai_compatible).
+    """
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider
+    if model:
+        os.environ["LLM_MODEL"] = model
+    if api_key:
+        p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
+        if p == "anthropic":
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+        elif p == "gemini":
+            os.environ["GOOGLE_API_KEY"] = api_key
+        else:
+            os.environ["OPENAI_API_KEY"] = api_key
+    if base_url:
+        os.environ["OPENAI_BASE_URL"] = base_url
+    return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
+            "model": os.environ.get("LLM_MODEL", "") or "(default)",
+            "api_key_set": bool(api_key or _check_api_key() is None)}
+
+
+# ---------------------------------------------------------------------------
+# Tools: TUM Scraper
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+async def scrape_tum_professors(school: str | None = None, limit: int = 50) -> dict:
+    """Scrape TUM professor directory and import into the current database.
+
+    Args:
+        school: Filter by TUM school (CIT, ED, LS, MGT, MED, NAT).
+        limit: Maximum professors to import (default 50, max 500).
+    """
+    try:
+        from scout.scrapers import scrape_tum_professors as _scrape
+    except ImportError as exc:
+        return _error(f"Scraper dependency missing: {exc}", "DEPENDENCY_MISSING")
+
+    try:
+        professors = await _scrape()
+    except Exception as exc:
+        return _error(f"Scrape failed: {exc}", "SCRAPE_ERROR", retryable=True)
+
+    if school:
+        professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
+    professors = professors[:max(1, min(limit, 500))]
+
+    with session_scope() as session:
+        result = services.import_scraped_entities(session, professors)
+        session.commit()
+
+    return _suggest(
+        {**result, "total_found": len(professors)},
+        _next("process_queue", "Enrich and score imported professors"),
+    )
 
 
 # ---------------------------------------------------------------------------
