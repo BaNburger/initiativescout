@@ -135,7 +135,7 @@ class TestEnrichExtraLinks:
         """Keys like website_urls and github_urls should be skipped."""
         from scout.enricher import enrich_extra_links
 
-        with patch("scout.enricher._enrich_page", new_callable=AsyncMock) as mock_enrich:
+        with patch("scout.enricher._website._enrich_page", new_callable=AsyncMock) as mock_enrich:
             mock_enrich.return_value = None
             await enrich_extra_links(sample_initiative, crawler=None)
 
@@ -161,7 +161,7 @@ class TestEnrichExtraLinks:
             fetched_at=datetime.now(UTC),
         )
 
-        with patch("scout.enricher._enrich_page", new_callable=AsyncMock) as mock_enrich:
+        with patch("scout.enricher._website._enrich_page", new_callable=AsyncMock) as mock_enrich:
             mock_enrich.return_value = fake_enrichment
             results = await enrich_extra_links(sample_initiative, crawler=None)
 
@@ -176,7 +176,7 @@ class TestEnrichExtraLinks:
         """linkedin_urls should become source_type='linkedin'."""
         from scout.enricher import enrich_extra_links
 
-        with patch("scout.enricher._enrich_page", new_callable=AsyncMock) as mock_enrich:
+        with patch("scout.enricher._website._enrich_page", new_callable=AsyncMock) as mock_enrich:
             mock_enrich.return_value = None
             await enrich_extra_links(sample_initiative, crawler=None)
 
@@ -200,7 +200,7 @@ class TestEnrichExtraLinks:
         """Should not raise if individual crawls fail."""
         from scout.enricher import enrich_extra_links
 
-        with patch("scout.enricher._enrich_page", new_callable=AsyncMock) as mock_enrich:
+        with patch("scout.enricher._website._enrich_page", new_callable=AsyncMock) as mock_enrich:
             mock_enrich.side_effect = Exception("network error")
             results = await enrich_extra_links(sample_initiative, crawler=None)
             assert results == []
@@ -223,8 +223,8 @@ class TestDiscoverUrls:
             {"href": "https://example.com/irrelevant", "title": "Other", "body": "..."},
         ]
 
-        with patch("scout.enricher._DDGS_AVAILABLE", True), \
-             patch("scout.enricher._ddg_search", new_callable=AsyncMock) as mock_search:
+        with patch("scout.enricher._discovery._DDGS_AVAILABLE", True), \
+             patch("scout.enricher._discovery._ddg_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = fake_results
             discovered = await discover_urls(sample_initiative)
 
@@ -243,8 +243,8 @@ class TestDiscoverUrls:
             {"href": "https://instagram.com/testbot_official", "title": "TestBot", "body": "..."},
         ]
 
-        with patch("scout.enricher._DDGS_AVAILABLE", True), \
-             patch("scout.enricher._ddg_search", new_callable=AsyncMock) as mock_search:
+        with patch("scout.enricher._discovery._DDGS_AVAILABLE", True), \
+             patch("scout.enricher._discovery._ddg_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = fake_results
             discovered = await discover_urls(sample_initiative)
 
@@ -259,7 +259,7 @@ class TestDiscoverUrls:
         session.add(init)
         session.flush()
 
-        with patch("scout.enricher._DDGS_AVAILABLE", True):
+        with patch("scout.enricher._discovery._DDGS_AVAILABLE", True):
             discovered = await discover_urls(init)
         assert discovered == {}
 
@@ -268,7 +268,7 @@ class TestDiscoverUrls:
         """Should raise ImportError when ddgs is not installed."""
         from scout.enricher import discover_urls
 
-        with patch("scout.enricher._DDGS_AVAILABLE", False):
+        with patch("scout.enricher._discovery._DDGS_AVAILABLE", False):
             with pytest.raises(ImportError, match="ddgs"):
                 await discover_urls(sample_initiative)
 
@@ -277,8 +277,8 @@ class TestDiscoverUrls:
         """Should return empty dict on search failure."""
         from scout.enricher import discover_urls
 
-        with patch("scout.enricher._DDGS_AVAILABLE", True), \
-             patch("scout.enricher._ddg_search", new_callable=AsyncMock) as mock_search:
+        with patch("scout.enricher._discovery._DDGS_AVAILABLE", True), \
+             patch("scout.enricher._discovery._ddg_search", new_callable=AsyncMock) as mock_search:
             mock_search.side_effect = Exception("network error")
             discovered = await discover_urls(sample_initiative)
         assert discovered == {}
@@ -295,7 +295,7 @@ class TestOpenCrawler:
         """Should yield None when crawl4ai is not installed."""
         from scout.enricher import open_crawler
 
-        with patch("scout.enricher._CRAWL4AI_AVAILABLE", False):
+        with patch("scout.enricher._website._CRAWL4AI_AVAILABLE", False):
             async with open_crawler() as crawler:
                 assert crawler is None
 
@@ -309,9 +309,9 @@ class TestOpenCrawler:
         mock_crawler_instance.__aexit__ = AsyncMock(return_value=False)
         mock_browser_config = MagicMock()
 
-        with patch("scout.enricher._CRAWL4AI_AVAILABLE", True), \
-             patch("scout.enricher.BrowserConfig", mock_browser_config, create=True), \
-             patch("scout.enricher.AsyncWebCrawler", return_value=mock_crawler_instance, create=True):
+        with patch("scout.enricher._website._CRAWL4AI_AVAILABLE", True), \
+             patch("scout.enricher._website.BrowserConfig", mock_browser_config, create=True), \
+             patch("scout.enricher._website.AsyncWebCrawler", return_value=mock_crawler_instance, create=True):
             async with open_crawler() as crawler:
                 assert crawler is mock_crawler_instance
 
@@ -327,7 +327,7 @@ class TestCrawl4aiFetch:
     def _patch_crawl4ai(self):
         """Context manager that ensures CrawlerRunConfig is available."""
         mock_config_class = MagicMock()
-        return patch("scout.enricher.CrawlerRunConfig", mock_config_class, create=True)
+        return patch("scout.enricher._website.CrawlerRunConfig", mock_config_class, create=True)
 
     @pytest.mark.asyncio
     async def test_returns_markdown_on_success(self):
@@ -420,8 +420,8 @@ class TestEnrichPageWithCrawler:
         """Should use Crawl4AI when crawler is provided and crawl4ai is available."""
         from scout.enricher import _enrich_page
 
-        with patch("scout.enricher._CRAWL4AI_AVAILABLE", True), \
-             patch("scout.enricher._crawl4ai_fetch", new_callable=AsyncMock) as mock_fetch:
+        with patch("scout.enricher._website._CRAWL4AI_AVAILABLE", True), \
+             patch("scout.enricher._website._crawl4ai_fetch", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = "# Crawled Content\nHello world"
             mock_crawler = MagicMock()
 
@@ -439,10 +439,10 @@ class TestEnrichPageWithCrawler:
         """Should fall back to httpx when crawl4ai returns None."""
         from scout.enricher import _enrich_page
 
-        with patch("scout.enricher._CRAWL4AI_AVAILABLE", True), \
-             patch("scout.enricher._crawl4ai_fetch", new_callable=AsyncMock) as mock_c4a, \
-             patch("scout.enricher._fetch_url", new_callable=AsyncMock) as mock_httpx, \
-             patch("scout.enricher._extract_text") as mock_extract:
+        with patch("scout.enricher._website._CRAWL4AI_AVAILABLE", True), \
+             patch("scout.enricher._website._crawl4ai_fetch", new_callable=AsyncMock) as mock_c4a, \
+             patch("scout.enricher._website._fetch_url", new_callable=AsyncMock) as mock_httpx, \
+             patch("scout.enricher._website._extract_text") as mock_extract:
             mock_c4a.return_value = None  # Crawl4AI fails
             mock_httpx.return_value = "<html><body><p>Fallback content</p></body></html>"
             mock_extract.return_value = "CONTENT: Fallback content"
@@ -460,8 +460,8 @@ class TestEnrichPageWithCrawler:
         """Should use httpx when no crawler is provided."""
         from scout.enricher import _enrich_page
 
-        with patch("scout.enricher._fetch_url", new_callable=AsyncMock) as mock_httpx, \
-             patch("scout.enricher._extract_text") as mock_extract:
+        with patch("scout.enricher._website._fetch_url", new_callable=AsyncMock) as mock_httpx, \
+             patch("scout.enricher._website._extract_text") as mock_extract:
             mock_httpx.return_value = "<html><body><p>Direct fetch</p></body></html>"
             mock_extract.return_value = "CONTENT: Direct fetch"
 
@@ -724,7 +724,7 @@ class TestExtractStructuredData:
         {"@type": "Organization", "name": "TestBot"}
         </script>
         </head><body></body></html>'''
-        with patch("scout.enricher._fetch_url", new_callable=AsyncMock) as mock_fetch:
+        with patch("scout.enricher._metadata._fetch_url", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = html
             result = await enrich_structured_data(sample_initiative)
         assert result is not None
@@ -798,7 +798,7 @@ class TestEnrichDns:
     @pytest.mark.asyncio
     async def test_resolves_domain(self, sample_initiative):
         from scout.enricher import enrich_dns
-        with patch("scout.enricher.socket.getaddrinfo") as mock_dns:
+        with patch("scout.enricher._metadata.socket.getaddrinfo") as mock_dns:
             mock_dns.return_value = [(socket.AF_INET, 0, 0, "", ("93.184.216.34", 0))]
             result = await enrich_dns(sample_initiative)
         # May or may not return enrichment depending on DNS availability
@@ -843,7 +843,7 @@ class TestEnrichSitemap:
                 return sitemap_xml
             raise Exception("not found")
 
-        with patch("scout.enricher._fetch_url", side_effect=mock_fetch):
+        with patch("scout.enricher._metadata._fetch_url", side_effect=mock_fetch):
             result = await enrich_sitemap(sample_initiative)
 
         assert result is not None
@@ -882,7 +882,7 @@ class TestEnrichCareers:
                 return career_html
             raise httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
 
-        with patch("scout.enricher._fetch_url", side_effect=mock_fetch):
+        with patch("scout.enricher._website._fetch_url", side_effect=mock_fetch):
             result = await enrich_careers(sample_initiative)
 
         assert result is not None
@@ -893,7 +893,7 @@ class TestEnrichCareers:
     async def test_returns_none_when_no_career_page(self, sample_initiative):
         from scout.enricher import enrich_careers
 
-        with patch("scout.enricher._fetch_url", new_callable=AsyncMock) as mock_fetch:
+        with patch("scout.enricher._website._fetch_url", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.side_effect = Exception("404")
             result = await enrich_careers(sample_initiative)
 
@@ -931,7 +931,7 @@ class TestEnrichGitDeep:
                 return 200, {"name": "requirements.txt"}
             return 404, None
 
-        with patch("scout.enricher._github_get", side_effect=mock_github_get):
+        with patch("scout.enricher._github._github_get", side_effect=mock_github_get):
             result = await enrich_git_deep(sample_initiative)
 
         assert result is not None
@@ -956,7 +956,7 @@ class TestEnrichGitDeep:
                 return 200, [{"name": "repo1", "stargazers_count": 10}]
             return 404, None
 
-        with patch("scout.enricher._github_get", side_effect=mock_github_get):
+        with patch("scout.enricher._github._github_get", side_effect=mock_github_get):
             result = await enrich_git_deep(init)
         # Should at least not crash — may return None if no data
         assert result is None or result.source_type == "git_deep"
