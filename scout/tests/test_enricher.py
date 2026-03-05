@@ -1391,3 +1391,77 @@ class TestTrafilaturaIntegration:
         from scout.enricher import _TRAFILATURA_AVAILABLE
         # Just verify the detection flag exists and is boolean
         assert isinstance(_TRAFILATURA_AVAILABLE, bool)
+
+
+class TestExtructIntegration:
+    """Tests for extruct structured data extraction."""
+
+    def test_extruct_detection_flag(self):
+        from scout.enricher import _EXTRUCT_AVAILABLE
+        assert isinstance(_EXTRUCT_AVAILABLE, bool)
+
+    def test_extract_structured_data_json_ld(self):
+        from scout.enricher import _extract_structured_data
+        html = '''<html><head>
+        <script type="application/ld+json">
+        {"@type": "Organization", "name": "Test Corp", "url": "https://test.com"}
+        </script></head><body></body></html>'''
+        result = _extract_structured_data(html)
+        assert result is not None
+        assert "Organization" in result
+        assert "Test Corp" in result
+
+    def test_extract_structured_data_opengraph(self):
+        from scout.enricher import _extract_structured_data
+        html = '''<html><head>
+        <meta property="og:title" content="My Page">
+        <meta property="og:description" content="A test page">
+        </head><body></body></html>'''
+        result = _extract_structured_data(html)
+        assert result is not None
+        assert "My Page" in result
+
+    def test_extract_structured_data_empty(self):
+        from scout.enricher import _extract_structured_data
+        html = '<html><body><p>No structured data here</p></body></html>'
+        result = _extract_structured_data(html)
+        assert result is None
+
+
+class TestWeightedAggregation:
+    """Tests for classification-aware weighted grade aggregation."""
+
+    def test_equal_weights_for_unknown_classification(self):
+        from scout.scorer import compute_weighted_avg
+        # Unknown classification should use equal weights (1/3 each)
+        result = compute_weighted_avg(2.0, 2.0, 2.0, "unknown_type")
+        assert abs(result - 2.0) < 0.01
+
+    def test_deep_tech_weights_tech_higher(self):
+        from scout.scorer import compute_weighted_avg
+        # deep_tech: team=0.25, tech=0.45, opportunity=0.30
+        # Good tech (1.0), bad team (4.0), mid opportunity (2.5)
+        result = compute_weighted_avg(4.0, 1.0, 2.5, "deep_tech")
+        # Should be better than equal average (2.5) because tech is weighted higher
+        equal_avg = (4.0 + 1.0 + 2.5) / 3  # = 2.5
+        assert result < equal_avg  # weighted should favor the good tech score
+
+    def test_student_venture_weights_opportunity_higher(self):
+        from scout.scorer import compute_weighted_avg
+        # student_venture: team=0.35, tech=0.25, opportunity=0.40
+        result_good_opp = compute_weighted_avg(3.0, 3.0, 1.0, "student_venture")
+        result_good_tech = compute_weighted_avg(3.0, 1.0, 3.0, "student_venture")
+        # Good opportunity should score better than good tech for student ventures
+        assert result_good_opp < result_good_tech
+
+    def test_weights_sum_to_one(self):
+        from scout.scorer import _CLASSIFICATION_WEIGHTS
+        for cls, (w1, w2, w3) in _CLASSIFICATION_WEIGHTS.items():
+            assert abs(w1 + w2 + w3 - 1.0) < 0.01, f"Weights for {cls} don't sum to 1.0"
+
+    def test_equal_grades_same_regardless_of_weights(self):
+        from scout.scorer import compute_weighted_avg
+        # When all grades are equal, weights don't matter
+        for cls in ("deep_tech", "student_venture", "research_leader"):
+            result = compute_weighted_avg(2.0, 2.0, 2.0, cls)
+            assert abs(result - 2.0) < 0.01

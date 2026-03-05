@@ -1,22 +1,26 @@
-"""Scoring engine: three parallel dimension evaluations with deterministic aggregation.
+"""Scoring engine: parallel dimension evaluations with deterministic aggregation.
 
 Architecture
 ------------
-Each initiative is scored on three dimensions in parallel:
+Each entity is scored on configurable dimensions in parallel (default: team,
+tech, opportunity).  Prompts use chain-of-thought (reasoning before grade),
+few-shot calibration examples, and anti-verbosity-bias instructions.
 
-- **Team** — quality of the founding/core team based on team page content,
-  LinkedIn/social presence, member roles, and team size.
-- **Tech** — technical depth based on GitHub activity, research output
-  (HuggingFace, OpenAlex, Semantic Scholar), and key repositories.
-- **Opportunity** — market opportunity as a pure LLM judgment using the full
-  dossier.  Also produces classification, contact recommendation, and
-  engagement hook.
+Key features:
 
-The three grade numerics (A+=1.0 … D=4.0) are averaged to compute:
+- **Dimension pruning** — dimensions with near-empty dossiers (< 5 lines)
+  are skipped, defaulting to grade C.  Saves 20-30% on LLM cost.
+- **Low temperature** (0.2) — more consistent, reproducible scores.
+- **Entity-type-aware** — built-in types (initiative, professor) use
+  hardcoded field lists; custom types include all metadata_json fields.
+- **Classification-aware weighted aggregation** — dimension weights vary
+  by entity classification (deep_tech weights tech higher, etc.).
 
-- ``verdict``  — deterministic mapping from avg_grade
+The dimension grade numerics (A+=1.0 … D=4.0) are aggregated to compute:
+
+- ``verdict``  — deterministic mapping from weighted avg_grade
 - ``score``    — ``round(5.0 - avg_grade, 1)`` snapped to half-points
-- ``key_evidence`` — the three dimension reasonings
+- ``key_evidence`` — the dimension reasonings
 - ``data_gaps``    — computed from missing enrichment sources
 """
 from __future__ import annotations
@@ -767,6 +771,38 @@ def compute_score(avg_grade: float) -> float:
     return round(max(1.0, min(5.0, raw)) * 2) / 2  # snap to half-point
 
 
+# Classification-aware dimension weights.
+# Instead of simple averaging, weight dimensions by what matters most
+# for each classification.  Keys are (team, tech, opportunity) weights.
+_CLASSIFICATION_WEIGHTS: dict[str, tuple[float, float, float]] = {
+    # Initiative classifications
+    "deep_tech":         (0.25, 0.45, 0.30),
+    "student_venture":   (0.35, 0.25, 0.40),
+    "applied_research":  (0.25, 0.40, 0.35),
+    "student_club":      (0.40, 0.20, 0.40),
+    "dormant":           (0.33, 0.33, 0.34),
+    # Professor classifications
+    "research_leader":   (0.30, 0.40, 0.30),
+    "emerging_researcher": (0.25, 0.45, 0.30),
+    "industry_bridge":   (0.25, 0.30, 0.45),
+    "teaching_focused":  (0.40, 0.25, 0.35),
+    "emeritus":          (0.33, 0.33, 0.34),
+}
+_DEFAULT_WEIGHTS = (1 / 3, 1 / 3, 1 / 3)
+
+
+def compute_weighted_avg(
+    team_num: float, tech_num: float, opp_num: float,
+    classification: str = "",
+) -> float:
+    """Compute weighted average grade based on entity classification.
+
+    Falls back to equal weights for unknown classifications.
+    """
+    w_team, w_tech, w_opp = _CLASSIFICATION_WEIGHTS.get(classification, _DEFAULT_WEIGHTS)
+    return w_team * team_num + w_tech * tech_num + w_opp * opp_num
+
+
 def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> list[str]:
     """Identify missing data sources that could improve scoring."""
     gaps: list[str] = []
@@ -821,15 +857,18 @@ def create_score_from_grades(
     Use this when the calling LLM has already evaluated the dossiers
     (e.g. via get_scoring_dossier + submit_score).
     """
-    avg = sum(g.numeric for g in grades.values()) / len(grades)
-    verdict = compute_verdict(avg)
-    score = compute_score(avg)
     classification = _normalize_classification(classification, entity_type)
-    data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
 
     team_g = grades.get("team", Grade.parse("C"))
     tech_g = grades.get("tech", Grade.parse("C"))
     opp_g = grades.get("opportunity", Grade.parse("C"))
+
+    avg = compute_weighted_avg(
+        team_g.numeric, tech_g.numeric, opp_g.numeric, classification,
+    )
+    verdict = compute_verdict(avg)
+    score = compute_score(avg)
+    data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
 
     key_evidence = [
         f"Team ({team_g.letter}): externally evaluated",
@@ -930,13 +969,16 @@ async def score_initiative(
     tech = results["tech"]
     opp = results["opportunity"]
 
-    avg_grade = (team.grade.numeric + tech.grade.numeric + opp.grade.numeric) / 3
-    verdict = compute_verdict(avg_grade)
-    score = compute_score(avg_grade)
-
+    # Determine classification first so we can use weighted aggregation
     classification = _normalize_classification(
         opp.extras.get("classification"), entity_type,
     )
+
+    avg_grade = compute_weighted_avg(
+        team.grade.numeric, tech.grade.numeric, opp.grade.numeric, classification,
+    )
+    verdict = compute_verdict(avg_grade)
+    score = compute_score(avg_grade)
 
     defaults = default_prompts_for(entity_type)
     key_evidence = [

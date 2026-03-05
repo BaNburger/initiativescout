@@ -50,6 +50,13 @@ try:
 except ImportError:
     trafilatura = None  # type: ignore[assignment]
 
+_EXTRUCT_AVAILABLE = False
+try:
+    import extruct  # noqa: F401
+    _EXTRUCT_AVAILABLE = True
+except ImportError:
+    extruct = None  # type: ignore[assignment]
+
 # ddgs v9+ no longer exposes a RatelimitException; use a generic fallback.
 RatelimitException: type[Exception] = Exception  # type: ignore[assignment,misc]
 
@@ -511,17 +518,73 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
 
 
 def _extract_structured_data(raw_html: str) -> str | None:
-    """Extract JSON-LD, OpenGraph, and meta tags from HTML.
+    """Extract JSON-LD, OpenGraph, microdata, and meta tags from HTML.
 
-    Returns a text summary of structured data found, or None.
+    Uses extruct (if available) for comprehensive extraction of all structured
+    data formats in a single pass, falling back to hand-rolled lxml parsing.
     """
+    # Try extruct first — extracts JSON-LD, OpenGraph, microdata, RDFa in one call
+    if _EXTRUCT_AVAILABLE:
+        try:
+            data = extruct.extract(raw_html, syntaxes=["json-ld", "opengraph", "microdata"])
+            lines: list[str] = []
+
+            # JSON-LD items
+            for item in (data.get("json-ld") or [])[:5]:
+                if not isinstance(item, dict):
+                    continue
+                ld_type = item.get("@type", "")
+                if ld_type:
+                    lines.append(f"Schema.org type: {ld_type}")
+                for key in ("name", "description", "url", "foundingDate",
+                            "numberOfEmployees", "address", "sameAs",
+                            "founder", "email", "telephone", "logo",
+                            "areaServed", "knowsAbout", "memberOf",
+                            "author", "datePublished", "publisher",
+                            "genre", "director", "actor", "brand",
+                            "offers", "aggregateRating"):
+                    val = item.get(key)
+                    if val:
+                        if isinstance(val, list):
+                            val = ", ".join(str(v)[:100] for v in val[:5])
+                        elif isinstance(val, dict):
+                            val = val.get("name") or val.get("value") or str(val)[:200]
+                        lines.append(f"  {key}: {str(val)[:300]}")
+
+            # OpenGraph
+            for og in (data.get("opengraph") or [])[:3]:
+                if not isinstance(og, dict):
+                    continue
+                for prop in og.get("properties", []):
+                    if isinstance(prop, (list, tuple)) and len(prop) == 2:
+                        name, content = prop
+                        if content:
+                            lines.append(f"OG {name}: {str(content)[:300]}")
+
+            # Microdata
+            for md_item in (data.get("microdata") or [])[:3]:
+                if not isinstance(md_item, dict):
+                    continue
+                md_type = md_item.get("type", "")
+                if md_type:
+                    lines.append(f"Microdata type: {md_type}")
+                for key, val in (md_item.get("properties") or {}).items():
+                    if val:
+                        lines.append(f"  {key}: {str(val)[:300]}")
+
+            if lines:
+                return "\n".join(lines)
+        except Exception:
+            pass  # fall through to manual extraction
+
+    # Fallback: manual lxml-based extraction
     try:
         cleaned = re.sub(r"^<\?xml[^?]*\?>\s*", "", raw_html, count=1)
         tree = lxml_html.fromstring(cleaned)
     except (etree.ParserError, etree.XMLSyntaxError, ValueError):
         return None
 
-    lines: list[str] = []
+    lines = []
 
     # JSON-LD (Schema.org)
     for script in tree.xpath('//script[@type="application/ld+json"]'):

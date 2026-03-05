@@ -25,7 +25,7 @@ dependencies = [
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.50.0"]
 crawl = ["crawl4ai>=0.8.0", "ddgs>=9.0.0"]
-extract = ["trafilatura>=2.0.0"]
+extract = ["trafilatura>=2.0.0", "extruct>=0.17.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=1.0"]
 
 [tool.pytest.ini_options]
