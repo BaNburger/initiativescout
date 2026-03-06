@@ -1,12 +1,12 @@
 """Free API-based enrichers: OpenAlex, Wikidata."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from urllib.parse import quote
 
-from scout.enricher._core import _make_enrichment, _shared_client
+import scout.enricher._core as _core
+from scout.enricher._core import _make_enrichment
 from scout.models import Enrichment, Initiative
 
 log = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ async def _api_get(url: str, params: dict | None = None) -> dict | list | None:
     import httpx
     headers = {"User-Agent": _UA, "Accept": "application/json"}
     try:
-        if _shared_client is not None:
-            resp = await _shared_client.get(url, params=params, headers=headers)
+        if _core._shared_client is not None:
+            resp = await _core._shared_client.get(url, params=params, headers=headers)
         else:
             async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
                 resp = await client.get(url, params=params, headers=headers)

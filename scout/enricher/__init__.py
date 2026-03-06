@@ -26,6 +26,11 @@ from scout.enricher._discovery import (  # noqa: F401
     _PLATFORM_PATTERNS,
     discover_urls,
 )
+from scout.enricher._apis import (  # noqa: F401
+    enrich_openalex,
+    enrich_wikidata,
+    infer_fields_from_text,
+)
 from scout.enricher._github import enrich_git_deep, enrich_github  # noqa: F401
 from scout.enricher._metadata import (  # noqa: F401
     _detect_tech_stack,
@@ -65,4 +70,8 @@ __all__ = [
     "enrich_tech_stack",
     "enrich_dns",
     "enrich_sitemap",
+    # API enrichers
+    "enrich_openalex",
+    "enrich_wikidata",
+    "infer_fields_from_text",
 ]

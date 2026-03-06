@@ -6,7 +6,6 @@ These models are kept for request body validation and specific response shapes.
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from pydantic import BaseModel, field_validator
 

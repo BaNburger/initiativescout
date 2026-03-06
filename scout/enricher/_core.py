@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -34,6 +35,9 @@ _shared_client: httpx.AsyncClient | None = None
 _shared_client_refcount = 0
 
 
+_client_lock = asyncio.Lock()
+
+
 @asynccontextmanager
 async def _html_cache():
     """Reentrant context manager for per-entity URL caching and shared HTTP client.
@@ -43,26 +47,28 @@ async def _html_cache():
     URL cache is shared across all active users (enrichers for different entities).
     """
     global _url_cache_enabled, _shared_client, _shared_client_refcount
-    _shared_client_refcount += 1
-    if _shared_client is None:
-        _url_cache.clear()
-        _url_cache_enabled = True
-        _shared_client = httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=httpx.Timeout(_TIMEOUT),
-            headers={"User-Agent": _USER_AGENT},
-        )
+    async with _client_lock:
+        _shared_client_refcount += 1
+        if _shared_client is None:
+            _url_cache.clear()
+            _url_cache_enabled = True
+            _shared_client = httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=httpx.Timeout(_TIMEOUT),
+                headers={"User-Agent": _USER_AGENT},
+            )
     try:
         yield
     finally:
-        _shared_client_refcount -= 1
-        if _shared_client_refcount <= 0:
-            _shared_client_refcount = 0
-            _url_cache_enabled = False
-            _url_cache.clear()
-            if _shared_client is not None:
-                await _shared_client.aclose()
-                _shared_client = None
+        async with _client_lock:
+            _shared_client_refcount -= 1
+            if _shared_client_refcount <= 0:
+                _shared_client_refcount = 0
+                _url_cache_enabled = False
+                _url_cache.clear()
+                if _shared_client is not None:
+                    await _shared_client.aclose()
+                    _shared_client = None
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +135,6 @@ def _make_enrichment(
     structured_fields: dict | None = None,
 ) -> Enrichment:
     """Create an Enrichment with automatic truncation and timestamp."""
-    import json
     return Enrichment(
         initiative_id=initiative.id,
         source_type=source_type,

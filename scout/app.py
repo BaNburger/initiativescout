@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Scout",
-    version="1.0.0",
+    version="1.1.0",
     description=(
         "Outreach intelligence API. "
         "Discover, enrich, and score entities for outreach. "

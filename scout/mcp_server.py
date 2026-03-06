@@ -590,7 +590,7 @@ def manage_entity(
                     continue
                 # Build fields
                 fields = {"name": item_name, "uni": item_uni}
-                custom_fields = item.pop("custom_fields", None) if isinstance(item, dict) else None
+                custom_fields = item.get("custom_fields", None) if isinstance(item, dict) else None
                 for k, v in item.items():
                     if k in ("name", "uni", "custom_fields"):
                         continue

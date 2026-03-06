@@ -15,8 +15,8 @@ from scout.enricher import (
     discover_urls, enrich_extra_links, enrich_github, enrich_team_page, enrich_website,
     enrich_structured_data, enrich_tech_stack, enrich_dns, enrich_sitemap,
     enrich_careers, enrich_git_deep,
+    enrich_openalex, enrich_wikidata, infer_fields_from_text,
 )
-from scout.enricher._apis import enrich_openalex, enrich_wikidata, infer_fields_from_text
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
 from scout.schema import get_schema
 from scout.scorer import LLMClient, get_entity_config, score_initiative, score_project
