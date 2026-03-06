@@ -31,31 +31,38 @@ _url_cache: dict[str, str | object] = {}
 _url_cache_lock = asyncio.Lock()
 _url_cache_enabled = False
 _shared_client: httpx.AsyncClient | None = None
+_shared_client_refcount = 0
 
 
 @asynccontextmanager
 async def _html_cache():
-    """Context manager that enables per-entity URL caching and shared HTTP client.
+    """Reentrant context manager for per-entity URL caching and shared HTTP client.
 
-    While active, ``_fetch_url`` caches responses (and errors) so parallel enrichers
-    sharing URLs don't duplicate requests. A shared ``httpx.AsyncClient`` reuses TCP
-    connections across enrichers for the same entity.
+    Safe for concurrent use: multiple coroutines can enter simultaneously.
+    The shared client is created on first entry and closed when the last exits.
+    URL cache is shared across all active users (enrichers for different entities).
     """
-    global _url_cache_enabled, _shared_client
-    _url_cache.clear()
-    _url_cache_enabled = True
-    _shared_client = httpx.AsyncClient(
-        follow_redirects=True,
-        timeout=httpx.Timeout(_TIMEOUT),
-        headers={"User-Agent": _USER_AGENT},
-    )
+    global _url_cache_enabled, _shared_client, _shared_client_refcount
+    _shared_client_refcount += 1
+    if _shared_client is None:
+        _url_cache.clear()
+        _url_cache_enabled = True
+        _shared_client = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(_TIMEOUT),
+            headers={"User-Agent": _USER_AGENT},
+        )
     try:
         yield
     finally:
-        _url_cache_enabled = False
-        _url_cache.clear()
-        await _shared_client.aclose()
-        _shared_client = None
+        _shared_client_refcount -= 1
+        if _shared_client_refcount <= 0:
+            _shared_client_refcount = 0
+            _url_cache_enabled = False
+            _url_cache.clear()
+            if _shared_client is not None:
+                await _shared_client.aclose()
+                _shared_client = None
 
 
 # ---------------------------------------------------------------------------
@@ -233,18 +240,34 @@ def _extract_text(raw_html: str) -> str:
         except Exception:
             pass  # fall through to lxml
 
-    # Fallback: lxml-based extraction
+    # Fallback: lxml-based extraction with better boilerplate removal
     tree = _parse_html(raw_html)
     if tree is None:
         return ""
     title = " ".join(tree.xpath("//title//text()")).strip()
     meta = " ".join(tree.xpath("//meta[@name='description']/@content")).strip()
 
-    for el in tree.xpath("//script | //style | //nav | //footer | //header | //noscript"):
-        el.getparent().remove(el)
+    # Remove boilerplate elements
+    for el in tree.xpath(
+        "//script | //style | //nav | //footer | //header | //noscript | "
+        "//aside | //iframe | //svg | "
+        "//*[contains(@class,'cookie')] | //*[contains(@class,'banner')] | "
+        "//*[contains(@class,'sidebar')] | //*[contains(@class,'menu')] | "
+        "//*[contains(@class,'nav')] | //*[contains(@id,'cookie')] | "
+        "//*[contains(@id,'nav')] | //*[contains(@id,'menu')] | "
+        "//*[contains(@id,'sidebar')]"
+    ):
+        parent = el.getparent()
+        if parent is not None:
+            parent.remove(el)
 
-    body = tree.xpath("//body")
-    content = " ".join((body[0] if body else tree).text_content().split())
+    # Prefer main content area over full body
+    main = (
+        tree.xpath("//main") or tree.xpath("//*[@role='main']") or
+        tree.xpath("//article") or tree.xpath("//body")
+    )
+    root = main[0] if main else tree
+    content = " ".join(root.text_content().split())
 
     parts = []
     if title:

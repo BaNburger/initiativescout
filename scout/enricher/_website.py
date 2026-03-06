@@ -24,6 +24,95 @@ from scout.enricher._core import (
 from scout.models import Enrichment, Initiative
 from scout.utils import json_parse
 
+
+# ---------------------------------------------------------------------------
+# HTML-based field extraction (no LLM, pure heuristics)
+# ---------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(
+    r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}(?=[\s,;)<>\'"|\])]|$)'
+)
+# Common generic emails to skip
+_GENERIC_EMAILS = {"info@", "hello@", "contact@", "admin@", "support@",
+                   "noreply@", "no-reply@", "privacy@", "webmaster@"}
+
+
+def _extract_fields_from_html(raw_html: str, base_url: str) -> dict:
+    """Extract structured entity fields directly from HTML using heuristics.
+
+    Extracts: email, social links (linkedin, github, instagram, etc.),
+    and contact-related data. Returns a dict of field_key → value.
+    """
+    fields: dict = {}
+    tree = _parse_html(raw_html)
+    if tree is None:
+        return fields
+
+    # --- Email extraction ---
+    # Prefer mailto: links over regex (more intentional)
+    mailto_links = tree.xpath('//a[starts-with(@href, "mailto:")]/@href')
+    for href in mailto_links:
+        email = href.removeprefix("mailto:").split("?")[0].strip().lower()
+        if email and "@" in email and not any(email.startswith(g) for g in _GENERIC_EMAILS):
+            fields["email"] = email
+            break
+    # Fallback: regex over visible text (skip scripts/styles)
+    if "email" not in fields:
+        for el in tree.xpath("//script | //style"):
+            parent = el.getparent()
+            if parent is not None:
+                parent.remove(el)
+        body_text = tree.xpath("//body")
+        text = (body_text[0] if body_text else tree).text_content()
+        for match in _EMAIL_RE.finditer(text):
+            email = match.group().lower()
+            if not any(email.startswith(g) for g in _GENERIC_EMAILS):
+                fields["email"] = email
+                break
+
+    # --- Social link extraction ---
+    _social_patterns = {
+        "linkedin": "linkedin.com/company/",
+        "github_org": "github.com/",
+        "instagram": "instagram.com/",
+    }
+    all_hrefs = tree.xpath("//a/@href")
+    for href in all_hrefs:
+        href_lower = (href or "").lower().strip()
+        for field_key, pattern in _social_patterns.items():
+            if field_key not in fields and pattern in href_lower:
+                # Skip generic LinkedIn pages
+                if field_key == "linkedin" and href_lower.rstrip("/").endswith("linkedin.com"):
+                    continue
+                # Skip github.com itself (no org path)
+                if field_key == "github_org":
+                    path = urlparse(href_lower).path.strip("/")
+                    if not path or "/" in path:  # skip repo URLs, only orgs
+                        continue
+                fields[field_key] = href.strip()
+                break
+
+    # --- Team page auto-discovery ---
+    _team_patterns = re.compile(
+        r'(?i)\b(team|members|people|our.team|about.us|ueber.uns)\b'
+    )
+    base_domain = urlparse(base_url).netloc
+    for anchor in tree.xpath("//a[@href]"):
+        href_val = (anchor.get("href") or "").strip()
+        link_text = (anchor.text_content() or "").strip()
+        if not href_val or href_val.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        absolute = urljoin(base_url, href_val)
+        parsed = urlparse(absolute)
+        if parsed.netloc and parsed.netloc != base_domain:
+            continue
+        combined = f"{parsed.path} {link_text}"
+        if _team_patterns.search(combined) and "team_page" not in fields:
+            fields["team_page"] = absolute
+            break
+
+    return fields
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -145,7 +234,7 @@ def _is_contact_link(url: str) -> bool:
 async def enrich_website(
     initiative: Initiative, crawler: object | None = None,
 ) -> list[Enrichment]:
-    """Fetch initiative website + important subpages, extract text content."""
+    """Fetch initiative website + important subpages, extract text + structured fields."""
     url = _get_website_url(initiative)
     if not url:
         return []
@@ -161,21 +250,37 @@ async def enrich_website(
     except Exception:
         return results
 
+    # Extract structured fields from main page HTML
+    fields = _extract_fields_from_html(raw_html, url)
+
     subpage_urls = _extract_important_links(raw_html, url)
-    if not subpage_urls:
-        return results
+    if subpage_urls:
+        # Fetch subpages and extract fields from each
+        sub_tasks = []
+        for sub_url in subpage_urls:
+            stype = "contact" if _is_contact_link(sub_url) else "website_subpage"
+            sub_tasks.append(_enrich_page(initiative, sub_url, stype, crawler))
 
-    sub_tasks = []
-    for sub_url in subpage_urls:
-        stype = "contact" if _is_contact_link(sub_url) else "website_subpage"
-        sub_tasks.append(_enrich_page(initiative, sub_url, stype, crawler))
+        sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
+        for sub_url, result in zip(subpage_urls, sub_results):
+            if isinstance(result, Exception):
+                log.warning("Subpage enrichment failed for %s: %s", sub_url, result)
+            elif result is not None:
+                results.append(result)
+                # Extract fields from subpage HTML too (contact pages often have emails)
+                try:
+                    sub_html = await _fetch_url(sub_url)
+                    sub_fields = _extract_fields_from_html(sub_html, sub_url)
+                    for k, v in sub_fields.items():
+                        if k not in fields:  # main page fields take priority
+                            fields[k] = v
+                except Exception:
+                    pass
 
-    sub_results = await asyncio.gather(*sub_tasks, return_exceptions=True)
-    for sub_url, result in zip(subpage_urls, sub_results):
-        if isinstance(result, Exception):
-            log.warning("Subpage enrichment failed for %s: %s", sub_url, result)
-        elif result is not None:
-            results.append(result)
+    # Store merged fields on the main enrichment
+    if fields:
+        import json as _json
+        main.structured_fields_json = _json.dumps(fields)
 
     return results
 

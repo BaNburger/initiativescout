@@ -6,6 +6,7 @@ Submodules:
     _github     GitHub org/repo enrichers
     _discovery  DuckDuckGo URL discovery
     _metadata   Structured data, tech stack, DNS, sitemap enrichers
+    _apis       Free API enrichers: OpenAlex, Wikidata, text inference
 
 All public symbols are re-exported here so existing ``from scout.enricher import …``
 imports continue to work unchanged.

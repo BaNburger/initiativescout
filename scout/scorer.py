@@ -261,6 +261,9 @@ class LLMClient:
                 Defaults to 0.2 for consistent scoring results.
         """
         temp = temperature if temperature is not None else 0.2
+        # Reasoning models (o1, o3, gpt-5-mini, etc.) don't support temperature
+        _no_temp_models = ("o1", "o3", "o4-mini", "gpt-5-mini")
+        supports_temp = not any(self.model.startswith(p) for p in _no_temp_models)
         try:
             if self.provider == "anthropic":
                 response = await self._client.messages.create(
@@ -277,16 +280,18 @@ class LLMClient:
                 if m:
                     text = m.group(1)
             else:
-                response = await self._client.chat.completions.create(
+                kwargs: dict[str, Any] = dict(
                     model=self.model,
                     max_completion_tokens=2048,
-                    temperature=temp,
                     response_format={"type": "json_object"},
                     messages=[
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
                     ],
                 )
+                if supports_temp:
+                    kwargs["temperature"] = temp
+                response = await self._client.chat.completions.create(**kwargs)
                 if not response.choices:
                     raise LLMCallError("LLM returned empty response", retryable=True)
                 text = response.choices[0].message.content or "{}"

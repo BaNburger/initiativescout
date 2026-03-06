@@ -992,8 +992,9 @@ class TestRunEnrichmentExtended:
         mocks["team_page"].return_value = None
         mocks["github"].return_value = None
         mocks["extra_links"].return_value = []
-        for name in ("structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"):
-            mocks[name].return_value = None
+        for name in services.ENRICHER_REGISTRY:
+            if name not in ("website", "team_page", "github", "extra_links"):
+                mocks[name].return_value = None
 
         # Patch the registry dict values
         with patch.dict(services.ENRICHER_REGISTRY, mocks), \
@@ -1107,7 +1108,8 @@ class TestEnricherRegistry:
     def test_registry_contains_all_enrichers(self):
         from scout.services import ENRICHER_REGISTRY
         expected = {"website", "team_page", "github", "extra_links",
-                    "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep"}
+                    "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
+                    "openalex", "wikidata"}
         assert set(ENRICHER_REGISTRY.keys()) == expected
 
     def test_crawler_enrichers_subset(self):

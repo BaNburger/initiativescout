@@ -16,6 +16,7 @@ from scout.enricher import (
     enrich_structured_data, enrich_tech_stack, enrich_dns, enrich_sitemap,
     enrich_careers, enrich_git_deep,
 )
+from scout.enricher._apis import enrich_openalex, enrich_wikidata, infer_fields_from_text
 from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
 from scout.schema import get_schema
 from scout.scorer import LLMClient, get_entity_config, score_initiative, score_project
@@ -36,6 +37,8 @@ ENRICHER_REGISTRY: dict[str, Any] = {
     "sitemap": enrich_sitemap,
     "careers": enrich_careers,
     "git_deep": enrich_git_deep,
+    "openalex": enrich_openalex,
+    "wikidata": enrich_wikidata,
 }
 
 # Enrichers that need a crawler argument
@@ -798,9 +801,10 @@ async def run_enrichment(
             new_enrichments.append(result)
 
     if new_enrichments:
-        # Only delete enrichments from automated enrichers that ran — preserve
-        # LLM-submitted enrichments (source_type not in the enricher registry)
-        automated_types = set(labels)
+        # Delete old enrichments from enrichers that ran — includes both the
+        # enricher name AND any sub-types it produced (e.g. website → website_subpage, contact)
+        # Preserves LLM-submitted enrichments (source_type not in either set)
+        automated_types = set(labels) | {e.source_type for e in new_enrichments}
         session.execute(delete(Enrichment).where(
             Enrichment.initiative_id == init.id,
             Enrichment.source_type.in_(automated_types),
@@ -812,6 +816,15 @@ async def run_enrichment(
             sf = json_parse(e.structured_fields_json)
             if sf:
                 apply_enrichment_fields(init, sf)
+        # Infer additional fields from enrichment text (regex-based)
+        all_text = "\n".join(e.raw_text for e in new_enrichments if e.raw_text)
+        inferred = infer_fields_from_text(all_text)
+        if inferred:
+            # Only apply fields not already filled
+            filtered = {k: v for k, v in inferred.items()
+                        if init.field(k) in (None, "", 0, False)}
+            if filtered:
+                apply_enrichment_fields(init, filtered)
         # Re-embed with updated enrichment data
         session.flush()
         try:

@@ -93,8 +93,35 @@ async def _ddg_search(query: str, max_results: int = 10) -> list[dict]:
     return []
 
 
+def _build_queries(name: str, uni: str, description: str) -> list[str]:
+    """Build a list of search queries from most to least specific."""
+    queries = []
+    if uni:
+        queries.append(f'"{name}" {uni}')
+    else:
+        queries.append(f'"{name}"')
+    # Fallback: unquoted with description context
+    if uni:
+        queries.append(f'{name} {uni}')
+    # Fallback: add sector/description keywords for disambiguation
+    if description:
+        keywords = " ".join(description.split()[:6])
+        queries.append(f'{name} {keywords}')
+    return queries
+
+
+# Domains that are platform aggregators, not an entity's own website
+_PLATFORM_DOMAINS = set(_PLATFORM_PATTERNS.values()) | {
+    "wikipedia.org", "wikidata.org", "twitter.com", "medium.com",
+    "eventbrite.com", "meetup.com",
+}
+
+
 async def discover_urls(initiative: Initiative) -> dict[str, str]:
     """Use DuckDuckGo to discover platform URLs for an initiative.
+
+    Tries progressively broader queries if exact match returns no results.
+    Also extracts a website URL from DDG results if none is configured.
 
     Returns a dict of ``{source_key: url}`` for newly discovered URLs
     not already in extra_links_json.  Does NOT modify the initiative object.
@@ -106,15 +133,22 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
 
     name = (initiative.field("name") or "").strip()
     uni = (initiative.field("uni") or "").strip()
+    description = (initiative.field("description") or "").strip()
     if not name:
         return {}
 
-    query = f'"{name}" {uni}' if uni else f'"{name}"'
+    queries = _build_queries(name, uni, description)
+    results: list[dict] = []
+    for query in queries:
+        try:
+            results = await _ddg_search(query)
+        except Exception as exc:
+            log.warning("DDG search failed for %s: %s", name, exc)
+            continue
+        if results:
+            break
 
-    try:
-        results = await _ddg_search(query)
-    except Exception as exc:
-        log.warning("DDG search failed for %s: %s", name, exc)
+    if not results:
         return {}
 
     existing = json_parse(initiative.extra_links_json)
@@ -125,14 +159,26 @@ async def discover_urls(initiative: Initiative) -> dict[str, str]:
             known_domains.add(val.lower())
 
     discovered: dict[str, str] = {}
+    has_website = bool((initiative.field("website") or "").strip())
+
     for result in results:
         href = result.get("href", "")
         if not href:
             continue
+        href_lower = href.lower()
+
+        # Try to match platform patterns
+        matched_platform = False
         for key, domain in _PLATFORM_PATTERNS.items():
-            if domain in href.lower() and key not in existing and key not in discovered:
+            if domain in href_lower and key not in existing and key not in discovered:
                 if not any(domain in kd for kd in known_domains):
                     discovered[key] = href
+                matched_platform = True
                 break
+
+        # If no website set, extract from first non-platform result
+        if not matched_platform and not has_website and "website" not in discovered:
+            if not any(pd in href_lower for pd in _PLATFORM_DOMAINS):
+                discovered["website"] = href
 
     return discovered

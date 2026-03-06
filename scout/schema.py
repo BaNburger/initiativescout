@@ -125,10 +125,13 @@ _INITIATIVE_SCHEMA: dict[str, Any] = {
     "enrichers": [
         "website", "team_page", "github", "extra_links",
         "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
+        "openalex", "wikidata",
     ],
     "enricher_targets": {
         "github": ["github_repo_count", "github_contributors", "github_commits_90d", "github_ci_present"],
         "structured_data": ["email", "description", "linkedin", "github_org", "member_count"],
+        "openalex": ["openalex_hits"],
+        "wikidata": ["website", "github_org", "member_count"],
     },
     "context": "Munich student initiatives",
 
@@ -215,7 +218,7 @@ _PROFESSOR_SCHEMA: dict[str, Any] = {
     ],
 
     "dimensions": {"team": "Research Group", "tech": "Research Output", "opportunity": "Collaboration Potential"},
-    "enrichers": ["website", "extra_links", "structured_data", "dns", "sitemap"],
+    "enrichers": ["website", "extra_links", "structured_data", "dns", "sitemap", "openalex", "wikidata"],
     "context": "TUM professors",
 
     # Enrichable fields: professor-specific
