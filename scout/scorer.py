@@ -405,11 +405,7 @@ def get_entity_config(entity_type: str) -> dict:
         }
 
 
-# Backward-compat alias for code that imports ENTITY_CONFIG directly
-ENTITY_CONFIG: dict[str, dict] = {
-    "initiative": get_entity_config("initiative"),
-    "professor": get_entity_config("professor"),
-}
+_BUILTIN_ENTITY_TYPES = frozenset(("initiative", "professor"))
 
 
 def _initiative_header(init: Initiative, entity_type: str = "initiative") -> list[str]:
@@ -477,7 +473,7 @@ _OPPORTUNITY_FIELDS: list[tuple[str, str]] = [
 
 def _is_builtin_entity(entity_type: str) -> bool:
     """Return True if this is a built-in entity type with hardcoded field lists."""
-    return entity_type in ENTITY_CONFIG
+    return entity_type in _BUILTIN_ENTITY_TYPES
 
 
 def build_team_dossier(init: Initiative, enrichments: list[Enrichment], entity_type: str = "initiative") -> str:

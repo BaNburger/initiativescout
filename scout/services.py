@@ -86,10 +86,8 @@ def get_updatable_fields() -> tuple[str, ...]:
 def get_compact_fields() -> set[str]:
     return set(get_schema()["compact_fields"])
 
-# Backward-compat aliases (initiative defaults)
-DETAIL_FIELDS = tuple(get_schema("initiative")["detail_fields"])
+# Backward-compat alias (initiative defaults) — used by mcp_server + tests
 UPDATABLE_FIELDS = tuple(get_schema("initiative")["updatable_fields"])
-COMPACT_FIELDS = set(get_schema("initiative")["compact_fields"])
 
 # ---------------------------------------------------------------------------
 # Serialization helpers
@@ -522,8 +520,7 @@ def create_entity(session: Session, **kwargs: Any) -> Initiative:
             meta_data[k] = v
     init = Initiative(**col_data)
     if meta_data:
-        import json as _json
-        init.metadata_json = _json.dumps(meta_data)
+        init.metadata_json = json.dumps(meta_data)
     session.add(init)
     session.flush()
     return init

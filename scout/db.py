@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -320,7 +321,6 @@ def get_entity_config_json() -> dict:
 
 def set_entity_config_json(config: dict) -> None:
     """Store custom entity type config in _meta."""
-    import json as _json
     with _lock:
         engine = _engine
     if engine is None:
@@ -328,7 +328,7 @@ def set_entity_config_json(config: dict) -> None:
     with engine.begin() as conn:
         conn.execute(text(
             "INSERT OR REPLACE INTO _meta (key, value) VALUES ('entity_config', :cfg)"
-        ), {"cfg": _json.dumps(config)})
+        ), {"cfg": json.dumps(config)})
 
 
 _FTS_TABLE = "initiative_fts"

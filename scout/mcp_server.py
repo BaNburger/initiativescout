@@ -23,7 +23,7 @@ from scout.db import (
 from scout.enricher import open_crawler
 from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import (
-    ENTITY_CONFIG, GRADE_MAP, VALID_GRADES, Grade,
+    GRADE_MAP, VALID_GRADES, Grade, _BUILTIN_ENTITY_TYPES,
     LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
     create_score_from_grades, default_prompts_for, get_entity_config,
     valid_classifications,
@@ -1541,7 +1541,7 @@ def manage_database(
         except ValueError as exc:
             return _error(str(exc), "ALREADY_EXISTS")
         # Store custom entity config for non-built-in types
-        if entity_type not in ENTITY_CONFIG:
+        if entity_type not in _BUILTIN_ENTITY_TYPES:
             from scout.db import set_entity_config_json
             custom_cfg = {
                 "label": entity_type.replace("_", " "),

@@ -120,7 +120,7 @@ _INITIATIVE_SCHEMA: dict[str, Any] = {
         "custom_fields",
     ],
 
-    # Scoring config (keep in sync with scorer.py ENTITY_CONFIG)
+    # Scoring config (used by scorer.py get_entity_config)
     "dimensions": {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"},
     "enrichers": [
         "website", "team_page", "github", "extra_links",
