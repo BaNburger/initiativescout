@@ -235,7 +235,6 @@ def entity_detail(init: Initiative, *, sources: set[str] | None = None) -> dict:
         if sources is None or e.source_type in sources
     ]
     base["projects"] = [project_summary(p) for p in init.projects]
-    base["_missing_fields"] = compute_missing_fields(init)
     return base
 
 
@@ -249,11 +248,9 @@ def entity_detail_compact(init: Initiative) -> dict:
     base.update({f: init.field(f) for f in get_detail_fields()})
     base["enrichment_sources"] = [e.source_type for e in init.enrichments]
     base["project_count"] = len(init.projects)
-    missing = compute_missing_fields(init)
-    base["_missing_fields_count"] = len(missing)
     # Strip empty/default values to reduce context, but keep id, name, enriched
     # and preserve legitimate 0 and False values (e.g. github_commits_90d=0)
-    _keep = {"id", "name", "enriched", "_missing_fields_count"}
+    _keep = {"id", "name", "enriched"}
     _empty = ("", None, [], {})
     return {k: v for k, v in base.items() if k in _keep or v not in _empty}
 
@@ -804,7 +801,13 @@ async def run_enrichment(
             new_enrichments.append(result)
 
     if new_enrichments:
-        session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
+        # Only delete enrichments from automated enrichers that ran — preserve
+        # LLM-submitted enrichments (source_type not in the enricher registry)
+        automated_types = set(labels)
+        session.execute(delete(Enrichment).where(
+            Enrichment.initiative_id == init.id,
+            Enrichment.source_type.in_(automated_types),
+        ))
         for e in new_enrichments:
             session.add(e)
         # Apply structured fields from enrichments to entity

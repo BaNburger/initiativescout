@@ -374,19 +374,33 @@ def get_entity_config(entity_type: str) -> dict:
     try:
         from scout.schema import get_schema
         schema = get_schema(entity_type)
-        return {
+        cfg = {
             "label": schema.get("label", entity_type),
             "label_plural": schema.get("label_plural", entity_type + "s"),
             "context": schema.get("context", entity_type),
             "enrichers": schema.get("enrichers", ["website", "extra_links", "structured_data"]),
+            "enricher_targets": schema.get("enricher_targets", {}),
+            "enrichable_fields": schema.get("enrichable_fields", {}),
             "dimensions": list(schema.get("dimensions", {}).keys()),
         }
+        # Merge runtime-extended enrichable_fields from DB config
+        try:
+            from scout.db import get_entity_config_json
+            db_cfg = get_entity_config_json()
+            extra = db_cfg.get("extra_enrichable_fields", {})
+            if extra and isinstance(extra, dict):
+                cfg["enrichable_fields"].update(extra)
+        except Exception:
+            pass
+        return cfg
     except Exception:
         return {
             "label": entity_type,
             "label_plural": entity_type + "s",
             "context": entity_type,
             "enrichers": ["website", "extra_links", "structured_data"],
+            "enricher_targets": {},
+            "enrichable_fields": {},
             "dimensions": ["team", "tech", "opportunity"],
         }
 

@@ -418,6 +418,10 @@ def scout_overview() -> str:
             "monitor": "Interesting but insufficient evidence.",
             "skip": "Out of scope or dormant.",
         },
+        "enrichable_fields": {
+            k: {"label": v["label"], "type": v["type"]}
+            for k, v in ecfg.get("enrichable_fields", {}).items()
+        },
     }, indent=2)
 
 
@@ -432,12 +436,13 @@ def list_entities(
     uni: str | None = None, faculty: str | None = None,
     search: str | None = None,
     sort_by: str = "score", sort_dir: str = "desc", limit: int = 20,
-    fields: str | None = None,
+    fields: str | None = None, compact: bool = True,
 ) -> list[dict]:
     """List and filter entities. Returns summaries with scores and verdicts.
 
     WHEN: Browse, search, or filter. For autonomous processing, use get_work_queue().
-    COMPACT: fields="id,name,verdict,score" returns only those keys (saves tokens).
+    COMPACT: Default compact=True returns id,name,uni,verdict,score,classification,enriched.
+    Set compact=False or provide explicit fields= for full summaries.
 
     Args:
         verdict: Filter: reach_out_now, reach_out_soon, monitor, skip, unscored (comma-separated).
@@ -448,9 +453,15 @@ def list_entities(
         sort_by: score, name, uni, faculty, verdict, grade_team, grade_tech, grade_opportunity.
         sort_dir: asc or desc.
         limit: Max results (default 20, max 500).
-        fields: Comma-separated field names for compact output.
+        fields: Comma-separated field names for compact output (overrides compact flag).
+        compact: Default True returns minimal fields. Set False for full summaries.
     """
-    fields_set = {f.strip() for f in fields.split(",") if f.strip()} if fields else None
+    if fields:
+        fields_set = {f.strip() for f in fields.split(",") if f.strip()}
+    elif compact:
+        fields_set = {"id", "name", "uni", "verdict", "score", "classification", "enriched"}
+    else:
+        fields_set = None
     with session_scope() as session:
         items, _ = services.query_entities(
             session, verdict=verdict, classification=classification,
@@ -461,7 +472,8 @@ def list_entities(
 
 
 @mcp.tool(annotations=_READ)
-def get_entity(entity_id: int, compact: bool = False, sources: str = "") -> dict:
+def get_entity(entity_id: int, compact: bool = False, sources: str = "",
+               include_gaps: bool = False) -> dict:
     """Get full details for one entity: profile, enrichments, projects, scores, data gaps.
 
     WHEN: After list_entities() to inspect before enriching or scoring.
@@ -473,6 +485,8 @@ def get_entity(entity_id: int, compact: bool = False, sources: str = "") -> dict
         compact: Lighter payload (skips enrichment summaries, projects, reasoning).
         sources: Comma-separated enrichment source types to include (e.g. "github,website").
             Empty = all sources. Only applies when compact=False.
+        include_gaps: Include _missing_fields list (enrichable fields not yet filled).
+            Useful before submit_enrichment() to know what to research.
     """
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, entity_id)
@@ -482,15 +496,28 @@ def get_entity(entity_id: int, compact: bool = False, sources: str = "") -> dict
             data = services.entity_detail_compact(init)
         else:
             data = services.entity_detail(init, sources=parse_comma_set(sources))
+        # Missing fields: always compute for suggestions; only expose full list
+        # when include_gaps=True, otherwise just the count
+        data.pop("_missing_fields_count", None)
+        missing = services.compute_missing_fields(init)
+        if include_gaps:
+            data["_missing_fields"] = missing
+        elif missing:
+            data["_missing_fields_count"] = len(missing)
+
+        enriched = data.get("enriched", False)
+        verdict = data.get("verdict")
         actions = []
-        if not data.get("enriched", False):
+        if not enriched:
             actions.append(_next("enrich_entity", "Not yet enriched", entity_id=entity_id))
-        if data.get("verdict") is None:
-            actions.append(_next("score_entity", "Not yet scored", entity_id=entity_id))
-        missing = data.get("_missing_fields") or []
-        if missing and data.get("enriched", False):
+        if verdict is None:
+            hint = "Ready to score" if enriched else "Not yet scored"
+            actions.append(_next("score_entity", hint, entity_id=entity_id))
+        if missing and enriched:
             keys = ", ".join(m["key"] for m in missing[:5])
             actions.append(_next("submit_enrichment", f"Fill missing: {keys}", entity_id=entity_id))
+        if verdict in ("reach_out_now", "reach_out_soon"):
+            actions.append(_next("find_similar", "Find similar entities", entity_id=entity_id))
         return _trim(_suggest(data, *actions))
 
 
@@ -753,16 +780,35 @@ def submit_enrichment(
         if err:
             return err
 
-        enrichment = Enrichment(
-            initiative_id=init.id,
-            source_type=source_type.strip(),
-            source_url=source_url.strip() if source_url else None,
-            raw_text=content.strip()[:15000],
-            summary=(summary.strip() if summary else content.strip()[:500]),
-            structured_fields_json=json.dumps(structured_fields) if structured_fields else "{}",
-            fetched_at=datetime.now(UTC),
-        )
-        session.add(enrichment)
+        # Upsert: update existing enrichment with same source_type+url, or create new
+        st = source_type.strip()
+        su = source_url.strip() if source_url else None
+        existing = session.execute(
+            select(Enrichment).where(
+                Enrichment.initiative_id == init.id,
+                Enrichment.source_type == st,
+                Enrichment.source_url == su,
+            )
+        ).scalar_one_or_none()
+
+        raw = content.strip()[:15000]
+        summ = summary.strip() if summary else raw[:500]
+        sf_json = json.dumps(structured_fields) if structured_fields else "{}"
+        now = datetime.now(UTC)
+
+        if existing:
+            existing.raw_text = raw
+            existing.summary = summ
+            existing.structured_fields_json = sf_json
+            existing.fetched_at = now
+            enrichment = existing
+        else:
+            enrichment = Enrichment(
+                initiative_id=init.id, source_type=st, source_url=su,
+                raw_text=raw, summary=summ,
+                structured_fields_json=sf_json, fetched_at=now,
+            )
+            session.add(enrichment)
 
         # Apply structured fields to entity
         field_result = {}
@@ -841,7 +887,7 @@ async def score_entity(entity_id: int) -> dict:
 
 
 @mcp.tool(annotations=_READ)
-def get_scoring_dossier(entity_id: int) -> dict:
+def get_scoring_dossier(entity_id: int, compact: bool = False) -> dict:
     """Build scoring dossiers and prompts WITHOUT making LLM calls.
 
     WHAT: Returns 3 dimension dossiers + system prompts for LLM-free scoring. No API key needed.
@@ -850,6 +896,8 @@ def get_scoring_dossier(entity_id: int) -> dict:
 
     Args:
         entity_id: Entity ID.
+        compact: If True, truncate dossiers to ~1500 chars each and factor out entity
+            header to top level (reduces total from ~15KB to ~5KB).
     """
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, entity_id)
@@ -876,18 +924,25 @@ def get_scoring_dossier(entity_id: int) -> dict:
                 builder_idx = len(dossier_builders) - 1
             builder = dossier_builders[builder_idx]
             prompt = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
-            dimensions_out[dim] = {"prompt": prompt, "dossier": builder(init, enrichments, et)}
+            dossier_text = builder(init, enrichments, et)
+            if compact and len(dossier_text) > 1500:
+                dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
+            dimensions_out[dim] = {"prompt": prompt, "dossier": dossier_text}
 
         # Build grade args hint for submit_score
         grade_args = {f"grade_{dim}": "" for dim in dims}
         grade_args["classification"] = ""
 
+        result = {
+            "entity_id": init.id, "entity_name": init.name,
+            "entity_type": et, "enriched": len(enrichments) > 0,
+            "dimensions": dimensions_out,
+        }
+        if compact:
+            result["_note"] = "Dossiers truncated (compact=True). Use compact=False for full text."
+
         return _suggest(
-            {
-                "entity_id": init.id, "entity_name": init.name,
-                "entity_type": et, "enriched": len(enrichments) > 0,
-                "dimensions": dimensions_out,
-            },
+            result,
             _next("submit_score", "Submit your evaluation",
                   entity_id=init.id, **grade_args),
         )

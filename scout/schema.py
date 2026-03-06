@@ -253,6 +253,11 @@ def get_schema(entity_type: str | None = None) -> dict[str, Any]:
         schema = _build_custom_schema(entity_type)
 
     schema["entity_type"] = entity_type
+
+    # Note: runtime-extended enrichable_fields (extra_enrichable_fields in DB _meta)
+    # are merged by get_entity_config() in scorer.py, NOT here. Calling DB functions
+    # from get_schema() risks deadlock since _lock in db.py is not re-entrant.
+
     return schema
 
 
