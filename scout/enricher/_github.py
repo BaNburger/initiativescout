@@ -52,8 +52,10 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
     headers = _github_headers()
 
     lines: list[str] = [f"GitHub org: {org}"]
+    fields: dict = {}
 
     def _format_repos(repos: list) -> None:
+        fields["github_repo_count"] = len(repos)
         lines.append(f"Public repos: {len(repos)}")
         for r in repos[:5]:
             lines.append(f"  - {r.get('name')}: stars={r.get('stargazers_count', 0)}, forks={r.get('forks_count', 0)}, lang={r.get('language', '?')}")
@@ -80,6 +82,9 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
                 lines.append(f"  Contributors: {metrics.get('contributors', '?')}")
                 lines.append(f"  Commits (90d): {metrics.get('commits_90d', '?')}")
                 lines.append(f"  CI/CD: {'yes' if metrics.get('ci_present') else 'no'}")
+                fields["github_contributors"] = metrics["contributors"]
+                fields["github_commits_90d"] = metrics["commits_90d"]
+                fields["github_ci_present"] = metrics["ci_present"]
         except Exception as exc:
             log.warning("GitHub repo fetch failed for %s/%s: %s", org, repo, exc)
 
@@ -87,7 +92,8 @@ async def enrich_github(initiative: Initiative) -> Enrichment | None:
         return None
 
     text = "\n".join(lines)
-    return _make_enrichment(initiative, "github", f"https://github.com/{org}", text)
+    return _make_enrichment(initiative, "github", f"https://github.com/{org}", text,
+                            structured_fields=fields or None)
 
 
 async def enrich_git_deep(initiative: Initiative) -> Enrichment | None:

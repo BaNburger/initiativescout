@@ -1,8 +1,14 @@
 """XLSX export: write initiative data (with scores and enrichments) to a workbook."""
 from __future__ import annotations
 
+import re
 from io import BytesIO
 from typing import Any
+
+# Strip characters illegal in XLSX worksheets (XML 1.0 restricted chars)
+_ILLEGAL_XML_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufdd0-\ufdef\ufffe\uffff]"
+)
 
 from sqlalchemy import func, select
 
@@ -213,6 +219,8 @@ def export_xlsx(
                 row.append(val)
         if include_enrichments:
             row.append(enrich_map.get(init.id, ""))
+        # Sanitize strings: strip XML-illegal chars that openpyxl rejects
+        row = [_ILLEGAL_XML_RE.sub("", v) if isinstance(v, str) else v for v in row]
         ws.append(row)
 
         # Style verdict cell

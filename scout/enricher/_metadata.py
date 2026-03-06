@@ -45,8 +45,46 @@ def _format_jsonld_value(val) -> str:
     return str(val)[:300]
 
 
-def _extract_structured_data(raw_html: str) -> str | None:
-    """Extract JSON-LD, OpenGraph, microdata, and meta tags from HTML."""
+def _extract_fields_from_jsonld(item: dict, fields: dict) -> None:
+    """Pull known entity fields from a JSON-LD item into fields dict."""
+    if "email" not in fields:
+        email = item.get("email")
+        if email and isinstance(email, str):
+            fields["email"] = email.removeprefix("mailto:")
+    if "description" not in fields:
+        desc = item.get("description")
+        if desc and isinstance(desc, str):
+            fields["description"] = desc[:500]
+    n_employees = item.get("numberOfEmployees")
+    if n_employees and "member_count" not in fields:
+        if isinstance(n_employees, dict):
+            val = n_employees.get("value") or n_employees.get("minValue")
+            if val:
+                try:
+                    fields["member_count"] = int(val)
+                except (ValueError, TypeError):
+                    pass
+        elif isinstance(n_employees, (int, float)):
+            fields["member_count"] = int(n_employees)
+    same_as = item.get("sameAs")
+    if same_as:
+        urls = same_as if isinstance(same_as, list) else [same_as]
+        for url in urls:
+            if not isinstance(url, str):
+                continue
+            if "linkedin.com" in url and "linkedin" not in fields:
+                fields["linkedin"] = url
+            elif "github.com" in url and "github_org" not in fields:
+                fields["github_org"] = url
+
+
+def _extract_structured_data(raw_html: str) -> tuple[str | None, dict]:
+    """Extract JSON-LD, OpenGraph, microdata, and meta tags from HTML.
+
+    Returns (text, structured_fields) where structured_fields contains
+    extracted values for known entity fields.
+    """
+    fields: dict = {}
     if _EXTRUCT_AVAILABLE:
         try:
             data = extruct.extract(raw_html, syntaxes=["json-ld", "opengraph", "microdata"])
@@ -62,6 +100,7 @@ def _extract_structured_data(raw_html: str) -> str | None:
                     val = item.get(key)
                     if val:
                         lines.append(f"  {key}: {_format_jsonld_value(val)}")
+                _extract_fields_from_jsonld(item, fields)
 
             for og in (data.get("opengraph") or [])[:3]:
                 if not isinstance(og, dict):
@@ -71,6 +110,8 @@ def _extract_structured_data(raw_html: str) -> str | None:
                         name, content = prop
                         if content:
                             lines.append(f"OG {name}: {str(content)[:300]}")
+                            if name == "og:description" and "description" not in fields:
+                                fields["description"] = str(content)[:500]
 
             for md_item in (data.get("microdata") or [])[:3]:
                 if not isinstance(md_item, dict):
@@ -83,14 +124,14 @@ def _extract_structured_data(raw_html: str) -> str | None:
                         lines.append(f"  {key}: {str(val)[:300]}")
 
             if lines:
-                return "\n".join(lines)
+                return "\n".join(lines), fields
         except Exception:
             pass
 
     # Fallback: manual lxml-based extraction
     tree = _parse_html(raw_html)
     if tree is None:
-        return None
+        return None, fields
 
     lines = []
 
@@ -111,6 +152,7 @@ def _extract_structured_data(raw_html: str) -> str | None:
                     val = item.get(key)
                     if val:
                         lines.append(f"  {key}: {_format_jsonld_value(val)}")
+                _extract_fields_from_jsonld(item, fields)
         except (json_mod.JSONDecodeError, TypeError):
             continue
 
@@ -135,7 +177,7 @@ def _extract_structured_data(raw_html: str) -> str | None:
             if val and val.strip():
                 lines.append(f"Meta {meta_name}: {val.strip()[:200]}")
 
-    return "\n".join(lines) if lines else None
+    return ("\n".join(lines) if lines else None), fields
 
 
 async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
@@ -150,11 +192,12 @@ async def enrich_structured_data(initiative: Initiative) -> Enrichment | None:
         log.warning("Structured data fetch failed for %s: %s", url, exc)
         return None
 
-    text = _extract_structured_data(raw_html)
+    text, fields = _extract_structured_data(raw_html)
     if not text:
         return None
 
-    return _make_enrichment(initiative, "structured_data", url, text)
+    return _make_enrichment(initiative, "structured_data", url, text,
+                            structured_fields=fields or None)
 
 
 # ---------------------------------------------------------------------------

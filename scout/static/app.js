@@ -1060,7 +1060,35 @@ function updateExportLink() {
   const f = getFilters();
   if (f.verdict) url += `&verdict=${encodeURIComponent(f.verdict)}`;
   if (f.uni) url += `&uni=${encodeURIComponent(f.uni)}`;
-  a.href = url;
+  a.dataset.exportUrl = url;
+  a.href = '#';
+  a.onclick = function(e) { e.preventDefault(); downloadExport(); };
+}
+
+async function downloadExport() {
+  const a = document.getElementById('export-link');
+  const url = a && a.dataset.exportUrl;
+  if (!url) return;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(resp.status + ': ' + err);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'scout-export.xlsx';
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  } catch (err) {
+    showToast('Export failed: ' + err.message, 'error');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1518,6 +1546,7 @@ function _resetDetailPanel() {
 async function _activateDb(dbName) {
   state.currentDb = dbName;
   localStorage.setItem('scout-selected-db', dbName);
+  document.getElementById('db-selector').value = dbName;
   _lastRevision = null;
   _resetDetailPanel();
   await loadSchema();
@@ -1538,12 +1567,18 @@ async function loadDatabases() {
 }
 
 async function switchDatabase(name) {
+  let switched;
   try {
-    const result = await api('POST', '/api/databases/select', { name });
-    await _activateDb(result.current);
+    switched = await api('POST', '/api/databases/select', { name });
   } catch (err) {
     document.getElementById('db-selector').value = state.currentDb;
     showToast('Switch failed: ' + err.message, 'error');
+    return;
+  }
+  try {
+    await _activateDb(switched.current);
+  } catch (err) {
+    showToast('Switched to ' + switched.current + ' but UI refresh failed: ' + err.message, 'error');
   }
 }
 

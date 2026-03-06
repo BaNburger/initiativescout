@@ -487,6 +487,10 @@ def get_entity(entity_id: int, compact: bool = False, sources: str = "") -> dict
             actions.append(_next("enrich_entity", "Not yet enriched", entity_id=entity_id))
         if data.get("verdict") is None:
             actions.append(_next("score_entity", "Not yet scored", entity_id=entity_id))
+        missing = data.get("_missing_fields") or []
+        if missing and data.get("enriched", False):
+            keys = ", ".join(m["key"] for m in missing[:5])
+            actions.append(_next("submit_enrichment", f"Fill missing: {keys}", entity_id=entity_id))
         return _trim(_suggest(data, *actions))
 
 
@@ -681,7 +685,7 @@ def manage_entity(
 
 
 @mcp.tool(annotations=_WRITE)
-async def enrich_entity(entity_id: int, discover: bool = False) -> dict:
+async def enrich_entity(entity_id: int, discover: bool = False, incremental: bool = True) -> dict:
     """Fetch enrichment data from website, GitHub, extra links, plus extended sources.
 
     WHAT: Scrapes all known URLs + extracts structured data (JSON-LD/OpenGraph), tech stack,
@@ -692,13 +696,15 @@ async def enrich_entity(entity_id: int, discover: bool = False) -> dict:
     Args:
         entity_id: Entity ID.
         discover: Run DuckDuckGo URL discovery first (adds ~12s). Auto-enabled when no URLs configured.
+        incremental: Skip enrichers whose target fields are already filled (default True).
+            Set False to force re-run all enrichers.
     """
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
 
-        result = await services.enrich_with_diagnostics(session, init, discover=discover)
+        result = await services.enrich_with_diagnostics(session, init, discover=discover, incremental=incremental)
         session.commit()
 
         result["_db"] = _db_pulse(session)
@@ -715,6 +721,7 @@ def submit_enrichment(
     content: str,
     source_url: str = "",
     summary: str = "",
+    structured_fields: dict | None = None,
 ) -> dict:
     """Store enrichment data that you (the LLM) found via your own research.
 
@@ -732,6 +739,9 @@ def submit_enrichment(
         content: The information you found (raw text, extracted data, etc.).
         source_url: URL where you found it (recommended but optional).
         summary: Brief summary (optional; auto-truncated from content if omitted).
+        structured_fields: Direct field updates (e.g. {"linkedin": "https://...",
+            "member_count": 150}). Keys must match enrichable_fields in schema.
+            Invalid keys are skipped. Values are type-coerced automatically.
     """
     if not content or not content.strip():
         return _error("Content cannot be empty", "VALIDATION_ERROR")
@@ -749,20 +759,33 @@ def submit_enrichment(
             source_url=source_url.strip() if source_url else None,
             raw_text=content.strip()[:15000],
             summary=(summary.strip() if summary else content.strip()[:500]),
+            structured_fields_json=json.dumps(structured_fields) if structured_fields else "{}",
             fetched_at=datetime.now(UTC),
         )
         session.add(enrichment)
+
+        # Apply structured fields to entity
+        field_result = {}
+        if structured_fields:
+            field_result = services.apply_enrichment_fields(init, structured_fields)
+
         session.commit()
 
+        result = {
+            "entity_id": init.id,
+            "entity_name": init.name,
+            "enrichment_id": enrichment.id,
+            "source_type": enrichment.source_type,
+            "content_length": len(enrichment.raw_text),
+            "_db": _db_pulse(session),
+        }
+        if field_result.get("applied"):
+            result["fields_applied"] = field_result["applied"]
+        if field_result.get("skipped"):
+            result["fields_skipped"] = field_result["skipped"]
+
         return _suggest(
-            {
-                "entity_id": init.id,
-                "entity_name": init.name,
-                "enrichment_id": enrichment.id,
-                "source_type": enrichment.source_type,
-                "content_length": len(enrichment.raw_text),
-                "_db": _db_pulse(session),
-            },
+            result,
             _next("score_entity", "Score with new enrichment data", entity_id=init.id),
         )
 

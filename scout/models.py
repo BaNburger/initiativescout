@@ -164,6 +164,7 @@ class Enrichment(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_text: Mapped[str] = mapped_column(Text, default="")
     summary: Mapped[str] = mapped_column(Text, default="")
+    structured_fields_json: Mapped[str] = mapped_column(Text, default="{}")
     fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     __table_args__ = (

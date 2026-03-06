@@ -119,14 +119,17 @@ def _get_website_url(initiative: Initiative) -> str | None:
 def _make_enrichment(
     initiative: Initiative, source_type: str, source_url: str,
     raw_text: str, summary: str | None = None,
+    structured_fields: dict | None = None,
 ) -> Enrichment:
     """Create an Enrichment with automatic truncation and timestamp."""
+    import json
     return Enrichment(
         initiative_id=initiative.id,
         source_type=source_type,
         source_url=source_url,
         raw_text=raw_text[:_MAX_TEXT],
         summary=(summary or raw_text)[:_MAX_SUMMARY],
+        structured_fields_json=json.dumps(structured_fields) if structured_fields else "{}",
         fetched_at=datetime.now(UTC),
     )
 

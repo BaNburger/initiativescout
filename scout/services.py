@@ -165,6 +165,47 @@ def _enrichment_meta(init: Initiative) -> tuple[bool, str | None]:
     return True, latest.isoformat()
 
 
+def compute_missing_fields(init: Initiative) -> list[dict]:
+    """Return enrichable fields that are empty/default on this entity."""
+    enrichable = get_schema().get("enrichable_fields", {})
+    missing = []
+    for key, meta in enrichable.items():
+        val = init.field(key)
+        if val is None or val == "" or val == 0 or val is False:
+            missing.append({"key": key, "label": meta["label"], "type": meta["type"]})
+    return missing
+
+
+def apply_enrichment_fields(init: Initiative, fields: dict) -> dict:
+    """Validate and apply structured fields to an entity.
+
+    Returns dict with 'applied' (list of keys set) and 'skipped' (list of
+    {key, reason} for invalid keys).
+    """
+    enrichable = get_schema().get("enrichable_fields", {})
+    applied, skipped = [], []
+    for key, value in fields.items():
+        if key not in enrichable:
+            skipped.append({"key": key, "reason": "not in enrichable_fields"})
+            continue
+        meta = enrichable[key]
+        # Type coercion
+        if meta["type"] == "int":
+            try:
+                value = int(value)
+            except (ValueError, TypeError):
+                skipped.append({"key": key, "reason": f"expected int, got {type(value).__name__}"})
+                continue
+        elif meta["type"] == "bool":
+            if isinstance(value, str):
+                value = value.lower() in ("true", "1", "yes")
+            else:
+                value = bool(value)
+        init.set_field(key, value)
+        applied.append(key)
+    return {"applied": applied, "skipped": skipped}
+
+
 def entity_summary(init: Initiative) -> dict:
     enriched, enriched_at_iso = _enrichment_meta(init)
     return _build_entity_dict(
@@ -194,6 +235,7 @@ def entity_detail(init: Initiative, *, sources: set[str] | None = None) -> dict:
         if sources is None or e.source_type in sources
     ]
     base["projects"] = [project_summary(p) for p in init.projects]
+    base["_missing_fields"] = compute_missing_fields(init)
     return base
 
 
@@ -207,9 +249,11 @@ def entity_detail_compact(init: Initiative) -> dict:
     base.update({f: init.field(f) for f in get_detail_fields()})
     base["enrichment_sources"] = [e.source_type for e in init.enrichments]
     base["project_count"] = len(init.projects)
+    missing = compute_missing_fields(init)
+    base["_missing_fields_count"] = len(missing)
     # Strip empty/default values to reduce context, but keep id, name, enriched
     # and preserve legitimate 0 and False values (e.g. github_commits_90d=0)
-    _keep = {"id", "name", "enriched"}
+    _keep = {"id", "name", "enriched", "_missing_fields_count"}
     _empty = ("", None, [], {})
     return {k: v for k, v in base.items() if k in _keep or v not in _empty}
 
@@ -561,10 +605,12 @@ def get_work_queue(session: Session, limit: int = 10) -> list[dict]:
             action = "score"
         else:
             action = "re-enrich"
+        missing = compute_missing_fields(init)
         item: dict = {
             "id": init.id, "name": init.name,
             "needs_enrichment": needs_enrich, "needs_scoring": needs_score,
             "recommended_action": action,
+            "missing_fields_count": len(missing),
         }
         # Include entity-type-relevant context
         if init.uni:
@@ -703,11 +749,15 @@ def build_similarity_id_mask(
 
 async def run_enrichment(
     session: Session, init: Initiative, crawler: object | None = None,
+    *, incremental: bool = True,
 ) -> list[Enrichment]:
     """Run entity-type-aware enrichers in parallel; only delete old enrichments if at least one succeeds.
 
     Uses ENRICHER_REGISTRY + entity type config to determine which enrichers
     to run. Enrichers that need a crawler get one; others are called directly.
+
+    When incremental=True (default), skips enrichers whose target fields are
+    already filled on the entity. Set incremental=False to force re-run all.
 
     Returns new enrichments (caller must commit).
     """
@@ -715,12 +765,21 @@ async def run_enrichment(
     entity_type = get_entity_type()
     cfg = get_entity_config(entity_type)
     configured = set(cfg.get("enrichers", list(ENRICHER_REGISTRY.keys())))
+    enricher_targets = cfg.get("enricher_targets", {})
 
     # Build tasks from registry, respecting entity type config
     tasks: list[tuple[str, Any]] = []
     for name in ENRICHER_REGISTRY:
         if name not in configured:
             continue
+        # Skip enrichers whose target fields are all filled
+        if incremental and name in enricher_targets:
+            targets = enricher_targets[name]
+            if targets and all(
+                init.field(f) not in (None, "", 0, False) for f in targets
+            ):
+                log.debug("Skipping enricher %s — all targets filled for %s", name, init.name)
+                continue
         fn = ENRICHER_REGISTRY[name]
         if name in _CRAWLER_ENRICHERS:
             tasks.append((name, fn(init, crawler)))
@@ -748,6 +807,11 @@ async def run_enrichment(
         session.execute(delete(Enrichment).where(Enrichment.initiative_id == init.id))
         for e in new_enrichments:
             session.add(e)
+        # Apply structured fields from enrichments to entity
+        for e in new_enrichments:
+            sf = json_parse(e.structured_fields_json)
+            if sf:
+                apply_enrichment_fields(init, sf)
         # Re-embed with updated enrichment data
         session.flush()
         try:
@@ -780,6 +844,7 @@ async def run_discovery(session: Session, init: Initiative) -> dict:
 
 async def enrich_with_diagnostics(
     session: Session, init: Initiative, *, discover: bool = False,
+    incremental: bool = True,
 ) -> dict:
     """Full enrichment pipeline: optional discovery → enrich → source diagnostics.
 
@@ -818,7 +883,7 @@ async def enrich_with_diagnostics(
             discover_result = {"skipped": True, "reason": str(exc)[:100]}
 
     async with open_crawler() as crawler:
-        new = await run_enrichment(session, init, crawler=crawler)
+        new = await run_enrichment(session, init, crawler=crawler, incremental=incremental)
 
     # Classify sources
     succeeded = [e.source_type for e in new]

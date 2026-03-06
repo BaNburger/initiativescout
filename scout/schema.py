@@ -126,7 +126,44 @@ _INITIATIVE_SCHEMA: dict[str, Any] = {
         "website", "team_page", "github", "extra_links",
         "structured_data", "tech_stack", "dns", "sitemap", "careers", "git_deep",
     ],
+    "enricher_targets": {
+        "github": ["github_repo_count", "github_contributors", "github_commits_90d", "github_ci_present"],
+        "structured_data": ["email", "description", "linkedin", "github_org", "member_count"],
+    },
     "context": "Munich student initiatives",
+
+    # Enrichable fields: standard fields the LLM should fill via submit_enrichment
+    "enrichable_fields": {
+        # URLs & contact
+        "website": {"label": "Website", "type": "url"},
+        "email": {"label": "Email", "type": "email"},
+        "linkedin": {"label": "LinkedIn", "type": "url"},
+        "github_org": {"label": "GitHub Org", "type": "url"},
+        "team_page": {"label": "Team Page", "type": "url"},
+        # Team signals
+        "member_count": {"label": "Member Count", "type": "int"},
+        "team_size": {"label": "Team Size", "type": "text"},
+        "member_examples": {"label": "Key Members", "type": "text"},
+        "member_roles": {"label": "Member Roles", "type": "text"},
+        # GitHub signals
+        "github_repo_count": {"label": "GitHub Repos", "type": "int"},
+        "github_contributors": {"label": "GitHub Contributors", "type": "int"},
+        "github_commits_90d": {"label": "GitHub Commits (90d)", "type": "int"},
+        "github_ci_present": {"label": "Has CI/CD", "type": "bool"},
+        "key_repos": {"label": "Key Repos", "type": "text"},
+        # Classification
+        "technology_domains": {"label": "Tech Domains", "type": "text"},
+        "market_domains": {"label": "Market Domains", "type": "text"},
+        "categories": {"label": "Categories", "type": "text"},
+        # Research signals
+        "huggingface_model_hits": {"label": "HuggingFace Hits", "type": "int"},
+        "openalex_hits": {"label": "OpenAlex Hits", "type": "int"},
+        "semantic_scholar_hits": {"label": "Semantic Scholar Hits", "type": "int"},
+        # Context
+        "sponsors": {"label": "Sponsors", "type": "text"},
+        "competitions": {"label": "Competitions", "type": "text"},
+        "description": {"label": "Description", "type": "text"},
+    },
 }
 
 
@@ -180,6 +217,21 @@ _PROFESSOR_SCHEMA: dict[str, Any] = {
     "dimensions": {"team": "Research Group", "tech": "Research Output", "opportunity": "Collaboration Potential"},
     "enrichers": ["website", "extra_links", "structured_data", "dns", "sitemap"],
     "context": "TUM professors",
+
+    # Enrichable fields: professor-specific
+    "enrichable_fields": {
+        "website": {"label": "Website", "type": "url"},
+        "email": {"label": "Email", "type": "email"},
+        "linkedin": {"label": "LinkedIn", "type": "url"},
+        "description": {"label": "Research Focus", "type": "text"},
+        "technology_domains": {"label": "Research Areas", "type": "text"},
+        "member_count": {"label": "Group Size", "type": "int"},
+        "member_examples": {"label": "Key Researchers", "type": "text"},
+        "openalex_hits": {"label": "OpenAlex Hits", "type": "int"},
+        "semantic_scholar_hits": {"label": "Semantic Scholar Hits", "type": "int"},
+        "huggingface_model_hits": {"label": "HuggingFace Hits", "type": "int"},
+        "github_org": {"label": "GitHub", "type": "url"},
+    },
 }
 
 
@@ -260,4 +312,10 @@ def _build_custom_schema(entity_type: str) -> dict[str, Any]:
         "dimensions": dims,
         "enrichers": cfg.get("enrichers", ["website", "extra_links", "structured_data"]),
         "context": cfg.get("context", entity_type),
+        "enrichable_fields": cfg.get("enrichable_fields", {
+            "website": {"label": "Website", "type": "url"},
+            "email": {"label": "Email", "type": "email"},
+            "linkedin": {"label": "LinkedIn", "type": "url"},
+            "description": {"label": "Description", "type": "text"},
+        }),
     }

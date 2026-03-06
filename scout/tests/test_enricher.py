@@ -672,12 +672,13 @@ class TestExtractStructuredData:
          "numberOfEmployees": 42, "url": "https://testcorp.com"}
         </script>
         </head><body></body></html>'''
-        result = _extract_structured_data(html)
+        result, fields = _extract_structured_data(html)
         assert result is not None
         assert "Organization" in result
         assert "TestCorp" in result
         assert "2020" in result
         assert "42" in result
+        assert fields.get("member_count") == 42
 
     def test_extracts_opengraph(self):
         from scout.enricher import _extract_structured_data
@@ -686,7 +687,7 @@ class TestExtractStructuredData:
         <meta property="og:description" content="We build rockets">
         <meta property="og:type" content="website">
         </head><body></body></html>'''
-        result = _extract_structured_data(html)
+        result, _fields = _extract_structured_data(html)
         assert result is not None
         assert "My Startup" in result
         assert "We build rockets" in result
@@ -697,18 +698,20 @@ class TestExtractStructuredData:
         <meta name="keywords" content="AI, machine learning, robotics">
         <meta name="author" content="Jane Doe">
         </head><body></body></html>'''
-        result = _extract_structured_data(html)
+        result, _fields = _extract_structured_data(html)
         assert result is not None
         assert "AI, machine learning" in result
         assert "Jane Doe" in result
 
     def test_returns_none_for_empty_html(self):
         from scout.enricher import _extract_structured_data
-        assert _extract_structured_data("<html><body>No structured data</body></html>") is None
+        result, _fields = _extract_structured_data("<html><body>No structured data</body></html>")
+        assert result is None
 
     def test_returns_none_for_invalid_html(self):
         from scout.enricher import _extract_structured_data
-        assert _extract_structured_data("not html at all") is None
+        result, _fields = _extract_structured_data("not html at all")
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_enrich_structured_data_no_website(self, empty_initiative):
@@ -1405,7 +1408,7 @@ class TestExtructIntegration:
         <script type="application/ld+json">
         {"@type": "Organization", "name": "Test Corp", "url": "https://test.com"}
         </script></head><body></body></html>'''
-        result = _extract_structured_data(html)
+        result, _fields = _extract_structured_data(html)
         assert result is not None
         assert "Organization" in result
         assert "Test Corp" in result
@@ -1416,14 +1419,14 @@ class TestExtructIntegration:
         <meta property="og:title" content="My Page">
         <meta property="og:description" content="A test page">
         </head><body></body></html>'''
-        result = _extract_structured_data(html)
+        result, _fields = _extract_structured_data(html)
         assert result is not None
         assert "My Page" in result
 
     def test_extract_structured_data_empty(self):
         from scout.enricher import _extract_structured_data
         html = '<html><body><p>No structured data here</p></body></html>'
-        result = _extract_structured_data(html)
+        result, _fields = _extract_structured_data(html)
         assert result is None
 
 

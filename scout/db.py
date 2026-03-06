@@ -87,6 +87,7 @@ def _migrate_existing_db(engine) -> None:
     _add_column_if_missing(engine, inspector, "initiatives", "faculty", "faculty VARCHAR(200) DEFAULT ''")
     _add_column_if_missing(engine, inspector, "initiatives", "metadata_json", "metadata_json TEXT DEFAULT '{}'")
     _add_column_if_missing(engine, inspector, "enrichments", "source_url", "source_url TEXT")
+    _add_column_if_missing(engine, inspector, "enrichments", "structured_fields_json", "structured_fields_json TEXT DEFAULT '{}'")
     _add_column_if_missing(engine, inspector, "custom_columns", "database", "database TEXT")
     _add_column_if_missing(engine, inspector, "outreach_scores", "dimension_grades_json", "dimension_grades_json TEXT DEFAULT '{}'")
     # Ensure performance indexes exist (idempotent)
