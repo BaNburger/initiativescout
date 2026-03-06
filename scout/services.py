@@ -131,7 +131,7 @@ def latest_score_fields(scores: list[OutreachScore], detail: bool = True) -> dic
     return score_response_dict(latest, extended=detail)
 
 
-def _build_initiative_dict(
+def _build_entity_dict(
     init: Initiative,
     enriched: bool,
     enriched_at_iso: str | None,
@@ -165,17 +165,17 @@ def _enrichment_meta(init: Initiative) -> tuple[bool, str | None]:
     return True, latest.isoformat()
 
 
-def initiative_summary(init: Initiative) -> dict:
+def entity_summary(init: Initiative) -> dict:
     enriched, enriched_at_iso = _enrichment_meta(init)
-    return _build_initiative_dict(
+    return _build_entity_dict(
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=False),
     )
 
 
-def initiative_detail(init: Initiative, *, sources: set[str] | None = None) -> dict:
+def entity_detail(init: Initiative, *, sources: set[str] | None = None) -> dict:
     enriched, enriched_at_iso = _enrichment_meta(init)
-    base = _build_initiative_dict(
+    base = _build_entity_dict(
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=True),
     )
@@ -197,10 +197,10 @@ def initiative_detail(init: Initiative, *, sources: set[str] | None = None) -> d
     return base
 
 
-def initiative_detail_compact(init: Initiative) -> dict:
+def entity_detail_compact(init: Initiative) -> dict:
     """Lighter detail view: skips enrichment summaries, extra_links, projects, reasoning."""
     enriched, enriched_at_iso = _enrichment_meta(init)
-    base = _build_initiative_dict(
+    base = _build_entity_dict(
         init, enriched=enriched, enriched_at_iso=enriched_at_iso,
         score_fields=latest_score_fields(init.scores, detail=False),
     )
@@ -299,7 +299,7 @@ def _latest_score_subquery():
     )
 
 
-def query_initiatives(
+def query_entities(
     session: Session,
     *,
     verdict: str | None = None,
@@ -422,7 +422,7 @@ def query_initiatives(
         for f in SCORE_LIST_FIELDS:
             score_fields[f] = getattr(row, f"ls_{f}", None)
 
-        items.append(_build_initiative_dict(
+        items.append(_build_entity_dict(
             init,
             enriched=row.enrich_count > 0,
             enriched_at_iso=row.enrich_latest.isoformat() if row.enrich_latest else None,
@@ -462,7 +462,7 @@ def merge_custom_fields(obj, updates: dict) -> None:
 _PROJECT_FIELDS = ("name", "description", "website", "github_url", "team")
 
 
-def create_initiative(session: Session, **kwargs: Any) -> Initiative:
+def create_entity(session: Session, **kwargs: Any) -> Initiative:
     """Create a new entity. Accepts fields from the entity type schema.
 
     Column fields are set directly; other fields go into metadata_json.
@@ -500,13 +500,13 @@ def create_project(session: Session, initiative_id: int, extra_links: dict | Non
     return proj
 
 
-def delete_initiative(session: Session, initiative_id: int) -> bool:
-    """Delete an initiative (cascade handles enrichments, scores, projects).
+def delete_entity(session: Session, entity_id: int) -> bool:
+    """Delete an entity (cascade handles enrichments, scores, projects).
 
     FTS index is updated automatically via SQLAlchemy event listeners (db.py).
     Returns True if found.
     """
-    init = get_entity(session, Initiative, initiative_id)
+    init = get_entity(session, Initiative, entity_id)
     if not init:
         return False
     session.delete(init)  # triggers after_delete → FTS sync
@@ -859,7 +859,7 @@ async def run_scoring(
     session: Session, init: Initiative, client: LLMClient | None = None,
     entity_type: str | None = None,
 ) -> OutreachScore:
-    """Score an initiative, replacing existing initiative-level scores (caller must commit)."""
+    """Score an entity, replacing existing entity-level scores (caller must commit)."""
     client = _ensure_client(client)
     if entity_type is None:
         from scout.db import get_entity_type

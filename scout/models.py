@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
     pass
 
 
-class Initiative(Base):
+class Initiative(Base):  # aliased as Entity at module level
     __tablename__ = "initiatives"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -149,6 +149,10 @@ class Initiative(Base):
                 if v is not None and k not in result:
                     result[k] = v
         return result
+
+
+# Public alias — new code should use Entity; Initiative kept for DB compat
+Entity = Initiative
 
 
 class Enrichment(Base):

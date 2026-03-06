@@ -489,10 +489,10 @@ class TestDossierBuilders:
 # Refactor #5: Unified initiative summary dict
 # =========================================================================
 
-class TestInitiativeSummaryDict:
+class TestEntitySummaryDict:
     def test_summary_keys(self, session, sample_initiative, sample_enrichments, sample_score):
-        from scout.services import initiative_summary
-        summary = initiative_summary(sample_initiative)
+        from scout.services import entity_summary
+        summary = entity_summary(sample_initiative)
         expected_keys = {
             "id", "name", "uni", "faculty", "sector", "mode", "description",
             "website", "email", "relevance", "sheet_source",
@@ -506,8 +506,8 @@ class TestInitiativeSummaryDict:
         assert set(summary.keys()) == expected_keys
 
     def test_summary_values(self, session, sample_initiative, sample_enrichments, sample_score):
-        from scout.services import initiative_summary
-        summary = initiative_summary(sample_initiative)
+        from scout.services import entity_summary
+        summary = entity_summary(sample_initiative)
         assert summary["id"] == sample_initiative.id
         assert summary["name"] == "TestBot"
         assert summary["enriched"] is True
@@ -515,21 +515,21 @@ class TestInitiativeSummaryDict:
         assert summary["custom_fields"] == {"stage": "pre-seed"}
 
     def test_summary_unenriched(self, session, sample_initiative):
-        from scout.services import initiative_summary
-        summary = initiative_summary(sample_initiative)
+        from scout.services import entity_summary
+        summary = entity_summary(sample_initiative)
         assert summary["enriched"] is False
         assert summary["enriched_at"] is None
 
     def test_summary_unscored(self, session, sample_initiative, sample_enrichments):
-        from scout.services import initiative_summary
-        summary = initiative_summary(sample_initiative)
+        from scout.services import entity_summary
+        summary = entity_summary(sample_initiative)
         assert summary["verdict"] is None
         assert summary["score"] is None
 
     def test_detail_extends_summary(self, session, sample_initiative, sample_enrichments, sample_score):
-        from scout.services import initiative_detail, initiative_summary
-        summary = initiative_summary(sample_initiative)
-        detail = initiative_detail(sample_initiative)
+        from scout.services import entity_detail, entity_summary
+        summary = entity_summary(sample_initiative)
+        detail = entity_detail(sample_initiative)
         # Detail should have all summary keys plus extra
         for key in summary:
             assert key in detail, f"Detail missing summary key: {key}"
@@ -568,28 +568,28 @@ class TestLlmErrorHelper:
 # =========================================================================
 
 class TestServicesCRUD:
-    def test_create_initiative(self, session):
-        from scout.services import create_initiative, initiative_detail
-        init = create_initiative(
+    def test_create_entity(self, session):
+        from scout.services import create_entity, entity_detail
+        init = create_entity(
             session, name="NewInit", uni="LMU",
             sector="FinTech", website="https://newinit.dev",
         )
         session.commit()
         assert init.id is not None
         assert init.name == "NewInit"
-        detail = initiative_detail(init)
+        detail = entity_detail(init)
         assert detail["name"] == "NewInit"
         assert detail["uni"] == "LMU"
 
-    def test_delete_initiative(self, session, sample_initiative):
-        from scout.services import delete_initiative, get_entity
-        assert delete_initiative(session, sample_initiative.id) is True
+    def test_delete_entity(self, session, sample_initiative):
+        from scout.services import delete_entity, get_entity
+        assert delete_entity(session, sample_initiative.id) is True
         session.flush()
         assert get_entity(session, Initiative, sample_initiative.id) is None
 
-    def test_delete_initiative_not_found(self, session):
-        from scout.services import delete_initiative
-        assert delete_initiative(session, 9999) is False
+    def test_delete_entity_not_found(self, session):
+        from scout.services import delete_entity
+        assert delete_entity(session, 9999) is False
 
     def test_custom_column_lifecycle(self, session):
         from scout.services import (
@@ -777,7 +777,7 @@ class TestModuleImports:
     def test_import_services(self):
         from scout.services import (
             get_entity, score_response_dict, create_project,
-            _ensure_client, _build_initiative_dict,
+            _ensure_client, _build_entity_dict,
         )
         assert callable(get_entity)
         assert callable(score_response_dict)

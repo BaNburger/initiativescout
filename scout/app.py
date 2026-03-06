@@ -189,7 +189,7 @@ async def get_schema_route():
 
 @app.get("/api/entities",
          tags=["Entities"], summary="List entities with filtering, sorting, and pagination")
-async def list_initiatives(
+async def list_entities(
     verdict: str | None = Query(None, description="Comma-separated: reach_out_now, reach_out_soon, monitor, skip, unscored"),
     classification: str | None = Query(None, description="Comma-separated classification filter (values depend on entity type)"),
     uni: str | None = Query(None, description="Comma-separated: TUM, LMU, HM"),
@@ -203,7 +203,7 @@ async def list_initiatives(
     session: Session = Depends(db_session),
 ):
     fields_set = {f.strip() for f in fields.split(",") if f.strip()} if fields else None
-    items, total = services.query_initiatives(
+    items, total = services.query_entities(
         session, verdict=verdict, classification=classification,
         uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
         page=page, per_page=per_page, fields=fields_set,
@@ -215,21 +215,21 @@ async def list_initiatives(
 
 @app.get("/api/entities/{initiative_id}",
          tags=["Entities"], summary="Get full entity detail with enrichments, projects, and scores")
-async def get_initiative(
+async def get_entity(
     initiative_id: int,
     sources: str | None = Query(None, description="Comma-separated enrichment source types to include (e.g. 'github,website')"),
     session: Session = Depends(db_session),
 ):
     from scout.utils import parse_comma_set
-    return services.initiative_detail(_get_or_404(session, Initiative, initiative_id), sources=parse_comma_set(sources))
+    return services.entity_detail(_get_or_404(session, Initiative, initiative_id), sources=parse_comma_set(sources))
 
 
 @app.put("/api/entities/{initiative_id}",
          tags=["Entities"], summary="Update entity fields (partial update, null fields ignored)")
-async def update_initiative(initiative_id: int, body: dict[str, Any] | None = None, session: Session = Depends(db_session)):
+async def update_entity(initiative_id: int, body: dict[str, Any] | None = None, session: Session = Depends(db_session)):
     init = _get_or_404(session, Initiative, initiative_id)
     if not body:
-        return services.initiative_detail(init)
+        return services.entity_detail(init)
     updatable = set(services.get_updatable_fields())
     custom_fields = body.pop("custom_fields", None)
     for key, val in body.items():
@@ -239,7 +239,7 @@ async def update_initiative(initiative_id: int, body: dict[str, Any] | None = No
         services.merge_custom_fields(init, custom_fields)
     session.flush()
     session.commit()
-    return services.initiative_detail(init)
+    return services.entity_detail(init)
 
 
 # ---------------------------------------------------------------------------

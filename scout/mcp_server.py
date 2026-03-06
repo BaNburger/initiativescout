@@ -452,7 +452,7 @@ def list_entities(
     """
     fields_set = {f.strip() for f in fields.split(",") if f.strip()} if fields else None
     with session_scope() as session:
-        items, _ = services.query_initiatives(
+        items, _ = services.query_entities(
             session, verdict=verdict, classification=classification,
             uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
             page=1, per_page=max(1, min(limit, 500)), fields=fields_set,
@@ -479,9 +479,9 @@ def get_entity(entity_id: int, compact: bool = False, sources: str = "") -> dict
         if err:
             return err
         if compact:
-            data = services.initiative_detail_compact(init)
+            data = services.entity_detail_compact(init)
         else:
-            data = services.initiative_detail(init, sources=parse_comma_set(sources))
+            data = services.entity_detail(init, sources=parse_comma_set(sources))
         actions = []
         if not data.get("enriched", False):
             actions.append(_next("enrich_entity", "Not yet enriched", entity_id=entity_id))
@@ -565,7 +565,7 @@ def manage_entity(
                         continue
                     if k in services.UPDATABLE_FIELDS and v:
                         fields[k] = v
-                init = services.create_initiative(session, **fields)
+                init = services.create_entity(session, **fields)
                 if custom_fields and isinstance(custom_fields, dict):
                     init.custom_fields_json = json.dumps(custom_fields)
                     session.flush()
@@ -599,7 +599,7 @@ def manage_entity(
                 else:
                     metadata_fields[k] = v
         with session_scope() as session:
-            init = services.create_initiative(session, **all_fields)
+            init = services.create_entity(session, **all_fields)
             if custom_fields and isinstance(custom_fields, dict):
                 init.custom_fields_json = json.dumps(custom_fields)
             # Store non-standard fields in metadata_json
@@ -641,7 +641,7 @@ def manage_entity(
                 services.merge_custom_fields(init, custom_fields)
             session.flush()
             session.commit()
-            detail = _trim(services.initiative_detail(init))
+            detail = _trim(services.entity_detail(init))
             if updates.get("name") and updates["name"] != old_name:
                 detail["warning"] = (
                     f"Renamed: '{old_name}' -> '{updates['name']}'. "
@@ -665,7 +665,7 @@ def manage_entity(
                                "Call again with confirm=True.",
                 }
         with session_scope() as session:
-            if not services.delete_initiative(session, entity_id):
+            if not services.delete_entity(session, entity_id):
                 return _error(f"Entity {entity_id} not found", "NOT_FOUND")
             session.commit()
             result = {"ok": True, "deleted_entity_id": entity_id}
