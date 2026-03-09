@@ -194,6 +194,20 @@ class ScriptContext:
             return sp.content
         raise ValueError(f"Prompt '{name}' not found")
 
+    # -- Credentials -------------------------------------------------------
+
+    def secret(self, name: str) -> str:
+        """Read a stored credential by name. Falls back to env var."""
+        from scout.services import get_credential
+        val = get_credential(self._session, name)
+        if val is not None:
+            return val
+        # Fallback: treat name as env var key
+        env_val = os.environ.get(name, "")
+        if env_val:
+            return env_val
+        raise ValueError(f"Credential '{name}' not found (checked DB and env)")
+
     # -- Environment -------------------------------------------------------
 
     def env(self, key: str, default: str = "") -> str:

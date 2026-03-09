@@ -828,6 +828,38 @@ async def api_delete_prompt(name: str, session: Session = Depends(db_session)):
     return {"ok": True, "name": name}
 
 
+@app.get("/api/credentials", tags=["Credentials"], summary="List credentials (names only)")
+async def api_list_credentials(session: Session = Depends(db_session)):
+    return services.list_credentials(session)
+
+
+@app.post("/api/credentials", tags=["Credentials"], status_code=201, summary="Save a credential")
+async def api_save_credential(
+    body: dict,
+    session: Session = Depends(db_session),
+):
+    name = body.get("name", "")
+    value = body.get("value", "")
+    if not name or not value:
+        raise HTTPException(400, "name and value required")
+    result = services.save_credential(
+        session, name=name, value=value,
+        service=body.get("service", ""),
+        description=body.get("description", ""),
+    )
+    session.commit()
+    return result
+
+
+@app.delete("/api/credentials/{name}", tags=["Credentials"], summary="Delete a credential")
+async def api_delete_credential(name: str, session: Session = Depends(db_session)):
+    deleted = services.delete_credential(session, name)
+    session.commit()
+    if not deleted:
+        raise HTTPException(404, f"Credential '{name}' not found")
+    return {"ok": True, "name": name}
+
+
 @app.delete("/api/reset", tags=["Admin"], summary="Delete all data (initiatives, enrichments, scores, projects)")
 async def reset_db(session: Session = Depends(db_session)):
     session.execute(delete(OutreachScore))

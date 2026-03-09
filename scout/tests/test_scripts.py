@@ -579,3 +579,121 @@ class TestPromptMCPTool:
 
         result = prompt(action="explode")
         assert result["error_code"] == "VALIDATION_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# Credential CRUD tests
+# ---------------------------------------------------------------------------
+
+
+class TestCredentialCRUD:
+    """Test credential save/list/get/delete in services."""
+
+    def test_save_and_get(self, session):
+        result = services.save_credential(session, "my_api_key", "sk-12345", service="openai")
+        session.commit()
+        assert result["name"] == "my_api_key"
+        assert result["created"] is True
+
+        val = services.get_credential(session, "my_api_key")
+        assert val == "sk-12345"
+
+    def test_upsert(self, session):
+        services.save_credential(session, "key1", "v1")
+        session.commit()
+        result = services.save_credential(session, "key1", "v2")
+        session.commit()
+        assert result["updated"] is True
+        assert services.get_credential(session, "key1") == "v2"
+
+    def test_list_never_exposes_values(self, session):
+        services.save_credential(session, "secret1", "value1", service="svc1")
+        services.save_credential(session, "secret2", "value2", service="svc2")
+        session.commit()
+        creds = services.list_credentials(session)
+        assert len(creds) == 2
+        for c in creds:
+            assert "value" not in str(c).lower() or "encrypted" not in c
+            assert "encrypted_value" not in c
+            assert "name" in c and "service" in c
+
+    def test_delete(self, session):
+        services.save_credential(session, "temp", "val")
+        session.commit()
+        assert services.delete_credential(session, "temp") is True
+        assert services.get_credential(session, "temp") is None
+
+    def test_delete_nonexistent(self, session):
+        assert services.delete_credential(session, "nope") is False
+
+    def test_get_nonexistent(self, session):
+        assert services.get_credential(session, "nope") is None
+
+
+class TestSDKSecret:
+    """Test ctx.secret() in the SDK."""
+
+    def test_secret_from_db(self, session):
+        from scout.sdk import ScriptContext
+
+        services.save_credential(session, "api_key", "sk-secret123", service="test")
+        session.commit()
+        ctx = ScriptContext(session)
+        assert ctx.secret("api_key") == "sk-secret123"
+        ctx._close()
+
+    def test_secret_env_fallback(self, session):
+        from scout.sdk import ScriptContext
+
+        ctx = ScriptContext(session)
+        with patch.dict("os.environ", {"MY_KEY": "env-value"}):
+            assert ctx.secret("MY_KEY") == "env-value"
+        ctx._close()
+
+    def test_secret_not_found(self, session):
+        from scout.sdk import ScriptContext
+
+        ctx = ScriptContext(session)
+        with pytest.raises(ValueError, match="not found"):
+            ctx.secret("nonexistent_key")
+        ctx._close()
+
+
+class TestCredentialMCPTool:
+    """Test the credential() MCP tool."""
+
+    def test_save_and_list(self, session, _patch_db, _patch_entity_type):
+        from scout.mcp_server import credential
+
+        result = credential(action="save", name="hubspot_key", value="hs-abc", service="hubspot")
+        assert result["ok"] is True
+
+        result = credential(action="list")
+        assert result["ok"] is True
+        assert result["count"] == 1
+        assert result["credentials"][0]["name"] == "hubspot_key"
+        assert result["credentials"][0]["service"] == "hubspot"
+        # Values must never appear in list output
+        assert "hs-abc" not in json.dumps(result)
+
+    def test_delete(self, session, _patch_db, _patch_entity_type):
+        from scout.mcp_server import credential
+
+        credential(action="save", name="tmp", value="val")
+        result = credential(action="delete", name="tmp")
+        assert result["ok"] is True
+
+        result = credential(action="list")
+        assert result["count"] == 0
+
+    def test_save_missing_value(self, session, _patch_db, _patch_entity_type):
+        from scout.mcp_server import credential
+
+        result = credential(action="save", name="x")
+        assert result["error_code"] == "VALIDATION_ERROR"
+
+    def test_invalid_action(self, session, _patch_db, _patch_entity_type):
+        from scout.mcp_server import credential
+
+        result = credential(action="read")
+        assert result["error_code"] == "VALIDATION_ERROR"

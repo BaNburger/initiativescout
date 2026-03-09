@@ -1406,3 +1406,116 @@ def delete_prompt(session: Session, name: str) -> bool:
     session.delete(p)
     session.flush()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Credential CRUD
+# ---------------------------------------------------------------------------
+
+# Encryption: Fernet (cryptography) if available, else base64 obfuscation.
+_FERNET_AVAILABLE = False
+try:
+    from cryptography.fernet import Fernet
+    _FERNET_AVAILABLE = True
+except ImportError:
+    Fernet = None  # type: ignore[assignment,misc]
+
+_fernet_instance = None
+
+
+def _get_fernet():
+    """Get or create a Fernet instance from SCOUT_SECRET_KEY env var."""
+    global _fernet_instance
+    if _fernet_instance is not None:
+        return _fernet_instance
+    import os
+    key = os.environ.get("SCOUT_SECRET_KEY", "")
+    if not key:
+        # Auto-generate and warn — stored in memory only for this session
+        import base64
+        key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+        log.warning("SCOUT_SECRET_KEY not set — using ephemeral key. "
+                    "Credentials will be unreadable after restart. "
+                    "Set SCOUT_SECRET_KEY to a Fernet key for persistence.")
+    _fernet_instance = Fernet(key)
+    return _fernet_instance
+
+
+def _encrypt_value(plaintext: str) -> str:
+    """Encrypt a credential value."""
+    if _FERNET_AVAILABLE:
+        return _get_fernet().encrypt(plaintext.encode()).decode()
+    # Fallback: base64 — not secure, but prevents casual exposure
+    import base64
+    return "b64:" + base64.b64encode(plaintext.encode()).decode()
+
+
+def _decrypt_value(encrypted: str) -> str:
+    """Decrypt a credential value."""
+    if encrypted.startswith("b64:"):
+        import base64
+        return base64.b64decode(encrypted[4:]).decode()
+    if _FERNET_AVAILABLE:
+        return _get_fernet().decrypt(encrypted.encode()).decode()
+    raise ValueError("Cannot decrypt Fernet-encrypted credential without cryptography package")
+
+
+def save_credential(
+    session: Session, name: str, value: str,
+    service: str = "", description: str = "",
+) -> dict:
+    """Save or update a credential. Value is encrypted before storage."""
+    from scout.models import Credential
+    encrypted = _encrypt_value(value)
+    existing = session.execute(
+        select(Credential).where(Credential.name == name)
+    ).scalars().first()
+    if existing:
+        existing.encrypted_value = encrypted
+        existing.service = service or existing.service
+        existing.description = description or existing.description
+        session.flush()
+        return {"name": name, "service": existing.service, "updated": True}
+    cred = Credential(
+        name=name, encrypted_value=encrypted,
+        service=service, description=description,
+    )
+    session.add(cred)
+    session.flush()
+    return {"name": name, "service": service, "created": True}
+
+
+def get_credential(session: Session, name: str) -> str | None:
+    """Get a decrypted credential value by name. Returns None if not found."""
+    from scout.models import Credential
+    cred = session.execute(
+        select(Credential).where(Credential.name == name)
+    ).scalars().first()
+    if cred is None:
+        return None
+    return _decrypt_value(cred.encrypted_value)
+
+
+def list_credentials(session: Session) -> list[dict]:
+    """List all credentials (names and services only — no values)."""
+    from scout.models import Credential
+    rows = session.execute(
+        select(Credential).order_by(Credential.name)
+    ).scalars().all()
+    return [
+        {"name": c.name, "service": c.service, "description": c.description}
+        for c in rows
+    ]
+
+
+def delete_credential(session: Session, name: str) -> bool:
+    """Delete a credential by name."""
+    from scout.models import Credential
+    cred = session.execute(
+        select(Credential).where(Credential.name == name)
+    ).scalars().first()
+    if cred is None:
+        return False
+    session.delete(cred)
+    session.flush()
+    return True

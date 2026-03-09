@@ -2117,6 +2117,66 @@ def prompt(
     )
 
 
+@mcp.tool(annotations=_WRITE)
+def credential(
+    action: str,
+    name: str | None = None,
+    value: str | None = None,
+    service: str = "",
+    description: str = "",
+) -> dict:
+    """Manage encrypted credentials — store API keys for use in scripts.
+
+    Credentials are encrypted at rest (Fernet if cryptography is installed,
+    base64 fallback otherwise). Scripts access them via ctx.secret("name").
+
+    Actions:
+      save   — Store or update a credential (requires name + value).
+      list   — List all credentials (names and services only, never values).
+      delete — Delete a credential (requires name).
+
+    Args:
+        action: save | list | delete.
+        name: Credential identifier (required for save/delete).
+        value: The secret value to store (required for save, never returned).
+        service: Service name (e.g. "openai", "hubspot") for organization.
+        description: What this credential is for.
+    """
+    action = action.strip().lower()
+
+    if action == "save":
+        if not name or not value:
+            return _error("name and value required for save", "VALIDATION_ERROR")
+        with session_scope() as session:
+            result = services.save_credential(
+                session, name=name, value=value,
+                service=service, description=description,
+            )
+            session.commit()
+        return {"ok": True, "action": "saved", **result}
+
+    if action == "list":
+        with session_scope() as session:
+            creds = services.list_credentials(session)
+        return {"ok": True, "credentials": creds, "count": len(creds)}
+
+    if action == "delete":
+        if not name:
+            return _error("name required for delete", "VALIDATION_ERROR")
+        with session_scope() as session:
+            deleted = services.delete_credential(session, name)
+            session.commit()
+        if not deleted:
+            return _error(f"Credential '{name}' not found", "NOT_FOUND")
+        return {"ok": True, "action": "deleted", "name": name}
+
+    return _error(
+        f"Unknown action: {action}",
+        "VALIDATION_ERROR",
+        fix="Use: save, list, delete",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
