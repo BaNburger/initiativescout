@@ -601,10 +601,6 @@ function updateResultCount(shown, total) {
   }
 }
 
-// Legacy aliases for backward compat (now handled by populateFilters())
-function populateFacultyFilter() { populateFilters(); }
-function populateUniFilter() { populateFilters(); }
-function populateClassFilter() { populateFilters(); }
 
 function sortBy(field) {
   if (state.sort.by === field) {
@@ -1822,9 +1818,6 @@ function hideSettings() {
   document.getElementById('settings-overlay').classList.add('hidden');
 }
 
-// backward compat
-function showPrompts() { showSettings(); }
-function hidePrompts() { hideSettings(); }
 
 document.getElementById('settings-overlay').addEventListener('click', function(e) {
   if (e.target === document.getElementById('settings-overlay')) hideSettings();

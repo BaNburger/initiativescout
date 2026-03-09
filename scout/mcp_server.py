@@ -589,7 +589,7 @@ def entity(
                 for k, v in item.items():
                     if k in ("name", "uni", "custom_fields"):
                         continue
-                    if k in services.UPDATABLE_FIELDS and v:
+                    if k in services.get_updatable_fields() and v:
                         f[k] = v
                 init = services.create_entity(session, **f)
                 if custom_f and isinstance(custom_f, dict):
@@ -615,7 +615,7 @@ def entity(
             updates = dict(updates)
             custom_fields = updates.pop("custom_fields", None)
             for k, v in updates.items():
-                if k in services.UPDATABLE_FIELDS:
+                if k in services.get_updatable_fields():
                     all_fields[k] = v
                 else:
                     metadata_fields[k] = v
@@ -657,7 +657,7 @@ def entity(
                 return err
             old_name = init.name
             custom_fields = updates.pop("custom_fields", None)
-            services.apply_updates(init, updates, services.UPDATABLE_FIELDS)
+            services.apply_updates(init, updates, services.get_updatable_fields())
             if custom_fields is not None and isinstance(custom_fields, dict):
                 services.merge_custom_fields(init, custom_fields)
             session.flush()
@@ -1140,7 +1140,7 @@ def overview(detail: bool = False, queue_limit: int = 0) -> dict:
     with session_scope() as session:
         stats = services.compute_stats(session)
         if detail:
-            stats["aggregations"] = services.compute_aggregations(session)
+            stats["aggregations"] = services.compute_aggregations(session, stats=stats)
         if queue_limit > 0:
             queue = services.get_work_queue(session, queue_limit)
             stats["queue"] = queue

@@ -91,14 +91,14 @@ class ScriptContext:
             raise ValueError(f"Entity {eid} not found")
         for key, value in fields.items():
             init.set_field(key, value)
-        self._session.commit()
+        self._session.flush()
         return _entity_to_dict(init)
 
     def create(self, **fields: Any) -> dict:
         """Create a new entity. Returns the created entity dict."""
         from scout.services import create_entity
         init = create_entity(self._session, **fields)
-        self._session.commit()
+        self._session.flush()
         return _entity_to_dict(init)
 
     # -- Enrichment --------------------------------------------------------
@@ -135,7 +135,7 @@ class ScriptContext:
             if init:
                 from scout.services import apply_enrichment_fields
                 apply_enrichment_fields(init, fields)
-        self._session.commit()
+        self._session.flush()
         return enrichment.id
 
     # -- Read scores -------------------------------------------------------

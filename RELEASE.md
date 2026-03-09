@@ -65,7 +65,7 @@ Built-in types: `initiative`, `professor`. Custom types: define any dimensions, 
 
 - **Optional dependencies** — minimal install with `pip install scout`, extras for XLSX, embeddings, LLM providers, crawling, and structured data extraction.
 - **CI** — GitHub Actions with Python 3.11/3.12/3.13 matrix.
-- **253 tests** — comprehensive coverage of API, MCP tools, enrichment, and scoring.
+- **315 tests** — comprehensive coverage of API, MCP tools, enrichment, and scoring.
 - **`scout-setup`** — auto-configure MCP for Claude Desktop, Cursor, and Windsurf.
 
 ### Code Quality (v1.1.0)

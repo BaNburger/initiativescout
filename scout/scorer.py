@@ -113,9 +113,14 @@ def _prompt_labels(entity_type: str) -> dict[str, str]:
 
 def _load_prompt_file(entity_type: str, dimension: str) -> str:
     """Read a prompt .txt file, falling back to the initiative version."""
-    path = _PROMPTS_DIR / entity_type / f"{dimension}.txt"
+    # Sanitize inputs to prevent path traversal
+    safe_et = entity_type.replace("/", "").replace("\\", "").replace("..", "")
+    safe_dim = dimension.replace("/", "").replace("\\", "").replace("..", "")
+    path = (_PROMPTS_DIR / safe_et / f"{safe_dim}.txt").resolve()
+    if not path.is_relative_to(_PROMPTS_DIR.resolve()):
+        return ""
     if not path.exists():
-        path = _PROMPTS_DIR / "initiative" / f"{dimension}.txt"
+        path = _PROMPTS_DIR / "initiative" / f"{safe_dim}.txt"
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
@@ -744,15 +749,16 @@ def create_score_from_grades(
 ) -> OutreachScore:
     """Build an OutreachScore from pre-evaluated grades (no LLM call)."""
     classification = _normalize_classification(classification, entity_type)
-    team_g = grades.get("team", Grade.parse("C"))
-    tech_g = grades.get("tech", Grade.parse("C"))
-    opp_g = grades.get("opportunity", Grade.parse("C"))
-    key_evidence = [
-        f"Team ({team_g.letter}): externally evaluated",
-        f"Tech ({tech_g.letter}): externally evaluated",
-        f"Opportunity ({opp_g.letter}): {reasoning}" if reasoning
-        else f"Opportunity ({opp_g.letter}): externally evaluated",
-    ]
+    labels = _prompt_labels(entity_type)
+    _KEYS = ("team", "tech", "opportunity")
+    dim_labels = [labels.get(k, k.title()) for k in _KEYS]
+    dim_grades = [grades.get(k, Grade.parse("C")) for k in _KEYS]
+    key_evidence = []
+    for i, (label, g) in enumerate(zip(dim_labels, dim_grades)):
+        if i == 2 and reasoning:
+            key_evidence.append(f"{label} ({g.letter}): {reasoning}")
+        else:
+            key_evidence.append(f"{label} ({g.letter}): externally evaluated")
     return _build_outreach_score(
         initiative.id, grades=grades, classification=classification,
         reasoning=reasoning, contact_who=contact_who, contact_channel=contact_channel,
@@ -785,36 +791,34 @@ async def score_initiative(
     """
     defaults = default_prompts_for(entity_type)
     p = prompts or {}
-    team_prompt = p.get("team", defaults["team"][1])
-    tech_prompt = p.get("tech", defaults["tech"][1])
-    opp_prompt = p.get("opportunity", defaults["opportunity"][1])
 
-    team_dossier = build_team_dossier(initiative, enrichments, entity_type)
-    tech_dossier = build_tech_dossier(initiative, enrichments, entity_type)
-    full_dossier = build_full_dossier(initiative, enrichments, entity_type)
+    # Internal storage keys — always these 3, regardless of entity type
+    _STORAGE_KEYS = ("team", "tech", "opportunity")
+    # Schema dimension keys (may differ for custom types but map positionally)
+    dim_keys = list(defaults.keys()) if defaults else list(_STORAGE_KEYS)
+    # Ensure exactly 3 dimensions (pad with defaults if fewer)
+    while len(dim_keys) < 3:
+        dim_keys.append(_STORAGE_KEYS[len(dim_keys)])
+
+    # Build prompts and dossiers for each dimension
+    dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
+    dim_prompts = [p.get(dim_keys[i], defaults.get(dim_keys[i], ("", ""))[1]) for i in range(3)]
+    dossiers = [builder(initiative, enrichments, entity_type) for builder in dossier_builders]
 
     # Dimension pruning: skip LLM calls for dimensions with near-empty dossiers.
-    # This saves 20-30% on scoring cost when data is sparse and avoids
-    # hallucinated grades. The full/opportunity dossier is always scored.
+    # The last dimension (opportunity/full dossier) is always scored —
+    # it drives classification + contact info.
     tasks: dict[str, Any] = {}
     skipped: dict[str, DimensionResult] = {}
+    skip_default = DimensionResult(
+        grade=Grade.parse("C"), reasoning="Skipped: insufficient data for assessment.", extras={},
+    )
 
-    if _dossier_has_substance(team_dossier):
-        tasks["team"] = _score_dimension(client, team_prompt, team_dossier)
-    else:
-        skipped["team"] = DimensionResult(
-            grade=Grade.parse("C"), reasoning="Skipped: insufficient data for assessment.", extras={},
-        )
-
-    if _dossier_has_substance(tech_dossier):
-        tasks["tech"] = _score_dimension(client, tech_prompt, tech_dossier)
-    else:
-        skipped["tech"] = DimensionResult(
-            grade=Grade.parse("C"), reasoning="Skipped: insufficient data for assessment.", extras={},
-        )
-
-    # Opportunity/full dossier is always scored — it drives classification + contact info
-    tasks["opportunity"] = _score_dimension(client, opp_prompt, full_dossier)
+    for i, storage_key in enumerate(_STORAGE_KEYS):
+        if i < 2 and not _dossier_has_substance(dossiers[i]):
+            skipped[storage_key] = skip_default
+        else:
+            tasks[storage_key] = _score_dimension(client, dim_prompts[i], dossiers[i])
 
     # Run non-skipped dimensions in parallel
     keys = list(tasks.keys())
@@ -822,21 +826,24 @@ async def score_initiative(
     results = dict(zip(keys, results_list))
     results.update(skipped)
 
-    team = results["team"]
-    tech = results["tech"]
-    opp = results["opportunity"]
+    team, tech, opp = results["team"], results["tech"], results["opportunity"]
 
     classification = _normalize_classification(opp.extras.get("classification"), entity_type)
     grades = {"team": team.grade, "tech": tech.grade, "opportunity": opp.grade}
+    # Build labels from defaults (uses schema dimension names for display)
+    dim_labels = [defaults[dim_keys[i]][0] if dim_keys[i] in defaults else _STORAGE_KEYS[i].title() for i in range(3)]
+    all_results = [team, tech, opp]
     key_evidence = [
-        f"{defaults['team'][0]} ({team.grade.letter}): {team.reasoning}",
-        f"{defaults['tech'][0]} ({tech.grade.letter}): {tech.reasoning}",
-        f"{defaults['opportunity'][0]} ({opp.grade.letter}): {opp.reasoning}",
+        f"{dim_labels[i]} ({all_results[i].grade.letter}): {all_results[i].reasoning}"
+        for i in range(3)
     ]
     dim_grades = {
-        "team": {"letter": team.grade.letter, "numeric": team.grade.numeric, "reasoning": team.reasoning},
-        "tech": {"letter": tech.grade.letter, "numeric": tech.grade.numeric, "reasoning": tech.reasoning},
-        "opportunity": {"letter": opp.grade.letter, "numeric": opp.grade.numeric, "reasoning": opp.reasoning},
+        _STORAGE_KEYS[i]: {
+            "letter": all_results[i].grade.letter,
+            "numeric": all_results[i].grade.numeric,
+            "reasoning": all_results[i].reasoning,
+        }
+        for i in range(3)
     }
     return _build_outreach_score(
         initiative.id, grades=grades, classification=classification,

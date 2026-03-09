@@ -99,20 +99,36 @@ def run_script(
 
 
 def _run_compiled(compiled, namespace: dict, timeout: float) -> None:
-    """Execute compiled code with signal-based timeout on Unix."""
+    """Execute compiled code with signal-based timeout (Unix) or thread fallback."""
     import signal
+    import threading
 
-    def _handler(signum, frame):
-        raise TimeoutError("Script timed out")
-
-    old_handler = signal.signal(signal.SIGALRM, _handler)
-    signal.alarm(int(timeout))
-    try:
-        # Intentional: scripts are authored by the LLM user of this single-user tool
-        _do_exec(compiled, namespace)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+    # Try signal-based timeout (only works on main thread, Unix)
+    if hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread():
+        def _handler(signum, frame):
+            raise TimeoutError("Script timed out")
+        old_handler = signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(int(timeout))
+        try:
+            _do_exec(compiled, namespace)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    else:
+        # Thread-based fallback for non-main threads or Windows
+        exc_holder: list[BaseException] = []
+        def _target():
+            try:
+                _do_exec(compiled, namespace)
+            except BaseException as e:
+                exc_holder.append(e)
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+        if t.is_alive():
+            raise TimeoutError("Script timed out")
+        if exc_holder:
+            raise exc_holder[0]
 
 
 def _do_exec(compiled, namespace: dict) -> None:

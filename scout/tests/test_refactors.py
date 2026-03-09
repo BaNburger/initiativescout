@@ -614,13 +614,15 @@ class TestServicesCRUD:
         assert delete_custom_column(session, col["id"]) is False  # already deleted
 
     def test_apply_updates(self, session, sample_initiative):
-        from scout.services import apply_updates, UPDATABLE_FIELDS
+        from scout.services import apply_updates, get_updatable_fields
+        UPDATABLE_FIELDS = get_updatable_fields()
         apply_updates(sample_initiative, {"name": "Renamed", "sector": "BioTech"}, UPDATABLE_FIELDS)
         assert sample_initiative.name == "Renamed"
         assert sample_initiative.sector == "BioTech"
 
     def test_apply_updates_ignores_none(self, session, sample_initiative):
-        from scout.services import apply_updates, UPDATABLE_FIELDS
+        from scout.services import apply_updates, get_updatable_fields
+        UPDATABLE_FIELDS = get_updatable_fields()
         original_name = sample_initiative.name
         apply_updates(sample_initiative, {"name": None}, UPDATABLE_FIELDS)
         assert sample_initiative.name == original_name

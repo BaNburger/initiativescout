@@ -100,8 +100,6 @@ def get_updatable_fields() -> tuple[str, ...]:
 def get_compact_fields() -> set[str]:
     return set(get_schema()["compact_fields"])
 
-# Backward-compat alias (initiative defaults) — used by mcp_server + tests
-UPDATABLE_FIELDS = tuple(get_schema("initiative")["updatable_fields"])
 
 # ---------------------------------------------------------------------------
 # Serialization helpers
@@ -1207,8 +1205,12 @@ def compute_stats(session: Session) -> dict:
     }
 
 
-def compute_aggregations(session: Session) -> dict:
-    """Analytical aggregations: score distributions, top-N per verdict, grade breakdowns."""
+def compute_aggregations(session: Session, stats: dict | None = None) -> dict:
+    """Analytical aggregations: score distributions, top-N per verdict, grade breakdowns.
+
+    Args:
+        stats: Pre-computed stats from compute_stats() to avoid redundant COUNT queries.
+    """
     ls = _latest_score_subquery()
     latest = select(
         ls.c.initiative_id, ls.c.verdict, ls.c.score, ls.c.classification,
@@ -1256,12 +1258,15 @@ def compute_aggregations(session: Session) -> dict:
         ).all()
         grade_dist[dim] = dict(rows)
 
-    # Unprocessed counts
-    total = session.execute(select(func.count(Initiative.id))).scalar() or 0
-    enriched = session.execute(
-        select(func.count(func.distinct(Enrichment.initiative_id)))
-    ).scalar() or 0
-    scored = session.execute(select(func.count()).select_from(latest)).scalar() or 0
+    # Reuse pre-computed counts if available
+    if stats:
+        total, enriched, scored = stats["total"], stats["enriched"], stats["scored"]
+    else:
+        total = session.execute(select(func.count(Initiative.id))).scalar() or 0
+        enriched = session.execute(
+            select(func.count(func.distinct(Enrichment.initiative_id)))
+        ).scalar() or 0
+        scored = session.execute(select(func.count()).select_from(latest)).scalar() or 0
 
     return {
         "score_by_uni": score_by_uni,

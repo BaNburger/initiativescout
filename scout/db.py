@@ -287,12 +287,18 @@ def get_entity_type() -> str:
         row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_type'")).scalar()
     result = str(row) if row else "initiative"
     with _lock:
-        _cached_entity_type = result
+        # Compare-and-set: only cache if no switch_db happened while we read
+        if _cached_entity_type is None:
+            _cached_entity_type = result
+        else:
+            result = _cached_entity_type
     return result
 
 
 def set_entity_type(entity_type: str) -> None:
     """Set the entity type for the current database."""
+    if not entity_type or not DB_NAME_RE.match(entity_type):
+        raise ValueError("Invalid entity type (letters, numbers, hyphens, underscores only)")
     global _cached_entity_type
     with _lock:
         engine = _engine

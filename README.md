@@ -92,7 +92,7 @@ Combine extras: `pip install 'scout[xlsx,embeddings,anthropic]'`
 - **Database switching** — manage multiple databases from the header dropdown
 - **Batch operations** — "Enrich All" and "Score Unscored" with progress bar, pause, cancel
 - **Inline editing** — double-click any cell to edit
-- **Prompt editor** — customize scoring prompts per database
+- **Database settings** — customize scoring prompts, enrichers, and enrichable fields per database
 - **Custom columns** — add text, number, boolean, or URL fields to the list view
 - **Keyboard shortcuts** — press `?` for the full shortcut overlay
 - **Live updates** — revision polling auto-refreshes when data changes from MCP or API calls
@@ -182,7 +182,7 @@ initiativescout/
 git clone https://github.com/BaNburger/initiativescout.git
 cd initiativescout
 pip install -e '.[dev,all]'
-python -m pytest scout/tests/ -x -q    # 253 tests
+python -m pytest scout/tests/ -x -q    # 315 tests
 ```
 
 ## Troubleshooting
