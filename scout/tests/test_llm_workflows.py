@@ -169,7 +169,7 @@ class TestAutonomousPipeline:
     def test_overview_next_actions(self, five_entities):
         from scout.mcp_server import get_overview
         overview = get_overview()
-        assert any(n["tool"] == "get_work_queue" for n in overview.get("next", []))
+        assert any(n["tool"] in ("get_work_queue", "overview") for n in overview.get("next", []))
 
     @pytest.mark.asyncio
     async def test_process_queue_with_mocked_enrichment(self, five_entities):
@@ -207,7 +207,7 @@ class TestSingleEntityDeepDive:
                                updates={"website": "https://testcorp.dev"})
         assert result.get("id")
         next_tools = [n["tool"] for n in result.get("next", [])]
-        assert "enrich_entity" in next_tools
+        assert any(t in ("enrich_entity", "enrich") for t in next_tools)
 
     def test_compact_vs_full_response_sizes(self, five_entities):
         from scout.mcp_server import get_entity
@@ -325,7 +325,7 @@ class TestAPIKeyFreeScoring:
         from scout.mcp_server import get_scoring_dossier
         dossier = get_scoring_dossier(five_entities[0].id)
         next_tools = [n["tool"] for n in dossier.get("next", [])]
-        assert "submit_score" in next_tools
+        assert any(t in ("submit_score", "score") for t in next_tools)
 
     def test_verdict_determinism(self, five_entities):
         from scout.mcp_server import submit_score

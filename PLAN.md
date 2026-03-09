@@ -65,22 +65,37 @@ if resp.status_code == 200:
                fields={"sector": data.get("category")})
 ```
 
-## Phase 4: API Connectors + Credentials (future)
+## Phase 4: API Connectors + Credentials [DONE]
 
-- Credential model (name, service, encrypted_value)
-- `ctx.secret("name")` in scripts
-- OAuth2 / API key / Bearer token support
-- Bidirectional CRM sync patterns
+- `Credential` model (name, service, encrypted_value, description)
+- Fernet encryption via `SCOUT_SECRET_KEY` env var (base64 fallback without cryptography)
+- `ctx.secret("name")` in scripts — checks DB then env vars
+- MCP tool: `credential(action=save/list/delete)`
+- REST: GET/POST/DELETE `/api/credentials`
+- 13 tests in `test_scripts.py`
 
-## Phase 5: Tool Consolidation (future)
+## Phase 5: Tool Consolidation [DONE]
 
-- Merge 25+ MCP tools to ~8 core tools
-- entity(), overview(), script(), run(), score(), dossier(), enrich(), prompt()
-- Massively reduced context window usage
+Consolidated 29 MCP tools down to 9 core tools (69% reduction):
+
+| Tool | Merged from | Actions |
+|------|------------|---------|
+| `entity()` | list_entities, get_entity, manage_entity, export_entities, find_similar | list/get/create/bulk_create/update/delete/export/similar |
+| `enrich()` | enrich_entity, submit_enrichment, process_queue | run/submit/process |
+| `score()` | score_entity, submit_score, get_scoring_dossier | run/submit/dossier |
+| `overview()` | get_overview, get_work_queue | detail, queue_limit params |
+| `project()` | manage_project | create/update/delete/score |
+| `configure()` | manage_database, custom column CRUD (4), show/configure_llm, embed_all, scrape | db_*/col_*/llm_*/embed/scrape |
+| `script()` | script + run_script | save/list/read/delete/run |
+| `prompt()` | prompt + scoring prompt tools | save/list/read/delete/scoring_list/scoring_update |
+| `credential()` | (new in Phase 4) | save/list/delete |
+
+- All 25 old tool names preserved as backward-compat aliases (function-level, not @mcp.tool)
+- Sync helper functions for submit_enrichment, submit_score, get_scoring_dossier to avoid async boundary issues
+- 315 tests passing
 
 ## Non-goals (current)
 
-- Credential management (use env vars for now — ctx.env("KEY"))
 - Subprocess sandboxing (in-process is fine for LLM-as-user)
 - Multi-tenant security (single-user tool)
 - Script/prompt versioning (just overwrite on save)

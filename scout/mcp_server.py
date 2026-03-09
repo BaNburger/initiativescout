@@ -49,8 +49,8 @@ def _build_instructions(entity_type: str) -> str:
     return (
         f"Scout: sourcing, enrichment & scoring engine for {cfg['context']}. "
         "Read scout://overview for workflows, grading scale, and classifications. "
-        "QUICK: get_overview() → get_work_queue() → process_queue(). "
-        "Use submit_enrichment() to store data you find via web search. "
+        "QUICK: overview() → overview(queue_limit=10) → enrich(action='process'). "
+        "Use enrich(action='submit') to store data you find via web search. "
         "All errors return {error, error_code, retryable, fix}."
     )
 
@@ -362,38 +362,40 @@ def scout_overview() -> str:
         "classifications": cls_list,
         "workflow": {
             "autonomous": [
-                "1. get_overview() — database state + analytics.",
-                "2. get_work_queue() — prioritized items needing work.",
-                "3. process_queue(limit=20) — enriches AND scores in one call.",
+                "1. overview() — database state + analytics.",
+                "2. overview(queue_limit=10) — get prioritized work queue.",
+                "3. enrich(action='process', limit=20) — enriches AND scores in one call.",
                 "4. Repeat until remaining_in_queue=0.",
-                f"5. list_entities(verdict='reach_out_now') — review top {lp}.",
+                f"5. entity(action='list', verdict='reach_out_now') — review top {lp}.",
             ],
             "single_item": [
-                f"1. manage_entity(action='create', name=..., uni=...) — add new {cfg['label']}.",
-                "2. enrich_entity(id, discover=True) — find URLs + fetch data.",
-                "3. score_entity(id) — LLM scoring (3 parallel dimensions).",
-                "4. get_entity(id) — inspect full details.",
+                f"1. entity(action='create', name=..., uni=...) — add new {cfg['label']}.",
+                "2. enrich(action='run', entity_id=id, discover=True) — find URLs + fetch data.",
+                "3. score(action='run', entity_id=id) — LLM scoring (3 parallel dims).",
+                "4. entity(action='get', entity_id=id) — inspect full details.",
             ],
             "llm_enrichment": [
                 "1. Search the web for information about the entity.",
-                "2. submit_enrichment(id, source_type='...', content='...') — store what you found.",
+                "2. enrich(action='submit', entity_id=id, source_type='...', content='...').",
                 "3. Repeat for different sources (LinkedIn, news, patents, etc.).",
-                "4. score_entity(id) — score with enriched data.",
+                "4. score(action='run', entity_id=id) — score with enriched data.",
             ],
             "llm_free_scoring": [
-                "1. get_scoring_dossier(id) — get prompts + dossiers.",
+                "1. score(action='dossier', entity_id=id) — get prompts + dossiers.",
                 "2. Evaluate each dimension per its prompt.",
-                "3. submit_score(id, grade_team=..., ...) — save results.",
+                "3. score(action='submit', entity_id=id, grade_team=..., ...) — save.",
             ],
         },
-        "tools_by_frequency": {
-            "core": "list_entities, get_entity, process_queue, get_work_queue, get_overview",
-            "single_item": "enrich_entity, score_entity, manage_entity",
-            "llm_enrichment": "submit_enrichment — store data you find via web search",
-            "scoring": "get_scoring_dossier, submit_score",
-            "scripts": "script(action=save/list/read/delete), run_script — persist and run Python code",
-            "search": "find_similar",
-            "admin": "manage_project, manage_database, list_scoring_prompts, update_scoring_prompt, get_custom_columns, create_custom_column, export_entities, embed_all_tool, show_llm_config, configure_llm",
+        "tools": {
+            "entity": "list, get, create, bulk_create, update, delete, export, similar",
+            "enrich": "run (scrape), submit (your research), process (autonomous pipeline)",
+            "score": "run (LLM), dossier (build prompts), submit (manual grades)",
+            "overview": "Database stats + work queue",
+            "script": "save, list, read, delete, run — persist and run Python code",
+            "prompt": "save, list, read, delete, scoring_list, scoring_update",
+            "configure": "db_*, col_*, llm_show, llm_set, embed, scrape",
+            "credential": "save, list, delete — encrypted API key storage",
+            "project": "create, update, delete, score — sub-projects",
         },
         "scripts": {
             "description": (
@@ -403,7 +405,7 @@ def scout_overview() -> str:
             ),
             "workflow": [
                 "1. script(action='save', name='my_script', code='...') — save a script.",
-                "2. run_script(name='my_script', entity_id=42) — run it.",
+                "2. script(action='run', name='my_script', entity_id=42) — run it.",
                 "3. script(action='list') — see all saved scripts.",
             ],
             "ctx_api": {
@@ -412,6 +414,7 @@ def scout_overview() -> str:
                 "ctx.update(id, field=val)": "Update entity fields",
                 "ctx.create(name=..., ...)": "Create new entity",
                 "ctx.enrich(id, source_type=..., raw_text=...)": "Add enrichment",
+                "ctx.secret('name')": "Read encrypted credential",
                 "ctx.http": "httpx.Client for HTTP requests",
                 "ctx.env('KEY')": "Read environment variable",
                 "ctx.log('msg')": "Add to execution log",
@@ -452,155 +455,124 @@ def scout_overview() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tools: List & Detail
+# Tool 1: entity() — list / get / create / update / delete / export / similar
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ)
-def list_entities(
+@mcp.tool(annotations=_DESTRUCTIVE)
+def entity(
+    action: str = "list",
+    entity_id: int | None = None,
+    # List / filter
     verdict: str | None = None, classification: str | None = None,
     uni: str | None = None, faculty: str | None = None,
     search: str | None = None,
     sort_by: str = "score", sort_dir: str = "desc", limit: int = 20,
     fields: str | None = None, compact: bool = True,
-) -> list[dict]:
-    """List and filter entities. Returns summaries with scores and verdicts.
-
-    WHEN: Browse, search, or filter. For autonomous processing, use get_work_queue().
-    COMPACT: Default compact=True returns id,name,uni,verdict,score,classification,enriched.
-    Set compact=False or provide explicit fields= for full summaries.
-
-    Args:
-        verdict: Filter: reach_out_now, reach_out_soon, monitor, skip, unscored (comma-separated).
-        classification: Filter by type (comma-separated).
-        uni: Filter by university (comma-separated).
-        faculty: Filter by faculty (comma-separated).
-        search: Free-text FTS5 search across name, description, sector, domains, faculty.
-        sort_by: score, name, uni, faculty, verdict, grade_team, grade_tech, grade_opportunity.
-        sort_dir: asc or desc.
-        limit: Max results (default 20, max 500).
-        fields: Comma-separated field names for compact output (overrides compact flag).
-        compact: Default True returns minimal fields. Set False for full summaries.
-    """
-    if fields:
-        fields_set = {f.strip() for f in fields.split(",") if f.strip()}
-    elif compact:
-        fields_set = {"id", "name", "uni", "verdict", "score", "classification", "enriched"}
-    else:
-        fields_set = None
-    with session_scope() as session:
-        items, _ = services.query_entities(
-            session, verdict=verdict, classification=classification,
-            uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
-            page=1, per_page=max(1, min(limit, 500)), fields=fields_set,
-        )
-        return _trim(items, max_str=200)
-
-
-@mcp.tool(annotations=_READ)
-def get_entity(entity_id: int, compact: bool = False, sources: str = "",
-               include_gaps: bool = False) -> dict:
-    """Get full details for one entity: profile, enrichments, projects, scores, data gaps.
-
-    WHEN: After list_entities() to inspect before enriching or scoring.
-    TIP: Use compact=True first to see available enrichment sources, then call again
-    with sources="github,website" to drill into specific ones (saves tokens).
-
-    Args:
-        entity_id: Entity ID.
-        compact: Lighter payload (skips enrichment summaries, projects, reasoning).
-        sources: Comma-separated enrichment source types to include (e.g. "github,website").
-            Empty = all sources. Only applies when compact=False.
-        include_gaps: Include _missing_fields list (enrichable fields not yet filled).
-            Useful before submit_enrichment() to know what to research.
-    """
-    with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, entity_id)
-        if err:
-            return err
-        if compact:
-            data = services.entity_detail_compact(init)
-        else:
-            data = services.entity_detail(init, sources=parse_comma_set(sources))
-        # Missing fields: always compute for suggestions; only expose full list
-        # when include_gaps=True, otherwise just the count
-        data.pop("_missing_fields_count", None)
-        missing = services.compute_missing_fields(init)
-        if include_gaps:
-            data["_missing_fields"] = missing
-        elif missing:
-            data["_missing_fields_count"] = len(missing)
-
-        enriched = data.get("enriched", False)
-        verdict = data.get("verdict")
-        actions = []
-        if not enriched:
-            actions.append(_next("enrich_entity", "Not yet enriched", entity_id=entity_id))
-        if verdict is None:
-            hint = "Ready to score" if enriched else "Not yet scored"
-            actions.append(_next("score_entity", hint, entity_id=entity_id))
-        if missing and enriched:
-            keys = ", ".join(m["key"] for m in missing[:5])
-            actions.append(_next("submit_enrichment", f"Fill missing: {keys}", entity_id=entity_id))
-        if verdict in ("reach_out_now", "reach_out_soon"):
-            actions.append(_next("find_similar", "Find similar entities", entity_id=entity_id))
-        return _trim(_suggest(data, *actions))
-
-
-# ---------------------------------------------------------------------------
-# Tools: Manage Entity (Create / Update / Delete)
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_DESTRUCTIVE)
-def manage_entity(
-    action: str,
-    entity_id: int | None = None,
-    name: str | None = None,
-    uni: str | None = None,
-    updates: dict | None = None,
-    confirm: bool = False,
-    items: list | None = None,
-) -> dict:
-    """Create, update, or delete entities.
+    # Get
+    sources: str = "", include_gaps: bool = False,
+    # Create / update
+    name: str | None = None, updates: dict | None = None,
+    confirm: bool = False, items: list | None = None,
+    # Export
+    include_enrichments: bool = True, include_scores: bool = True,
+    include_extras: bool = False,
+    # Similar
+    query: str | None = None,
+) -> dict | list:
+    """Unified entity operations: list, get, create, update, delete, export, similar.
 
     ACTIONS:
-    - create: Requires name, uni. Pass updates={field: value} for optional fields.
-    - bulk_create: Requires items (list of dicts). Each dict needs name, uni,
-        plus optional fields: faculty, sector, description, website, email,
-        team_page, team_size, linkedin, github_org, key_repos, sponsors,
-        competitions, mode, relevance, custom_fields.
-        Skips duplicates (same name+uni). Returns {created, skipped, items}.
-    - update: Requires entity_id. Pass updates={field: value} for changes.
-        For custom entity types, any key not in the standard columns is stored in metadata.
-    - delete: Requires entity_id + confirm=True.
+      list        — Filter/browse entities. Default compact=True (id,name,uni,verdict,score).
+      get         — Full detail for one entity (entity_id required).
+      create      — New entity (name required). Pass updates={field: value}.
+      bulk_create — Batch import (items=list of dicts with name+uni).
+      update      — Modify entity (entity_id + updates required).
+      delete      — Remove entity (entity_id + confirm=True).
+      export      — Export to XLSX file. Optional verdict/uni filters.
+      similar     — Semantic similarity search (query or entity_id required).
 
     Args:
-        action: "create", "bulk_create", "update", or "delete".
-        entity_id: Entity ID (required for update/delete).
-        name: Entity name (required for create).
-        uni: University/institution (optional; mainly for initiative/professor types).
-        updates: Dict of field->value. Standard keys: faculty, sector, description,
-            website, email, team_page, team_size, linkedin, github_org, key_repos,
-            sponsors, competitions, mode, relevance, custom_fields.
-            Any other keys are stored in metadata (for custom entity types).
+        action: list | get | create | bulk_create | update | delete | export | similar.
+        entity_id: Entity ID (for get/update/delete/similar).
+        verdict: Filter by verdict (comma-separated).
+        classification: Filter by classification (comma-separated).
+        uni: Filter by university (comma-separated).
+        faculty: Filter by faculty (comma-separated).
+        search: Free-text FTS5 search.
+        sort_by: score, name, uni, faculty, verdict.
+        sort_dir: asc or desc.
+        limit: Max results (default 20).
+        fields: Comma-separated field names for list output.
+        compact: Minimal output (default True).
+        sources: Enrichment source types to include in get (e.g. "github,website").
+        include_gaps: Include _missing_fields list in get output.
+        name: Entity name (for create).
+        updates: Dict of field->value (for create/update).
         confirm: Must be True for delete.
-        items: List of dicts for bulk_create. Each dict needs at least name and uni.
+        items: List of dicts for bulk_create.
+        include_enrichments: Include enrichments in export.
+        include_scores: Include scores in export.
+        include_extras: Include extra fields in export.
+        query: Text query for similar search.
     """
-    action = (action or "").strip().lower()
+    action = (action or "list").strip().lower()
 
+    # --- LIST ---
+    if action == "list":
+        if fields:
+            fields_set = {f.strip() for f in fields.split(",") if f.strip()}
+        elif compact:
+            fields_set = {"id", "name", "uni", "verdict", "score", "classification", "enriched"}
+        else:
+            fields_set = None
+        with session_scope() as session:
+            items_out, _ = services.query_entities(
+                session, verdict=verdict, classification=classification,
+                uni=uni, faculty=faculty, search=search, sort_by=sort_by, sort_dir=sort_dir,
+                page=1, per_page=max(1, min(limit, 500)), fields=fields_set,
+            )
+            return _trim(items_out, max_str=200)
+
+    # --- GET ---
+    if action == "get":
+        if entity_id is None:
+            return _error("entity_id required for get", "VALIDATION_ERROR")
+        with session_scope() as session:
+            init, err = _get_or_error(session, Initiative, entity_id)
+            if err:
+                return err
+            if compact:
+                data = services.entity_detail_compact(init)
+            else:
+                data = services.entity_detail(init, sources=parse_comma_set(sources))
+            data.pop("_missing_fields_count", None)
+            missing = services.compute_missing_fields(init)
+            if include_gaps:
+                data["_missing_fields"] = missing
+            elif missing:
+                data["_missing_fields_count"] = len(missing)
+            enriched = data.get("enriched", False)
+            v = data.get("verdict")
+            actions = []
+            if not enriched:
+                actions.append(_next("enrich", "Not yet enriched", action="run", entity_id=entity_id))
+            if v is None:
+                actions.append(_next("score", "Score this entity", action="run", entity_id=entity_id))
+            if missing and enriched:
+                keys = ", ".join(m["key"] for m in missing[:5])
+                actions.append(_next("enrich", f"Fill missing: {keys}", action="submit", entity_id=entity_id))
+            return _trim(_suggest(data, *actions))
+
+    # --- BULK_CREATE ---
     if action == "bulk_create":
         if not items or not isinstance(items, list):
             return _error("items (list of dicts with name+uni) is required for bulk_create", "VALIDATION_ERROR")
         with session_scope() as session:
-            # Build set of existing name+uni pairs for dedup
             existing = {
-                (name.lower().strip(), (uni or "").lower().strip())
-                for name, uni in session.execute(
-                    select(Initiative.name, Initiative.uni)
-                ).all()
+                (n.lower().strip(), (u or "").lower().strip())
+                for n, u in session.execute(select(Initiative.name, Initiative.uni)).all()
             }
-
             created_items = []
             skipped = 0
             for item in items:
@@ -614,30 +586,25 @@ def manage_entity(
                 if (item_name.lower(), item_uni.lower()) in existing:
                     skipped += 1
                     continue
-                # Build fields
-                fields = {"name": item_name, "uni": item_uni}
-                custom_fields = item.get("custom_fields", None) if isinstance(item, dict) else None
+                f = {"name": item_name, "uni": item_uni}
+                custom_f = item.get("custom_fields", None) if isinstance(item, dict) else None
                 for k, v in item.items():
                     if k in ("name", "uni", "custom_fields"):
                         continue
                     if k in services.UPDATABLE_FIELDS and v:
-                        fields[k] = v
-                init = services.create_entity(session, **fields)
-                if custom_fields and isinstance(custom_fields, dict):
-                    init.custom_fields_json = json.dumps(custom_fields)
+                        f[k] = v
+                init = services.create_entity(session, **f)
+                if custom_f and isinstance(custom_f, dict):
+                    init.custom_fields_json = json.dumps(custom_f)
                     session.flush()
                 existing.add((item_name.lower(), item_uni.lower()))
                 created_items.append({"id": init.id, "name": init.name, "uni": init.uni})
-
             session.commit()
-            result = {
-                "created": len(created_items),
-                "skipped_duplicates": skipped,
-                "items": created_items,
-            }
+            result = {"created": len(created_items), "skipped_duplicates": skipped, "items": created_items}
             result["_db"] = _db_pulse(session)
             return result
 
+    # --- CREATE ---
     if action == "create":
         if not name:
             return _error("name is required for create", "VALIDATION_ERROR")
@@ -647,9 +614,8 @@ def manage_entity(
         custom_fields = None
         metadata_fields: dict = {}
         if updates:
-            updates = dict(updates)  # copy to avoid mutation
+            updates = dict(updates)
             custom_fields = updates.pop("custom_fields", None)
-            # Separate standard fields from metadata fields
             for k, v in updates.items():
                 if k in services.UPDATABLE_FIELDS:
                     all_fields[k] = v
@@ -659,7 +625,6 @@ def manage_entity(
             init = services.create_entity(session, **all_fields)
             if custom_fields and isinstance(custom_fields, dict):
                 init.custom_fields_json = json.dumps(custom_fields)
-            # Store non-standard fields in metadata_json
             if metadata_fields:
                 for k, v in metadata_fields.items():
                     init.set_field(k, v)
@@ -676,17 +641,18 @@ def manage_entity(
                 result_data["metadata"] = metadata_fields
             result = _suggest(
                 result_data,
-                _next("enrich_entity", "Fetch web data or submit_enrichment()", entity_id=init.id),
+                _next("enrich", "Fetch web data", action="run", entity_id=init.id),
             )
             result["_db"] = _db_pulse(session)
             return result
 
+    # --- UPDATE ---
     if action == "update":
         if entity_id is None:
             return _error("entity_id is required for update", "VALIDATION_ERROR")
         if not updates:
             return _error("updates dict is required", "VALIDATION_ERROR")
-        updates = dict(updates)  # copy
+        updates = dict(updates)
         with session_scope() as session:
             init, err = _get_or_error(session, Initiative, entity_id)
             if err:
@@ -700,13 +666,11 @@ def manage_entity(
             session.commit()
             detail = _trim(services.entity_detail(init))
             if updates.get("name") and updates["name"] != old_name:
-                detail["warning"] = (
-                    f"Renamed: '{old_name}' -> '{updates['name']}'. "
-                    "Verify this is correct."
-                )
+                detail["warning"] = f"Renamed: '{old_name}' -> '{updates['name']}'."
             detail["_db"] = _db_pulse(session)
             return detail
 
+    # --- DELETE ---
     if action == "delete":
         if entity_id is None:
             return _error("entity_id is required for delete", "VALIDATION_ERROR")
@@ -729,396 +693,444 @@ def manage_entity(
             result["_db"] = _db_pulse(session)
             return result
 
-    return _error(f"Unknown action: {action!r}. Use create, update, or delete.", "VALIDATION_ERROR")
-
-
-# ---------------------------------------------------------------------------
-# Tools: Enrichment & Scoring
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_WRITE)
-async def enrich_entity(entity_id: int, discover: bool = False, incremental: bool = True) -> dict:
-    """Fetch enrichment data from website, GitHub, extra links, plus extended sources.
-
-    WHAT: Scrapes all known URLs + extracts structured data (JSON-LD/OpenGraph), tech stack,
-    DNS records, sitemap structure, career pages, and deep git analysis (README, deps, releases).
-    Takes 5-20s. Auto-enables discovery when no URLs are configured.
-    WHEN: Before score_entity(). Discovery finds LinkedIn, GitHub, HuggingFace URLs via DuckDuckGo.
-
-    Args:
-        entity_id: Entity ID.
-        discover: Run DuckDuckGo URL discovery first (adds ~12s). Auto-enabled when no URLs configured.
-        incremental: Skip enrichers whose target fields are already filled (default True).
-            Set False to force re-run all enrichers.
-    """
-    with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, entity_id)
-        if err:
-            return err
-
-        result = await services.enrich_with_diagnostics(session, init, discover=discover, incremental=incremental)
-        session.commit()
-
-        result["_db"] = _db_pulse(session)
-        return _suggest(
-            result,
-            _next("score_entity", "Score using enrichment data", entity_id=init.id),
-        )
-
-
-@mcp.tool(annotations=_WRITE)
-def submit_enrichment(
-    entity_id: int,
-    source_type: str,
-    content: str,
-    source_url: str = "",
-    summary: str = "",
-    structured_fields: dict | None = None,
-) -> dict:
-    """Store enrichment data that you (the LLM) found via your own research.
-
-    Use this after you've searched the web, read documents, or gathered
-    information about an entity. This persists your findings so they
-    feed into dossiers and scoring.
-
-    WHEN: After using web search/URL reading to gather info about an entity.
-    WHY: Your findings become part of the scoring dossier automatically.
-
-    Args:
-        entity_id: Entity ID to enrich.
-        source_type: Category label (e.g. "web_research", "linkedin", "patent_data",
-            "citation_graph", "news", "funding", or any custom string).
-        content: The information you found (raw text, extracted data, etc.).
-        source_url: URL where you found it (recommended but optional).
-        summary: Brief summary (optional; auto-truncated from content if omitted).
-        structured_fields: Direct field updates (e.g. {"linkedin": "https://...",
-            "member_count": 150}). Keys must match enrichable_fields in schema.
-            Invalid keys are skipped. Values are type-coerced automatically.
-    """
-    if not content or not content.strip():
-        return _error("Content cannot be empty", "VALIDATION_ERROR")
-    if not source_type or not source_type.strip():
-        return _error("source_type cannot be empty", "VALIDATION_ERROR")
-
-    with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, entity_id)
-        if err:
-            return err
-
-        # Upsert: update existing enrichment with same source_type+url, or create new
-        st = source_type.strip()
-        su = source_url.strip() if source_url else None
-        existing = session.execute(
-            select(Enrichment).where(
-                Enrichment.initiative_id == init.id,
-                Enrichment.source_type == st,
-                Enrichment.source_url == su,
-            )
-        ).scalar_one_or_none()
-
-        raw = content.strip()[:15000]
-        summ = summary.strip() if summary else raw[:500]
-        sf_json = json.dumps(structured_fields) if structured_fields else "{}"
-        now = datetime.now(UTC)
-
-        if existing:
-            existing.raw_text = raw
-            existing.summary = summ
-            existing.structured_fields_json = sf_json
-            existing.fetched_at = now
-            enrichment = existing
-        else:
-            enrichment = Enrichment(
-                initiative_id=init.id, source_type=st, source_url=su,
-                raw_text=raw, summary=summ,
-                structured_fields_json=sf_json, fetched_at=now,
-            )
-            session.add(enrichment)
-
-        # Apply structured fields to entity
-        field_result = {}
-        if structured_fields:
-            field_result = services.apply_enrichment_fields(init, structured_fields)
-
-        session.commit()
-
-        result = {
-            "entity_id": init.id,
-            "entity_name": init.name,
-            "enrichment_id": enrichment.id,
-            "source_type": enrichment.source_type,
-            "content_length": len(enrichment.raw_text),
-            "_db": _db_pulse(session),
-        }
-        if field_result.get("applied"):
-            result["fields_applied"] = field_result["applied"]
-        if field_result.get("skipped"):
-            result["fields_skipped"] = field_result["skipped"]
-
-        return _suggest(
-            result,
-            _next("score_entity", "Score with new enrichment data", entity_id=init.id),
-        )
-
-
-@mcp.tool(annotations=_WRITE)
-async def score_entity(entity_id: int) -> dict:
-    """Score an entity on 3 dimensions (team, tech, opportunity) via parallel LLM calls.
-
-    WHAT: 3 parallel LLM calls -> deterministic verdict + score. Takes 5-15s. Requires API key.
-    Auto-enriches first if no enrichment data exists (prevents weak scores).
-    ALTERNATIVE: get_scoring_dossier() + submit_score() for API-key-free scoring.
-
-    Args:
-        entity_id: Entity ID.
-    """
-    key_err = _check_api_key()
-    if key_err:
-        return key_err
-    with session_scope() as session:
+    # --- EXPORT ---
+    if action == "export":
+        from scout.db import DATA_DIR
+        from scout.exporter import export_xlsx
         try:
+            with session_scope() as session:
+                buf = export_xlsx(
+                    session, verdict=verdict, uni=uni,
+                    include_enrichments=include_enrichments,
+                    include_scores=include_scores, include_extras=include_extras,
+                )
+            db_name = current_db_name()
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            filename = f"scout-{db_name}-{ts}.xlsx"
+            out_path = DATA_DIR / filename
+            out_path.write_bytes(buf.getvalue())
+            return {"ok": True, "file": str(out_path), "filename": filename}
+        except ImportError:
+            return _error("openpyxl not installed. Run: pip install scout[xlsx]", "MISSING_DEP")
+        except Exception as exc:
+            return _error(f"Export failed: {exc}", "EXPORT_ERROR")
+
+    # --- SIMILAR ---
+    if action == "similar":
+        from scout.embedder import find_similar as _find_similar
+        with session_scope() as session:
+            id_mask = services.build_similarity_id_mask(session, uni=uni, verdict=verdict)
+            if id_mask is not None and not id_mask:
+                return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
+            results = _find_similar(
+                query_text=query, initiative_id=entity_id,
+                top_k=max(1, min(limit, 100)), id_mask=id_mask,
+            )
+            if not results:
+                return _suggest({"results": []}, _next("configure", "Build embeddings first", action="embed"))
+            ids = [r[0] for r in results]
+            inits = session.execute(
+                select(Initiative.id, Initiative.name, Initiative.uni)
+                .where(Initiative.id.in_(ids))
+            ).all()
+            name_map = {r.id: (r.name, r.uni) for r in inits}
+            return {"results": [
+                {"id": rid, "name": name_map.get(rid, ("?", "?"))[0],
+                 "uni": name_map.get(rid, ("?", "?"))[1], "similarity": sv}
+                for rid, sv in results
+            ]}
+
+    return _error(f"Unknown action: {action!r}. Use: list, get, create, bulk_create, update, delete, export, similar.",
+                  "VALIDATION_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# Tool 2: enrich() — run / submit / process
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+async def enrich(
+    action: str = "run",
+    entity_id: int | None = None,
+    discover: bool = False, incremental: bool = True,
+    # Submit params
+    source_type: str = "", content: str = "", source_url: str = "",
+    summary: str = "", structured_fields: dict | None = None,
+    # Process params
+    limit: int = 20, do_enrich: bool = True, score: bool = True, entity_ids: str | None = None,
+) -> dict:
+    """Enrich entities with web data or LLM-gathered research, or run the autonomous pipeline.
+
+    ACTIONS:
+      run     — Scrape website, GitHub, structured data, DNS, sitemap, etc. (entity_id required).
+      submit  — Store data YOU found via web search (entity_id + source_type + content required).
+      process — Autonomous pipeline: enrich then score a batch. Primary batch tool.
+
+    Args:
+        action: run | submit | process.
+        entity_id: Entity ID (for run/submit).
+        discover: Run DuckDuckGo URL discovery before enrichment (adds ~12s).
+        incremental: Skip enrichers whose targets are filled (default True).
+        source_type: For submit: category label (e.g. "web_research", "linkedin", "patent_data").
+        content: For submit: the information you found.
+        source_url: For submit: URL where you found it.
+        summary: For submit: brief summary.
+        structured_fields: For submit: direct field updates (e.g. {"linkedin": "https://..."}).
+        limit: For process: max items (1-50, default 20).
+        do_enrich: For process: run enrichment step (default True).
+        score: For process: run scoring step (default True). Requires API key.
+        entity_ids: For process: comma-separated IDs (auto-selects from queue if omitted).
+    """
+    action = (action or "run").strip().lower()
+
+    # --- RUN ---
+    if action == "run":
+        if entity_id is None:
+            return _error("entity_id required for run", "VALIDATION_ERROR")
+        with session_scope() as session:
             init, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
-
-            # Auto-enrich if no enrichments exist — prevents weak scores
-            has_enrichments = session.execute(
-                select(func.count(Enrichment.id))
-                .where(Enrichment.initiative_id == init.id)
-            ).scalar() or 0
-            auto_enriched = False
-            if has_enrichments == 0:
-                try:
-                    async with open_crawler() as crawler:
-                        await services.run_enrichment(session, init, crawler=crawler)
-                    session.commit()
-                    auto_enriched = True
-                except Exception:
-                    log.info("Auto-enrich failed for %s, scoring with limited data", init.name)
-
-            outreach = await services.run_scoring(
-                session, init, entity_type=get_entity_type(),
-            )
+            result = await services.enrich_with_diagnostics(session, init, discover=discover, incremental=incremental)
             session.commit()
-            result = services.score_response_dict(outreach, extended=True)
-            result["entity_id"] = init.id
-            result["entity_name"] = init.name
-            if auto_enriched:
-                result["auto_enriched"] = True
             result["_db"] = _db_pulse(session)
-            return _trim(result)
-        except Exception as exc:
-            return _llm_error(exc)
+            return _suggest(result, _next("score", "Score using enrichment data", action="run", entity_id=init.id))
 
+    # --- SUBMIT ---
+    if action == "submit":
+        if entity_id is None:
+            return _error("entity_id required for submit", "VALIDATION_ERROR")
+        if not content or not content.strip():
+            return _error("content cannot be empty", "VALIDATION_ERROR")
+        if not source_type or not source_type.strip():
+            return _error("source_type cannot be empty", "VALIDATION_ERROR")
+        with session_scope() as session:
+            init, err = _get_or_error(session, Initiative, entity_id)
+            if err:
+                return err
+            st = source_type.strip()
+            su = source_url.strip() if source_url else None
+            existing_e = session.execute(
+                select(Enrichment).where(
+                    Enrichment.initiative_id == init.id,
+                    Enrichment.source_type == st,
+                    Enrichment.source_url == su,
+                )
+            ).scalar_one_or_none()
+            raw = content.strip()[:15000]
+            summ = summary.strip() if summary else raw[:500]
+            sf_json = json.dumps(structured_fields) if structured_fields else "{}"
+            now = datetime.now(UTC)
+            if existing_e:
+                existing_e.raw_text = raw
+                existing_e.summary = summ
+                existing_e.structured_fields_json = sf_json
+                existing_e.fetched_at = now
+                enrichment = existing_e
+            else:
+                enrichment = Enrichment(
+                    initiative_id=init.id, source_type=st, source_url=su,
+                    raw_text=raw, summary=summ, structured_fields_json=sf_json, fetched_at=now,
+                )
+                session.add(enrichment)
+            field_result = {}
+            if structured_fields:
+                field_result = services.apply_enrichment_fields(init, structured_fields)
+            session.commit()
+            result = {
+                "entity_id": init.id, "entity_name": init.name,
+                "enrichment_id": enrichment.id, "source_type": enrichment.source_type,
+                "content_length": len(enrichment.raw_text), "_db": _db_pulse(session),
+            }
+            if field_result.get("applied"):
+                result["fields_applied"] = field_result["applied"]
+            if field_result.get("skipped"):
+                result["fields_skipped"] = field_result["skipped"]
+            return _suggest(result, _next("score", "Score with new data", action="run", entity_id=init.id))
 
-@mcp.tool(annotations=_READ)
-def get_scoring_dossier(entity_id: int, compact: bool = False) -> dict:
-    """Build scoring dossiers and prompts WITHOUT making LLM calls.
-
-    WHAT: Returns 3 dimension dossiers + system prompts for LLM-free scoring. No API key needed.
-    WHEN: When you want to evaluate the dossiers yourself.
-    NEXT: Evaluate each dimension, then submit_score() with results.
-
-    Args:
-        entity_id: Entity ID.
-        compact: If True, truncate dossiers to ~1500 chars each and factor out entity
-            header to top level (reduces total from ~15KB to ~5KB).
-    """
-    with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, entity_id)
-        if err:
-            return err
-        enrichments = session.execute(
-            select(Enrichment).where(Enrichment.initiative_id == init.id)
-        ).scalars().all()
-        prompts = services.load_scoring_prompts(session)
+    # --- PROCESS (autonomous pipeline) ---
+    if action == "process":
+        do_score = score
+        api_key_warning = None
+        if do_score:
+            key_err = _check_api_key()
+            if key_err:
+                if not do_enrich:
+                    return key_err
+                do_score = False
+                api_key_warning = (
+                    "No API key — enriching only. "
+                    "Set API key or use score(action='dossier') + score(action='submit') to score manually."
+                )
+        limit = max(1, min(limit, 50))
         et = get_entity_type()
-        defaults = default_prompts_for(et)
+        explicit_ids = _parse_ids(entity_ids)
+        with session_scope() as session:
+            if explicit_ids is not None:
+                queue = [{"id": i, "needs_enrichment": do_enrich, "needs_scoring": do_score}
+                         for i in explicit_ids[:limit]]
+            else:
+                queue = services.get_work_queue(session, limit)
+            stats = services.compute_stats(session)
+        if not queue:
+            return _suggest(
+                {"enrichment": None, "scoring": None, "remaining_in_queue": 0,
+                 "hint": f"Work queue is empty. All {_entity_cfg()['label_plural']} are processed."},
+                _next("entity", "Review results", action="list", verdict="reach_out_now"),
+            )
+        enrich_ids = [item["id"] for item in queue if item["needs_enrichment"]]
+        score_only_ids = [item["id"] for item in queue
+                          if item.get("needs_scoring") and not item.get("needs_enrichment")]
+        discover_result = None
+        enrich_result = None
+        score_result = None
+        if discover and enrich_ids:
+            async def _do_discover(s, init):
+                r = await services.run_discovery(s, init)
+                return {"urls_found": r["urls_found"]}
+            try:
+                disc_results = await _run_batch(enrich_ids, _do_discover, concurrency=1)
+                disc_ok = sum(1 for r in disc_results if r.get("ok") and r.get("urls_found", 0) > 0)
+                discover_result = {"processed": len(enrich_ids), "urls_found": disc_ok,
+                                   "no_new_urls": len(enrich_ids) - disc_ok}
+            except ImportError:
+                discover_result = {"skipped": True, "reason": "ddgs not installed"}
+        enrich_failures = []
+        if do_enrich and enrich_ids:
+            async with open_crawler() as crawler:
+                enrich_results = await _run_batch(enrich_ids, _do_enrich, concurrency=3, crawler=crawler)
+            enrich_ok, enrich_failed = _batch_summary(enrich_results)
+            enrich_result = {"processed": len(enrich_ids), "succeeded": enrich_ok, "failed": enrich_failed}
+            enrich_failures = [r for r in enrich_results if not r.get("ok")]
+            if enrich_failures:
+                enrich_result["failed_items"] = enrich_failures
+        failed_ids = {f["id"] for f in enrich_failures}
+        score_ids = (score_only_ids + [i for i in enrich_ids if i not in failed_ids]) if do_enrich else score_only_ids
+        if do_score and score_ids:
+            client = LLMClient()
+            score_results = await _run_batch(score_ids, _do_score, concurrency=1, client=client, entity_type=et)
+            score_ok, score_failed = _batch_summary(score_results)
+            verdict_counts: dict[str, int] = {}
+            for r in score_results:
+                if r.get("ok") and "verdict" in r:
+                    v = r["verdict"]
+                    verdict_counts[v] = verdict_counts.get(v, 0) + 1
+            score_result = {"processed": len(score_ids), "succeeded": score_ok,
+                            "failed": score_failed, "results": score_results, "summary": verdict_counts}
+        remaining = max(0, (stats["total"] - stats["scored"]) - (score_result["succeeded"] if score_result else 0))
+        progress_pct = round(100 * (1 - remaining / stats["total"]), 1) if stats["total"] else 100.0
+        result = {"discovery": discover_result, "enrichment": enrich_result,
+                  "scoring": score_result, "remaining_in_queue": remaining, "progress_pct": progress_pct}
+        if api_key_warning:
+            result["warning"] = api_key_warning
+        if not do_score:
+            return _suggest(result, _next("enrich", "Score enriched items", action="process", score=True))
+        elif remaining > 0:
+            return _suggest(result, _next("enrich", "Process next batch", action="process"))
+        else:
+            return _suggest(result, _next("entity", "Review top results", action="list", verdict="reach_out_now"))
 
-        ecfg = get_entity_config(et)
-        dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+    return _error(f"Unknown action: {action!r}. Use: run, submit, process.", "VALIDATION_ERROR")
 
-        # Build dimension dossiers: first dim gets team dossier, second gets tech,
-        # last gets full (includes all enrichments for big-picture assessment).
-        dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
-        dimensions_out = {}
-        for i, dim in enumerate(dims):
-            builder_idx = min(i, len(dossier_builders) - 1)
-            # Last dimension always gets the full dossier
-            if i == len(dims) - 1:
-                builder_idx = len(dossier_builders) - 1
-            builder = dossier_builders[builder_idx]
-            prompt = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
-            dossier_text = builder(init, enrichments, et)
-            if compact and len(dossier_text) > 1500:
-                dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
-            dimensions_out[dim] = {"prompt": prompt, "dossier": dossier_text}
 
-        # Build grade args hint for submit_score
-        grade_args = {f"grade_{dim}": "" for dim in dims}
-        grade_args["classification"] = ""
-
-        result = {
-            "entity_id": init.id, "entity_name": init.name,
-            "entity_type": et, "enriched": len(enrichments) > 0,
-            "dimensions": dimensions_out,
-        }
-        if compact:
-            result["_note"] = "Dossiers truncated (compact=True). Use compact=False for full text."
-
-        return _suggest(
-            result,
-            _next("submit_score", "Submit your evaluation",
-                  entity_id=init.id, **grade_args),
-        )
+# ---------------------------------------------------------------------------
+# Tool 3: score() — run / submit / dossier
+# ---------------------------------------------------------------------------
 
 
 @mcp.tool(annotations=_WRITE)
-def submit_score(
-    entity_id: int,
+async def score(
+    action: str = "run",
+    entity_id: int | None = None,
+    compact: bool = False,
+    # Submit params
     grade_team: str = "", grade_tech: str = "", grade_opportunity: str = "",
     classification: str = "",
     contact_who: str = "", contact_channel: str = "website_form",
     engagement_hook: str = "", reasoning: str = "",
     dimension_grades: dict | None = None,
 ) -> dict:
-    """Submit externally-evaluated scores. No LLM call needed.
+    """Score entities via LLM or manual grade submission, or build scoring dossiers.
 
-    WHAT: Validates grades, computes verdict/score deterministically, saves the score.
-    WHEN: After get_scoring_dossier() when you've evaluated the dossiers.
-
-    Supports both standard and custom scoring dimensions:
-    - Standard (initiative/professor): use grade_team, grade_tech, grade_opportunity.
-    - Custom entity types: use dimension_grades={"dim_name": "grade", ...}.
-      The dimension names must match those from get_scoring_dossier().
+    ACTIONS:
+      run     — LLM-powered scoring (3 parallel calls). Requires API key. (entity_id required).
+      dossier — Build scoring dossiers + prompts WITHOUT LLM calls. No API key needed.
+      submit  — Submit grades you evaluated yourself. No LLM call needed.
 
     Args:
+        action: run | dossier | submit.
         entity_id: Entity ID.
-        grade_team: Team grade (A+, A, A-, B+, B, B-, C+, C, C-, D). For standard types.
-        grade_tech: Tech grade (same scale). For standard types.
-        grade_opportunity: Opportunity grade (same scale). For standard types.
-        classification: Entity classification (optional for custom types).
-        contact_who: Recommended contact person/role.
-        contact_channel: email, linkedin, event, or website_form.
-        engagement_hook: Suggested opening line.
-        reasoning: Brief reasoning for the assessment.
-        dimension_grades: Dict of dimension->grade for custom entity types.
-            Example: {"novelty": "A", "methodology": "B+", "impact": "A-"}.
+        compact: For dossier: truncate to ~1500 chars each.
+        grade_team: Team grade (A+ through D). For submit with standard types.
+        grade_tech: Tech grade. For submit with standard types.
+        grade_opportunity: Opportunity grade. For submit with standard types.
+        classification: Entity classification (for submit).
+        contact_who: Recommended contact (for submit).
+        contact_channel: email | linkedin | event | website_form (for submit).
+        engagement_hook: Suggested opener (for submit).
+        reasoning: Assessment reasoning (for submit).
+        dimension_grades: Dict of dimension->grade for custom types (for submit).
     """
-    et = get_entity_type()
-    ecfg = get_entity_config(et)
-    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
-    is_standard = (dims == ["team", "tech", "opportunity"])
+    action = (action or "run").strip().lower()
 
-    # Build grades dict from either standard params or dimension_grades
-    grades: dict[str, Grade] = {}
-    if dimension_grades and isinstance(dimension_grades, dict):
-        # Custom dimensions
-        for dim, raw_grade in dimension_grades.items():
-            if Grade.normalize(raw_grade) not in VALID_GRADES:
-                return _error(
-                    f"Invalid grade for '{dim}': {raw_grade!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
-                    "VALIDATION_ERROR")
-            grades[dim] = Grade.parse(raw_grade)
-    elif is_standard:
-        # Standard team/tech/opportunity
-        for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
-                           ("grade_opportunity", grade_opportunity)]:
-            if not raw:
-                return _error(f"{label} is required", "VALIDATION_ERROR")
-            if Grade.normalize(raw) not in VALID_GRADES:
-                return _error(
-                    f"Invalid {label}: {raw!r}. Valid: {', '.join(sorted(VALID_GRADES))}",
-                    "VALIDATION_ERROR")
-        grades = {
-            "team": Grade.parse(grade_team),
-            "tech": Grade.parse(grade_tech),
-            "opportunity": Grade.parse(grade_opportunity),
-        }
-    else:
-        # Non-standard dims, but no dimension_grades provided — try grade_ params
-        # as positional mapping to configured dimensions
-        positional = [grade_team, grade_tech, grade_opportunity]
-        for i, dim in enumerate(dims):
-            raw = positional[i] if i < len(positional) else ""
-            if not raw:
-                return _error(
-                    f"Missing grade for dimension '{dim}'. Use dimension_grades={{'{dim}': 'grade'}} "
-                    f"or provide grades positionally.",
-                    "VALIDATION_ERROR")
-            if Grade.normalize(raw) not in VALID_GRADES:
-                return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
-            grades[dim] = Grade.parse(raw)
+    if entity_id is None:
+        return _error("entity_id required", "VALIDATION_ERROR")
 
-    # Validate classification (relaxed for custom types)
-    if classification:
-        classification = classification.strip().lower()
-        valid_cls = valid_classifications(et)
-        # For custom types, accept any classification
-        if is_standard and classification not in valid_cls:
-            return _error(
-                f"Invalid classification: {classification!r}. Valid: {', '.join(sorted(valid_cls))}",
-                "VALIDATION_ERROR")
+    # --- RUN ---
+    if action == "run":
+        key_err = _check_api_key()
+        if key_err:
+            return key_err
+        with session_scope() as session:
+            try:
+                init, err = _get_or_error(session, Initiative, entity_id)
+                if err:
+                    return err
+                has_enrichments = session.execute(
+                    select(func.count(Enrichment.id)).where(Enrichment.initiative_id == init.id)
+                ).scalar() or 0
+                auto_enriched = False
+                if has_enrichments == 0:
+                    try:
+                        async with open_crawler() as crawler:
+                            await services.run_enrichment(session, init, crawler=crawler)
+                        session.commit()
+                        auto_enriched = True
+                    except Exception:
+                        log.info("Auto-enrich failed for %s, scoring with limited data", init.name)
+                outreach = await services.run_scoring(session, init, entity_type=get_entity_type())
+                session.commit()
+                result = services.score_response_dict(outreach, extended=True)
+                result["entity_id"] = init.id
+                result["entity_name"] = init.name
+                if auto_enriched:
+                    result["auto_enriched"] = True
+                result["_db"] = _db_pulse(session)
+                return _trim(result)
+            except Exception as exc:
+                return _llm_error(exc)
 
-    contact_channel = contact_channel.strip().lower()
-    if contact_channel and contact_channel not in VALID_CHANNELS:
-        return _error(f"Invalid contact_channel: {contact_channel!r}. Valid: {', '.join(sorted(VALID_CHANNELS))}",
-                      "VALIDATION_ERROR")
-
-    with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, entity_id)
-        if err:
-            return err
-
-        enrichments = list(session.execute(
-            select(Enrichment).where(Enrichment.initiative_id == init.id)
-        ).scalars().all())
-
-        outreach = create_score_from_grades(
-            init, enrichments, grades,
-            classification=classification, contact_who=contact_who,
-            contact_channel=contact_channel, engagement_hook=engagement_hook,
-            reasoning=reasoning, entity_type=get_entity_type(),
-        )
-
-        session.execute(delete(OutreachScore).where(
-            OutreachScore.initiative_id == init.id,
-            OutreachScore.project_id.is_(None),
-        ))
-        session.add(outreach)
-        session.commit()
-
-        result: dict = {
-            "entity_id": init.id, "entity_name": init.name,
-            "verdict": outreach.verdict, "score": outreach.score,
-            "classification": outreach.classification,
-        }
-        # Include dimension grades — use dimension_grades_json for full picture
-        dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
-        if dim_grades_stored:
-            result["dimension_grades"] = {
-                k: v.get("letter", "") for k, v in dim_grades_stored.items()
+    # --- DOSSIER ---
+    if action == "dossier":
+        with session_scope() as session:
+            init, err = _get_or_error(session, Initiative, entity_id)
+            if err:
+                return err
+            enrichments = session.execute(
+                select(Enrichment).where(Enrichment.initiative_id == init.id)
+            ).scalars().all()
+            prompts = services.load_scoring_prompts(session)
+            et = get_entity_type()
+            defaults = default_prompts_for(et)
+            ecfg = get_entity_config(et)
+            dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+            dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
+            dimensions_out = {}
+            for i, dim in enumerate(dims):
+                builder_idx = min(i, len(dossier_builders) - 1)
+                if i == len(dims) - 1:
+                    builder_idx = len(dossier_builders) - 1
+                builder = dossier_builders[builder_idx]
+                prompt_text = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
+                dossier_text = builder(init, enrichments, et)
+                if compact and len(dossier_text) > 1500:
+                    dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
+                dimensions_out[dim] = {"prompt": prompt_text, "dossier": dossier_text}
+            grade_args = {f"grade_{dim}": "" for dim in dims}
+            grade_args["classification"] = ""
+            result = {
+                "entity_id": init.id, "entity_name": init.name,
+                "entity_type": et, "enriched": len(enrichments) > 0,
+                "dimensions": dimensions_out,
             }
+            if compact:
+                result["_note"] = "Dossiers truncated (compact=True). Use compact=False for full text."
+            return _suggest(result, _next("score", "Submit your evaluation", action="submit",
+                                          entity_id=init.id, **grade_args))
+
+    # --- SUBMIT ---
+    if action == "submit":
+        et = get_entity_type()
+        ecfg = get_entity_config(et)
+        dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+        is_standard = (dims == ["team", "tech", "opportunity"])
+        grades: dict[str, Grade] = {}
+        if dimension_grades and isinstance(dimension_grades, dict):
+            for dim, raw_grade in dimension_grades.items():
+                if Grade.normalize(raw_grade) not in VALID_GRADES:
+                    return _error(f"Invalid grade for '{dim}': {raw_grade!r}.", "VALIDATION_ERROR")
+                grades[dim] = Grade.parse(raw_grade)
+        elif is_standard:
+            for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
+                               ("grade_opportunity", grade_opportunity)]:
+                if not raw:
+                    return _error(f"{label} is required", "VALIDATION_ERROR")
+                if Grade.normalize(raw) not in VALID_GRADES:
+                    return _error(f"Invalid {label}: {raw!r}.", "VALIDATION_ERROR")
+            grades = {"team": Grade.parse(grade_team), "tech": Grade.parse(grade_tech),
+                      "opportunity": Grade.parse(grade_opportunity)}
         else:
-            result.update({
-                "grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-                "grade_opportunity": outreach.grade_opportunity,
-            })
-        result["_db"] = _db_pulse(session)
-        return result
+            positional = [grade_team, grade_tech, grade_opportunity]
+            for i, dim in enumerate(dims):
+                raw = positional[i] if i < len(positional) else ""
+                if not raw:
+                    return _error(f"Missing grade for dimension '{dim}'.", "VALIDATION_ERROR")
+                if Grade.normalize(raw) not in VALID_GRADES:
+                    return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
+                grades[dim] = Grade.parse(raw)
+        if classification:
+            classification = classification.strip().lower()
+            valid_cls = valid_classifications(et)
+            if is_standard and classification not in valid_cls:
+                return _error(f"Invalid classification: {classification!r}.", "VALIDATION_ERROR")
+        contact_channel = contact_channel.strip().lower()
+        if contact_channel and contact_channel not in VALID_CHANNELS:
+            return _error(f"Invalid contact_channel: {contact_channel!r}.", "VALIDATION_ERROR")
+        with session_scope() as session:
+            init, err = _get_or_error(session, Initiative, entity_id)
+            if err:
+                return err
+            enrichments = list(session.execute(
+                select(Enrichment).where(Enrichment.initiative_id == init.id)
+            ).scalars().all())
+            outreach = create_score_from_grades(
+                init, enrichments, grades,
+                classification=classification, contact_who=contact_who,
+                contact_channel=contact_channel, engagement_hook=engagement_hook,
+                reasoning=reasoning, entity_type=get_entity_type(),
+            )
+            session.execute(delete(OutreachScore).where(
+                OutreachScore.initiative_id == init.id, OutreachScore.project_id.is_(None),
+            ))
+            session.add(outreach)
+            session.commit()
+            result: dict = {
+                "entity_id": init.id, "entity_name": init.name,
+                "verdict": outreach.verdict, "score": outreach.score,
+                "classification": outreach.classification,
+            }
+            dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
+            if dim_grades_stored:
+                result["dimension_grades"] = {k: v.get("letter", "") for k, v in dim_grades_stored.items()}
+            else:
+                result.update({"grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+                               "grade_opportunity": outreach.grade_opportunity})
+            result["_db"] = _db_pulse(session)
+            return result
+
+    return _error(f"Unknown action: {action!r}. Use: run, dossier, submit.", "VALIDATION_ERROR")
 
 
 # ---------------------------------------------------------------------------
-# Tools: Batch Operations
+# Internal batch helpers (not MCP tools — used by enrich(action=process))
 # ---------------------------------------------------------------------------
 
 
 async def batch_enrich(entity_ids: str | None = None, limit: int = 20) -> dict:
-    """Enrich multiple entities (internal, used by process_queue and tests)."""
+    """Enrich multiple entities (internal, used by tests)."""
     limit = max(1, min(limit, 50))
     ids = _parse_ids(entity_ids)
-
     with session_scope() as session:
         if ids is None:
             queue = services.get_work_queue(session, limit)
@@ -1127,10 +1139,8 @@ async def batch_enrich(entity_ids: str | None = None, limit: int = 20) -> dict:
             return {"processed": 0, "succeeded": 0, "failed": 0, "results": [],
                     "hint": f"No {_entity_cfg()['label_plural']} need enrichment."}
         ids = ids[:limit]
-
     async with open_crawler() as crawler:
         results = await _run_batch(ids, _do_enrich, concurrency=3, crawler=crawler)
-
     ok, failed = _batch_summary(results)
     result: dict = {"processed": len(ids), "succeeded": ok, "failed": failed, "results": results}
     if ok > 0:
@@ -1139,14 +1149,12 @@ async def batch_enrich(entity_ids: str | None = None, limit: int = 20) -> dict:
 
 
 async def batch_score(entity_ids: str | None = None, limit: int = 20) -> dict:
-    """Score multiple entities (internal, used by process_queue and tests)."""
+    """Score multiple entities (internal, used by tests)."""
     key_err = _check_api_key()
     if key_err:
         return key_err
-
     limit = max(1, min(limit, 50))
     ids = _parse_ids(entity_ids)
-
     with session_scope() as session:
         if ids is None:
             queue = services.get_work_queue(session, limit)
@@ -1156,10 +1164,8 @@ async def batch_score(entity_ids: str | None = None, limit: int = 20) -> dict:
                     "results": [], "summary": {},
                     "hint": f"No {_entity_cfg()['label_plural']} need scoring."}
         ids = ids[:limit]
-
     client = LLMClient()
     et = get_entity_type()
-
     results = await _run_batch(ids, _do_score, concurrency=1, client=client, entity_type=et)
     ok, failed = _batch_summary(results)
     verdict_counts: dict[str, int] = {}
@@ -1167,243 +1173,49 @@ async def batch_score(entity_ids: str | None = None, limit: int = 20) -> dict:
         if r.get("ok") and "verdict" in r:
             v = r["verdict"]
             verdict_counts[v] = verdict_counts.get(v, 0) + 1
-
     return {"processed": len(ids), "succeeded": ok, "failed": failed,
             "results": results, "summary": verdict_counts}
 
 
-@mcp.tool(annotations=_WRITE)
-async def process_queue(
-    limit: int = 20, discover: bool = False, enrich: bool = True, score: bool = True,
-    entity_ids: str | None = None,
-) -> dict:
-    """Autonomous pipeline: enrich then score. The primary tool for batch processing.
-
-    WHAT: Fetches work queue (or uses provided IDs), enriches, then scores. One call per batch.
-    Auto-degrades to enrich-only when no API key is set (instead of failing).
-    WHEN: Primary autonomous workflow. Call repeatedly until remaining_in_queue=0.
-
-    Args:
-        limit: Max items (1-50, default 20).
-        discover: Run DuckDuckGo URL discovery before enrichment (adds ~12s/item).
-        enrich: Run enrichment step (default true).
-        score: Run scoring step (default true). Requires API key.
-        entity_ids: Comma-separated IDs. If omitted, auto-selects from work queue.
-    """
-    api_key_warning = None
-    if score:
-        key_err = _check_api_key()
-        if key_err:
-            if not enrich:
-                # Can't enrich (disabled) and can't score (no key) — fail
-                return key_err
-            # Graceful degradation: enrich-only mode
-            score = False
-            api_key_warning = (
-                "No API key — enriching only. "
-                "Set API key or use get_scoring_dossier() + submit_score() to score manually."
-            )
-
-    limit = max(1, min(limit, 50))
-    et = get_entity_type()
-    explicit_ids = _parse_ids(entity_ids)
-
-    with session_scope() as session:
-        if explicit_ids is not None:
-            queue = [{"id": i, "needs_enrichment": enrich, "needs_scoring": score}
-                     for i in explicit_ids[:limit]]
-        else:
-            queue = services.get_work_queue(session, limit)
-        stats = services.compute_stats(session)
-
-    if not queue:
-        return _suggest(
-            {"enrichment": None, "scoring": None, "remaining_in_queue": 0,
-             "hint": f"Work queue is empty. All {_entity_cfg()['label_plural']} are processed."},
-            _next("list_entities", "Review results", verdict="reach_out_now"),
-        )
-
-    enrich_ids = [item["id"] for item in queue if item["needs_enrichment"]]
-    score_only_ids = [item["id"] for item in queue
-                      if item.get("needs_scoring") and not item.get("needs_enrichment")]
-
-    discover_result = None
-    enrich_result = None
-    score_result = None
-
-    # Step 0: Discovery (serial, rate-limited)
-    if discover and enrich_ids:
-        async def _do_discover(s, init):
-            result = await services.run_discovery(s, init)
-            return {"urls_found": result["urls_found"]}
-
-        try:
-            disc_results = await _run_batch(enrich_ids, _do_discover, concurrency=1)
-            disc_ok = sum(1 for r in disc_results if r.get("ok") and r.get("urls_found", 0) > 0)
-            discover_result = {"processed": len(enrich_ids), "urls_found": disc_ok,
-                               "no_new_urls": len(enrich_ids) - disc_ok}
-        except ImportError:
-            discover_result = {"skipped": True, "reason": "ddgs not installed — pip install 'scout[crawl]'"}
-
-    # Step 1: Enrich
-    if enrich and enrich_ids:
-        async with open_crawler() as crawler:
-            enrich_results = await _run_batch(enrich_ids, _do_enrich, concurrency=3, crawler=crawler)
-
-        enrich_ok, enrich_failed = _batch_summary(enrich_results)
-        enrich_result = {"processed": len(enrich_ids), "succeeded": enrich_ok, "failed": enrich_failed}
-        enrich_failures = [r for r in enrich_results if not r.get("ok")]
-        if enrich_failures:
-            enrich_result["failed_items"] = enrich_failures
-    else:
-        enrich_failures = []
-
-    failed_ids = {f["id"] for f in enrich_failures}
-    score_ids = (score_only_ids + [i for i in enrich_ids if i not in failed_ids]) if enrich else score_only_ids
-
-    # Step 2: Score
-    if score and score_ids:
-        client = LLMClient()
-
-        score_results = await _run_batch(score_ids, _do_score, concurrency=1,
-                                         client=client, entity_type=et)
-        score_ok, score_failed = _batch_summary(score_results)
-        verdict_counts: dict[str, int] = {}
-        for r in score_results:
-            if r.get("ok") and "verdict" in r:
-                v = r["verdict"]
-                verdict_counts[v] = verdict_counts.get(v, 0) + 1
-
-        score_result = {"processed": len(score_ids), "succeeded": score_ok,
-                        "failed": score_failed, "results": score_results,
-                        "summary": verdict_counts}
-
-    remaining = max(0, (stats["total"] - stats["scored"])
-                    - (score_result["succeeded"] if score_result else 0))
-    progress_pct = round(100 * (1 - remaining / stats["total"]), 1) if stats["total"] else 100.0
-    result: dict = {"discovery": discover_result, "enrichment": enrich_result,
-                    "scoring": score_result, "remaining_in_queue": remaining,
-                    "progress_pct": progress_pct}
-
-    if api_key_warning:
-        result["warning"] = api_key_warning
-
-    if not score:
-        return _suggest(result, _next("process_queue", "Score enriched items", score=True, enrich=False))
-    elif remaining > 0:
-        return _suggest(result, _next("process_queue", "Process next batch"))
-    else:
-        return _suggest(result,
-                        _next("list_entities", "Review top results", verdict="reach_out_now"))
-
-
 # ---------------------------------------------------------------------------
-# Tools: Work Queue & Overview
+# Tool 4: overview() — database stats + work queue
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(annotations=_READ)
-def get_work_queue(limit: int = 10) -> dict:
-    """Get prioritized entities needing enrichment or scoring.
-
-    WHAT: Returns items ordered by priority with recommended_action per item.
-    WHEN: To drive autonomous workflows. Or use process_queue() to auto-process.
-
-    Args:
-        limit: Max items (1-100, default 10).
-    """
-    with session_scope() as session:
-        queue = services.get_work_queue(session, limit)
-        stats = services.compute_stats(session)
-        result = {"queue": queue, "database_stats": stats}
-        if queue:
-            ids = ",".join(str(q["id"]) for q in queue)
-            return _suggest(result, _next("process_queue", "Process these items", entity_ids=ids))
-        return _suggest(result, _next("list_entities", "All items processed"))
-
-
-@mcp.tool(annotations=_READ)
-def get_overview(detail: bool = False) -> dict:
-    """Database statistics and analytical aggregations.
+def overview(detail: bool = False, queue_limit: int = 0) -> dict:
+    """Database statistics, analytics, and optionally the work queue.
 
     WHAT: Counts (total, enriched, scored) + breakdowns by verdict, classification, uni.
-    WHEN: First call to understand database state. Set detail=True for deeper analytics.
+    WHEN: First call to understand database state.
 
     Args:
         detail: Include score distributions, top-N per verdict, grade breakdowns.
+        queue_limit: If > 0, include prioritized work queue (items needing enrichment/scoring).
     """
     with session_scope() as session:
         stats = services.compute_stats(session)
         if detail:
             stats["aggregations"] = services.compute_aggregations(session)
+        if queue_limit > 0:
+            queue = services.get_work_queue(session, queue_limit)
+            stats["queue"] = queue
+            if queue:
+                ids = ",".join(str(q["id"]) for q in queue)
+                return _suggest(stats, _next("enrich", "Process these items", action="process", entity_ids=ids))
         actions = []
         if stats.get("total", 0) > stats.get("scored", 0):
-            actions.append(_next("get_work_queue", "Items need processing"))
+            actions.append(_next("overview", "Get work queue", queue_limit=10))
         return _suggest(stats, *actions)
 
 
 # ---------------------------------------------------------------------------
-# Tools: Similarity
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_READ)
-def find_similar(
-    query: str | None = None, entity_id: int | None = None,
-    uni: str | None = None, verdict: str | None = None,
-    limit: int = 10,
-) -> dict:
-    """Semantic similarity search using dense embeddings.
-
-    WHAT: Returns ranked results with similarity scores. Supports SQL pre-filters.
-    WHEN: Find related entities, thematic clusters, or "show me entities like X".
-
-    Args:
-        query: Free-text query (e.g. "robotics research"). Either query or entity_id required.
-        entity_id: Find entities similar to this one.
-        uni: Pre-filter by university (comma-separated).
-        verdict: Pre-filter by verdict (comma-separated).
-        limit: Max results (default 10, max 100).
-    """
-    from scout.embedder import find_similar as _find_similar
-
-    with session_scope() as session:
-        id_mask = services.build_similarity_id_mask(session, uni=uni, verdict=verdict)
-        if id_mask is not None and not id_mask:
-            return {"results": [], "hint": f"No {_entity_cfg()['label_plural']} match the filters."}
-
-        results = _find_similar(
-            query_text=query, initiative_id=entity_id,
-            top_k=max(1, min(limit, 100)), id_mask=id_mask,
-        )
-
-        if not results:
-            return _suggest(
-                {"results": []},
-                _next("embed_all_tool", "Build embeddings first"),
-            )
-
-        ids = [r[0] for r in results]
-        inits = session.execute(
-            select(Initiative.id, Initiative.name, Initiative.uni)
-            .where(Initiative.id.in_(ids))
-        ).all()
-        name_map = {r.id: (r.name, r.uni) for r in inits}
-
-        return {"results": [
-            {"id": rid, "name": name_map.get(rid, ("?", "?"))[0],
-             "uni": name_map.get(rid, ("?", "?"))[1], "similarity": score_val}
-            for rid, score_val in results
-        ]}
-
-
-# ---------------------------------------------------------------------------
-# Tools: Manage Project
+# Tool 5: project() — create / update / delete / score
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
-async def manage_project(
+async def project(
     action: str,
     project_id: int | None = None,
     entity_id: int | None = None,
@@ -1411,20 +1223,20 @@ async def manage_project(
     updates: dict | None = None,
     confirm: bool = False,
 ) -> dict:
-    """Create, update, delete, or score projects under an entity.
+    """Manage sub-projects within an entity.
 
     ACTIONS:
-    - create: Requires entity_id, name. Optional updates={description, website, github_url, team}.
-    - update: Requires project_id. Pass updates={field: value}.
-    - delete: Requires project_id + confirm=True.
-    - score: Requires project_id. Runs LLM scoring. Requires API key.
+      create — Requires entity_id + name. Optional updates={description, website, github_url, team}.
+      update — Requires project_id + updates.
+      delete — Requires project_id + confirm=True.
+      score  — Requires project_id. Runs LLM scoring.
 
     Args:
-        action: "create", "update", "delete", or "score".
-        project_id: Project ID (required for update/delete/score).
-        entity_id: Parent entity ID (required for create).
-        name: Project name (required for create).
-        updates: Dict of field->value. Valid: description, website, github_url, team.
+        action: create | update | delete | score.
+        project_id: Project ID (for update/delete/score).
+        entity_id: Parent entity ID (for create).
+        name: Project name (for create).
+        updates: Dict of field->value.
         confirm: Must be True for delete.
     """
     action = (action or "").strip().lower()
@@ -1436,14 +1248,10 @@ async def manage_project(
             _, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
-            proj = services.create_project(
-                session, entity_id, name=name, **(updates or {}),
-            )
+            proj = services.create_project(session, entity_id, name=name, **(updates or {}))
             session.commit()
-            return _suggest(
-                services.project_summary(proj),
-                _next("manage_project", "Score the project", action="score", project_id=proj.id),
-            )
+            return _suggest(services.project_summary(proj),
+                            _next("project", "Score the project", action="score", project_id=proj.id))
 
     if action == "update":
         if project_id is None:
@@ -1453,8 +1261,7 @@ async def manage_project(
             if err:
                 return err
             if updates:
-                services.apply_updates(proj, updates,
-                                       ("name", "description", "website", "github_url", "team"))
+                services.apply_updates(proj, updates, ("name", "description", "website", "github_url", "team"))
             session.commit()
             return services.project_summary(proj)
 
@@ -1466,13 +1273,9 @@ async def manage_project(
             if err:
                 return err
             if not confirm:
-                return {
-                    "ok": False, "action": "delete_project",
-                    "project_id": proj.id, "project_name": proj.name,
-                    "entity_id": proj.initiative_id,
-                    "warning": f"Will permanently delete project '{proj.name}'. "
-                               "Call again with confirm=True.",
-                }
+                return {"ok": False, "action": "delete_project", "project_id": proj.id,
+                        "project_name": proj.name, "entity_id": proj.initiative_id,
+                        "warning": f"Will permanently delete project '{proj.name}'. Call again with confirm=True."}
             session.delete(proj)
             session.commit()
             return {"ok": True, "deleted_project_id": project_id}
@@ -1491,61 +1294,92 @@ async def manage_project(
                 init, err = _get_or_error(session, Initiative, proj.initiative_id)
                 if err:
                     return err
-                outreach = await services.run_project_scoring(
-                    session, proj, init, entity_type=get_entity_type(),
-                )
+                outreach = await services.run_project_scoring(session, proj, init, entity_type=get_entity_type())
                 session.commit()
                 result = services.score_response_dict(outreach, extended=True)
-                result["project_id"] = proj.id
-                result["project_name"] = proj.name
-                result["entity_id"] = init.id
-                result["entity_name"] = init.name
+                result.update({"project_id": proj.id, "project_name": proj.name,
+                               "entity_id": init.id, "entity_name": init.name})
                 return result
             except Exception as exc:
                 return _llm_error(exc)
 
-    return _error(f"Unknown action: {action!r}. Use create, update, delete, or score.",
-                  "VALIDATION_ERROR")
+    return _error(f"Unknown action: {action!r}. Use: create, update, delete, score.", "VALIDATION_ERROR")
 
 
 # ---------------------------------------------------------------------------
-# Tools: Manage Database
+# Tool 6: configure() — database / columns / llm / embed / scrape
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(annotations=_WRITE)
-def manage_database(
+async def configure(
     action: str,
     name: str | None = None,
-    entity_type: str = "initiative",
-    context: str = "",
-    dimensions: str = "",
+    # Database params
+    entity_type: str = "initiative", context: str = "", dimensions: str = "",
+    # Column params
+    column_id: int | None = None, key: str | None = None, label: str | None = None,
+    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+    # LLM params
+    provider: str | None = None, model: str | None = None,
+    api_key: str | None = None, base_url: str | None = None,
+    # Scrape params
+    school: str | None = None, limit: int = 50,
 ) -> dict:
-    """List, select, create, delete, backup, or restore Scout databases.
+    """Manage databases, custom columns, LLM config, embeddings, and scrapers.
 
-    ACTIONS:
-    - list: Show all databases and which is active.
-    - select: Switch to a database (creates if needed). Requires name.
-    - create: Create a new empty database. Requires name. Supports ANY entity type.
-    - delete: Delete a database. Requires name. Cannot delete the active database.
-    - backup: Create a timestamped backup copy. Requires name.
-    - list_backups: Show all available backups with metadata.
-    - restore: Restore a database from backup. Requires name (backup name).
-    - delete_backup: Delete a backup file. Requires name (backup name).
+    ACTIONS (database):
+      db_list — List all databases.
+      db_select — Switch to a database (name required).
+      db_create — Create new database (name required).
+      db_delete — Delete a database (name required).
+      db_backup — Backup a database (name required).
+      db_list_backups — List available backups.
+      db_restore — Restore from backup (name=backup name).
+      db_delete_backup — Delete a backup (name=backup name).
+
+    ACTIONS (columns):
+      col_list — List custom column definitions.
+      col_create — Create column (key + label required).
+      col_update — Update column (column_id required).
+      col_delete — Delete column (column_id required).
+
+    ACTIONS (llm):
+      llm_show — Show current LLM config.
+      llm_set — Set provider/model/api_key/base_url.
+
+    ACTIONS (other):
+      embed — Build/rebuild dense embeddings for semantic search.
+      scrape — Scrape TUM professor directory (school, limit params).
 
     Args:
-        action: "list", "select", "create", "delete", "backup", "list_backups", "restore", or "delete_backup".
-        name: Database name or backup name depending on action.
-        entity_type: For create: "initiative" or "professor". Default "initiative".
+        action: See actions above.
+        name: Database name or backup name.
+        entity_type: For db_create (default "initiative").
+        context: For db_create with custom entity types.
+        dimensions: For db_create: comma-separated scoring dimensions.
+        column_id: For col_update/col_delete.
+        key: Column key (for col_create).
+        label: Column label (for col_create/col_update).
+        col_type: Column type: text, number, boolean, url.
+        show_in_list: Show column in list view.
+        sort_order: Column display order.
+        provider: LLM provider (anthropic, openai, openai_compatible, gemini).
+        model: LLM model name.
+        api_key: API key for the provider.
+        base_url: Custom base URL (for openai_compatible).
+        school: For scrape: TUM school filter (CIT, ED, LS, MGT, MED, NAT).
+        limit: For scrape: max professors to import.
     """
     action = (action or "").strip().lower()
 
-    if action == "list":
+    # --- DATABASE ---
+    if action == "db_list":
         return {"databases": list_databases(), "current": current_db_name()}
 
-    if action == "select":
+    if action == "db_select":
         if not name:
-            return _error("name required for select", "VALIDATION_ERROR")
+            return _error("name required", "VALIDATION_ERROR")
         try:
             name = validate_db_name(name)
         except ValueError as exc:
@@ -1555,9 +1389,9 @@ def manage_database(
         mcp._mcp_server.instructions = _build_instructions(et)
         return {"current": current_db_name(), "entity_type": et}
 
-    if action == "create":
+    if action == "db_create":
         if not name:
-            return _error("name required for create", "VALIDATION_ERROR")
+            return _error("name required", "VALIDATION_ERROR")
         try:
             name = validate_db_name(name)
         except ValueError as exc:
@@ -1566,7 +1400,6 @@ def manage_database(
             create_database(name, entity_type=entity_type)
         except ValueError as exc:
             return _error(str(exc), "ALREADY_EXISTS")
-        # Store custom entity config for non-built-in types
         if entity_type not in _BUILTIN_ENTITY_TYPES:
             from scout.db import set_entity_config_json
             custom_cfg = {
@@ -1577,15 +1410,14 @@ def manage_database(
             if dimensions:
                 custom_cfg["dimensions"] = [d.strip() for d in dimensions.split(",") if d.strip()]
             set_entity_config_json(custom_cfg)
-            # Seed scoring prompts for custom dimensions
             _seed_custom_prompts(entity_type, custom_cfg)
         mcp._mcp_server.instructions = _build_instructions(entity_type)
         return {"current": current_db_name(), "entity_type": entity_type,
                 "message": f"Created and switched to '{name}'"}
 
-    if action == "delete":
+    if action == "db_delete":
         if not name:
-            return _error("name required for delete", "VALIDATION_ERROR")
+            return _error("name required", "VALIDATION_ERROR")
         try:
             name = validate_db_name(name)
             delete_database(name)
@@ -1593,9 +1425,9 @@ def manage_database(
             return _error(str(exc), "VALIDATION_ERROR")
         return {"ok": True, "deleted": name, "current": current_db_name()}
 
-    if action == "backup":
+    if action == "db_backup":
         if not name:
-            return _error("name required for backup", "VALIDATION_ERROR")
+            return _error("name required", "VALIDATION_ERROR")
         try:
             name = validate_db_name(name)
             backup_name = backup_database(name)
@@ -1603,310 +1435,141 @@ def manage_database(
             return _error(str(exc), "VALIDATION_ERROR")
         return {"ok": True, "backup": backup_name}
 
-    if action == "list_backups":
+    if action == "db_list_backups":
         return {"backups": list_backups()}
 
-    if action == "restore":
+    if action == "db_restore":
         if not name:
-            return _error("name (backup name) required for restore", "VALIDATION_ERROR")
+            return _error("name (backup name) required", "VALIDATION_ERROR")
         try:
             restored = restore_database(name)
         except ValueError as exc:
             return _error(str(exc), "VALIDATION_ERROR")
         return {"ok": True, "restored": restored}
 
-    if action == "delete_backup":
+    if action == "db_delete_backup":
         if not name:
-            return _error("name (backup name) required for delete_backup", "VALIDATION_ERROR")
+            return _error("name (backup name) required", "VALIDATION_ERROR")
         try:
             delete_backup(name)
         except ValueError as exc:
             return _error(str(exc), "VALIDATION_ERROR")
         return {"ok": True, "deleted": name}
 
-    return _error(f"Unknown action: {action!r}. Use list, select, create, delete, backup, list_backups, restore, or delete_backup.",
-                  "VALIDATION_ERROR")
-
-
-# ---------------------------------------------------------------------------
-# Tools: Scoring Prompts
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_READ)
-def list_scoring_prompts(compact: bool = False) -> list | dict:
-    """List scoring prompt definitions.
-
-    Args:
-        compact: If True, return only key/label/updated_at (omit full content).
-    """
-    try:
-        with session_scope() as session:
-            prompts_list = services.get_scoring_prompts(session)
-            if compact:
-                return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
-                        for p in prompts_list]
-            return prompts_list
-    except Exception as exc:
-        return _error(f"Failed to list scoring prompts: {exc}", "DB_ERROR")
-
-
-@mcp.tool(annotations=_WRITE)
-def update_scoring_prompt(key: str, content: str) -> dict:
-    """Update a scoring prompt's content.
-
-    Args:
-        key: Prompt key (e.g. "team", "tech", "opportunity").
-        content: New prompt content text.
-    """
-    with session_scope() as session:
-        result = services.update_scoring_prompt(session, key, content)
-        if result is None:
-            return _error(f"Scoring prompt '{key}' not found", "NOT_FOUND")
-        session.commit()
-        return result
-
-
-# ---------------------------------------------------------------------------
-# Tools: Custom Columns
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_READ)
-def get_custom_columns() -> list:
-    """List custom column definitions for the current database."""
-    try:
-        with session_scope() as session:
-            return services.get_custom_columns(session, database=current_db_name())
-    except Exception as exc:
-        return [_error(f"Failed to list custom columns: {exc}", "DB_ERROR")]
-
-
-@mcp.tool(annotations=_WRITE)
-def create_custom_column(
-    key: str, label: str,
-    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
-) -> dict:
-    """Create a custom column definition.
-
-    Args:
-        key: Unique column key (e.g. "funding_stage").
-        label: Display label (e.g. "Funding Stage").
-        col_type: Column type: text, number, boolean, url.
-        show_in_list: Show column in list view.
-        sort_order: Column display order.
-    """
-    with session_scope() as session:
-        result = services.create_custom_column(
-            session, key=key, label=label, col_type=col_type,
-            show_in_list=show_in_list, sort_order=sort_order,
-            database=current_db_name(),
-        )
-        if result is None:
-            return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
-        session.commit()
-        return result
-
-
-@mcp.tool(annotations=_WRITE)
-def update_custom_column(
-    column_id: int,
-    label: str | None = None, col_type: str | None = None,
-    show_in_list: bool | None = None, sort_order: int | None = None,
-) -> dict:
-    """Update a custom column definition.
-
-    Args:
-        column_id: The column ID to update.
-        label: New display label.
-        col_type: New column type.
-        show_in_list: New visibility setting.
-        sort_order: New display order.
-    """
-    kwargs = {}
-    if label is not None:
-        kwargs["label"] = label
-    if col_type is not None:
-        kwargs["col_type"] = col_type
-    if show_in_list is not None:
-        kwargs["show_in_list"] = show_in_list
-    if sort_order is not None:
-        kwargs["sort_order"] = sort_order
-    with session_scope() as session:
-        result = services.update_custom_column(session, column_id, **kwargs)
-        if result is None:
-            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-        session.commit()
-        return result
-
-
-@mcp.tool(annotations=_DESTRUCTIVE)
-def delete_custom_column(column_id: int) -> dict:
-    """Delete a custom column definition.
-
-    Args:
-        column_id: The column ID to delete.
-    """
-    with session_scope() as session:
-        if not services.delete_custom_column(session, column_id):
-            return _error(f"Custom column {column_id} not found", "NOT_FOUND")
-        session.commit()
-        return {"ok": True, "deleted_column_id": column_id}
-
-
-# ---------------------------------------------------------------------------
-# Tools: Export
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_READ)
-def export_entities(
-    verdict: str | None = None, uni: str | None = None,
-    include_enrichments: bool = True, include_scores: bool = True,
-    include_extras: bool = False,
-) -> dict:
-    """Export entities to XLSX file.
-
-    Args:
-        verdict: Filter by verdict (comma-separated, e.g. "reach_out_now,reach_out_soon").
-        uni: Filter by university (comma-separated).
-        include_enrichments: Include enrichment summary column.
-        include_scores: Include score columns.
-        include_extras: Include extra profile fields.
-    """
-    from scout.db import DATA_DIR
-    from scout.exporter import export_xlsx
-
-    try:
-        with session_scope() as session:
-            buf = export_xlsx(
-                session, verdict=verdict, uni=uni,
-                include_enrichments=include_enrichments,
-                include_scores=include_scores, include_extras=include_extras,
-            )
-        db_name = current_db_name()
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"scout-{db_name}-{ts}.xlsx"
-        out_path = DATA_DIR / filename
-        out_path.write_bytes(buf.getvalue())
-        return {"ok": True, "file": str(out_path), "filename": filename}
-    except ImportError:
-        return _error("openpyxl not installed. Run: pip install scout[xlsx]", "MISSING_DEP")
-    except Exception as exc:
-        return _error(f"Export failed: {exc}", "EXPORT_ERROR")
-
-
-# ---------------------------------------------------------------------------
-# Tools: Embeddings
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_WRITE)
-def embed_all_tool() -> dict:
-    """Build or rebuild dense embeddings for all entities (enables semantic search)."""
-    from scout.embedder import embed_all
-    with session_scope() as session:
+    # --- COLUMNS ---
+    if action == "col_list":
         try:
-            count = embed_all(session)
+            with session_scope() as session:
+                return {"columns": services.get_custom_columns(session, database=current_db_name())}
         except Exception as exc:
-            return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
-        return _suggest(
-            {"ok": True, "embedded": count},
-            _next("find_similar", "Try semantic search", query=""),
-        )
+            return _error(f"Failed: {exc}", "DB_ERROR")
+
+    if action == "col_create":
+        if not key or not label:
+            return _error("key and label required", "VALIDATION_ERROR")
+        with session_scope() as session:
+            result = services.create_custom_column(
+                session, key=key, label=label, col_type=col_type,
+                show_in_list=show_in_list, sort_order=sort_order, database=current_db_name())
+            if result is None:
+                return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
+            session.commit()
+            return result
+
+    if action == "col_update":
+        if column_id is None:
+            return _error("column_id required", "VALIDATION_ERROR")
+        kwargs = {}
+        if label is not None:
+            kwargs["label"] = label
+        if col_type != "text":
+            kwargs["col_type"] = col_type
+        if not show_in_list:
+            kwargs["show_in_list"] = show_in_list
+        if sort_order != 0:
+            kwargs["sort_order"] = sort_order
+        with session_scope() as session:
+            result = services.update_custom_column(session, column_id, **kwargs)
+            if result is None:
+                return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+            session.commit()
+            return result
+
+    if action == "col_delete":
+        if column_id is None:
+            return _error("column_id required", "VALIDATION_ERROR")
+        with session_scope() as session:
+            if not services.delete_custom_column(session, column_id):
+                return _error(f"Custom column {column_id} not found", "NOT_FOUND")
+            session.commit()
+            return {"ok": True, "deleted_column_id": column_id}
+
+    # --- LLM ---
+    if action == "llm_show":
+        p = os.environ.get("LLM_PROVIDER", "anthropic")
+        m = os.environ.get("LLM_MODEL", "")
+        has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
+                       or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"))
+        return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
+                "base_url": os.environ.get("OPENAI_BASE_URL", "")}
+
+    if action == "llm_set":
+        if provider:
+            os.environ["LLM_PROVIDER"] = provider
+        if model:
+            os.environ["LLM_MODEL"] = model
+        if api_key:
+            p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
+            if p == "anthropic":
+                os.environ["ANTHROPIC_API_KEY"] = api_key
+            elif p == "gemini":
+                os.environ["GOOGLE_API_KEY"] = api_key
+            else:
+                os.environ["OPENAI_API_KEY"] = api_key
+        if base_url:
+            os.environ["OPENAI_BASE_URL"] = base_url
+        return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
+                "model": os.environ.get("LLM_MODEL", "") or "(default)",
+                "api_key_set": bool(api_key or _check_api_key() is None)}
+
+    # --- EMBED ---
+    if action == "embed":
+        from scout.embedder import embed_all
+        with session_scope() as session:
+            try:
+                count = embed_all(session)
+            except Exception as exc:
+                return _error(f"Embedding failed: {exc}", "EMBEDDING_ERROR")
+            return _suggest({"ok": True, "embedded": count},
+                            _next("entity", "Try semantic search", action="similar", query=""))
+
+    # --- SCRAPE ---
+    if action == "scrape":
+        try:
+            from scout.scrapers import scrape_tum_professors as _scrape
+        except ImportError as exc:
+            return _error(f"Scraper dependency missing: {exc}", "DEPENDENCY_MISSING")
+        try:
+            professors = await _scrape()
+        except Exception as exc:
+            return _error(f"Scrape failed: {exc}", "SCRAPE_ERROR", retryable=True)
+        if school:
+            professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
+        professors = professors[:max(1, min(limit, 500))]
+        with session_scope() as session:
+            result = services.import_scraped_entities(session, professors)
+            session.commit()
+        return _suggest({**result, "total_found": len(professors)},
+                        _next("enrich", "Enrich and score imported professors", action="process"))
+
+    return _error(f"Unknown action: {action!r}. Use: db_list, db_select, db_create, db_delete, "
+                  "db_backup, db_list_backups, db_restore, db_delete_backup, "
+                  "col_list, col_create, col_update, col_delete, "
+                  "llm_show, llm_set, embed, scrape.", "VALIDATION_ERROR")
 
 
 # ---------------------------------------------------------------------------
-# Tools: LLM Configuration
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_READ)
-def show_llm_config() -> dict:
-    """Show current LLM provider configuration (API keys masked)."""
-    p = os.environ.get("LLM_PROVIDER", "anthropic")
-    m = os.environ.get("LLM_MODEL", "")
-    has_key = bool(
-        os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("GOOGLE_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-    )
-    return {"provider": p, "model": m or "(default)", "api_key_set": has_key,
-            "base_url": os.environ.get("OPENAI_BASE_URL", "")}
-
-
-@mcp.tool(annotations=_WRITE)
-def configure_llm(
-    provider: str | None = None, model: str | None = None,
-    api_key: str | None = None, base_url: str | None = None,
-) -> dict:
-    """Set LLM provider/model/api_key at runtime.
-
-    Args:
-        provider: LLM provider (anthropic, openai, openai_compatible, gemini).
-        model: LLM model name.
-        api_key: API key for the provider.
-        base_url: Custom base URL (for openai_compatible).
-    """
-    if provider:
-        os.environ["LLM_PROVIDER"] = provider
-    if model:
-        os.environ["LLM_MODEL"] = model
-    if api_key:
-        p = provider or os.environ.get("LLM_PROVIDER", "anthropic")
-        if p == "anthropic":
-            os.environ["ANTHROPIC_API_KEY"] = api_key
-        elif p == "gemini":
-            os.environ["GOOGLE_API_KEY"] = api_key
-        else:
-            os.environ["OPENAI_API_KEY"] = api_key
-    if base_url:
-        os.environ["OPENAI_BASE_URL"] = base_url
-    return {"ok": True, "provider": os.environ.get("LLM_PROVIDER", "anthropic"),
-            "model": os.environ.get("LLM_MODEL", "") or "(default)",
-            "api_key_set": bool(api_key or _check_api_key() is None)}
-
-
-# ---------------------------------------------------------------------------
-# Tools: TUM Scraper
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(annotations=_WRITE)
-async def scrape_tum_professors(school: str | None = None, limit: int = 50) -> dict:
-    """Scrape TUM professor directory and import into the current database.
-
-    Args:
-        school: Filter by TUM school (CIT, ED, LS, MGT, MED, NAT).
-        limit: Maximum professors to import (default 50, max 500).
-    """
-    try:
-        from scout.scrapers import scrape_tum_professors as _scrape
-    except ImportError as exc:
-        return _error(f"Scraper dependency missing: {exc}", "DEPENDENCY_MISSING")
-
-    try:
-        professors = await _scrape()
-    except Exception as exc:
-        return _error(f"Scrape failed: {exc}", "SCRAPE_ERROR", retryable=True)
-
-    if school:
-        professors = [p for p in professors if p.get("faculty", "").upper() == school.upper()]
-    professors = professors[:max(1, min(limit, 500))]
-
-    with session_scope() as session:
-        result = services.import_scraped_entities(session, professors)
-        session.commit()
-
-    return _suggest(
-        {**result, "total_found": len(professors)},
-        _next("process_queue", "Enrich and score imported professors"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Tools: Scripts
+# Tool 7: script() — save / list / read / delete / run
 # ---------------------------------------------------------------------------
 
 
@@ -1918,28 +1581,29 @@ def script(
     description: str | None = None,
     script_type: str = "custom",
     entity_type: str | None = None,
+    entity_id: int | None = None,
+    timeout: float = 60.0,
 ) -> dict:
-    """Manage persistent scripts — save Python code that can be re-run.
+    """Manage and run persistent scripts — offload reasoning to classical code.
 
-    Scripts let you offload reasoning to classical code: API connectors,
-    custom enrichers, data transforms, reports. Scripts persist across sessions.
-
-    Actions:
-      save  — Create or update a script (requires name + code).
-      list  — List all saved scripts (optional script_type filter).
-      read  — Read a script's code (requires name).
-      delete — Delete a script (requires name).
+    ACTIONS:
+      save   — Create or update a script (name + code required).
+      list   — List all saved scripts.
+      read   — Read a script's code (name required).
+      delete — Delete a script (name required).
+      run    — Execute a saved script (name required).
 
     Args:
-        action: save | list | read | delete.
-        name: Script identifier (required for save/read/delete).
-        code: Python source code (required for save). Scripts receive a `ctx` object:
-              ctx.entity(id), ctx.entities(verdict=...), ctx.update(id, field=val),
-              ctx.create(name=...), ctx.enrich(id, source_type=..., raw_text=...),
-              ctx.http (httpx.Client), ctx.env("KEY"), ctx.log("msg"), ctx.result(data).
+        action: save | list | read | delete | run.
+        name: Script identifier.
+        code: Python source code (for save). Scripts get a `ctx` object:
+              ctx.entity(id), ctx.entities(), ctx.update(), ctx.create(),
+              ctx.enrich(), ctx.secret("name"), ctx.http, ctx.env(), ctx.log(), ctx.result().
         description: What the script does (for save).
         script_type: enricher | connector | transform | report | custom.
         entity_type: Restrict to an entity type (NULL = all).
+        entity_id: For run: entity ID available as ctx.entity_id.
+        timeout: For run: max seconds (default 60, max 300).
     """
     action = action.strip().lower()
 
@@ -1949,24 +1613,19 @@ def script(
         with session_scope() as session:
             try:
                 result = services.save_script(
-                    session, name=name, code=code,
-                    description=description or "",
-                    script_type=script_type,
-                    entity_type=entity_type,
+                    session, name=name, code=code, description=description or "",
+                    script_type=script_type, entity_type=entity_type,
                 )
                 session.commit()
             except ValueError as e:
                 return _error(str(e), "VALIDATION_ERROR")
-        return _suggest(
-            {"ok": True, "action": "saved", **result},
-            _next("run_script", "Run this script", name=name),
-        )
+        return _suggest({"ok": True, "action": "saved", **result},
+                        _next("script", "Run this script", action="run", name=name))
 
     if action == "list":
         with session_scope() as session:
             scripts = services.list_scripts(
-                session,
-                script_type=script_type if script_type != "custom" else None,
+                session, script_type=script_type if script_type != "custom" else None,
                 entity_type=entity_type,
             )
         return {"ok": True, "scripts": scripts, "count": len(scripts)}
@@ -1990,49 +1649,28 @@ def script(
             return _error(f"Script '{name}' not found", "NOT_FOUND")
         return {"ok": True, "action": "deleted", "name": name}
 
-    return _error(
-        f"Unknown action: {action}",
-        "VALIDATION_ERROR",
-        fix="Use: save, list, read, delete",
-    )
+    if action == "run":
+        from scout.executor import run_script as _run
+        if not name:
+            return _error("name required for run", "VALIDATION_ERROR")
+        with session_scope() as session:
+            script_code = services.get_script_code(session, name)
+        if script_code is None:
+            return _error(f"Script '{name}' not found", "NOT_FOUND",
+                          fix="Use script(action='list') to see available scripts.")
+        timeout = max(1.0, min(timeout, 300.0))
+        with session_scope() as session:
+            result = _run(script_code, session, entity_id=entity_id, timeout=timeout)
+            if result["ok"]:
+                session.commit()
+        return result
 
-
-@mcp.tool(annotations=_WRITE)
-def run_script(
-    name: str,
-    entity_id: int | None = None,
-    timeout: float = 60.0,
-) -> dict:
-    """Run a saved script.
-
-    Scripts run with a `ctx` object providing entity CRUD, HTTP, and logging.
-    Results include ok/error status, ctx.result() data, and ctx.log() messages.
-
-    Args:
-        name: Name of the script to run.
-        entity_id: Optional entity ID — available as ctx.entity_id in the script.
-        timeout: Max seconds (default 60, max 300).
-    """
-    from scout.executor import run_script as _run
-
-    with session_scope() as session:
-        code = services.get_script_code(session, name)
-    if code is None:
-        return _error(f"Script '{name}' not found", "NOT_FOUND",
-                      fix="Use script(action='list') to see available scripts.")
-
-    timeout = max(1.0, min(timeout, 300.0))
-
-    with session_scope() as session:
-        result = _run(code, session, entity_id=entity_id, timeout=timeout)
-        if result["ok"]:
-            session.commit()
-
-    return result
+    return _error(f"Unknown action: {action}", "VALIDATION_ERROR",
+                  fix="Use: save, list, read, delete, run")
 
 
 # ---------------------------------------------------------------------------
-# Tools: Prompts (general-purpose)
+# Tool 8: prompt() — save / list / read / delete + scoring prompts
 # ---------------------------------------------------------------------------
 
 
@@ -2044,25 +1682,28 @@ def prompt(
     description: str | None = None,
     prompt_type: str = "custom",
     entity_type: str | None = None,
+    compact: bool = False,
 ) -> dict:
-    """Manage persistent prompts — store reusable prompt templates.
+    """Manage prompts: general-purpose templates AND scoring prompts.
 
-    Prompts persist across sessions. Scripts can read them via ctx.prompt("name").
-    Separate from scoring prompts (use list_scoring_prompts for those).
+    ACTIONS (general prompts):
+      save   — Create or update a prompt (name + content required).
+      list   — List all saved prompts.
+      read   — Read a prompt's content (name required).
+      delete — Delete a prompt (name required).
 
-    Actions:
-      save  — Create or update a prompt (requires name + content).
-      list  — List all saved prompts (optional prompt_type filter).
-      read  — Read a prompt's content (requires name).
-      delete — Delete a prompt (requires name).
+    ACTIONS (scoring prompts):
+      scoring_list   — List scoring prompt definitions.
+      scoring_update — Update a scoring prompt (name=key, content required).
 
     Args:
-        action: save | list | read | delete.
-        name: Prompt identifier (required for save/read/delete).
-        content: Prompt template text (required for save).
+        action: save | list | read | delete | scoring_list | scoring_update.
+        name: Prompt identifier or scoring prompt key.
+        content: Prompt text (for save / scoring_update).
         description: What the prompt does (for save).
         prompt_type: scoring | enrichment | analysis | classification | custom.
         entity_type: Restrict to an entity type (NULL = all).
+        compact: For scoring_list: omit full content.
     """
     action = action.strip().lower()
 
@@ -2072,10 +1713,8 @@ def prompt(
         with session_scope() as session:
             try:
                 result = services.save_prompt(
-                    session, name=name, content=content,
-                    description=description or "",
-                    prompt_type=prompt_type,
-                    entity_type=entity_type,
+                    session, name=name, content=content, description=description or "",
+                    prompt_type=prompt_type, entity_type=entity_type,
                 )
                 session.commit()
             except ValueError as e:
@@ -2085,8 +1724,7 @@ def prompt(
     if action == "list":
         with session_scope() as session:
             prompts = services.list_prompts(
-                session,
-                prompt_type=prompt_type if prompt_type != "custom" else None,
+                session, prompt_type=prompt_type if prompt_type != "custom" else None,
                 entity_type=entity_type,
             )
         return {"ok": True, "prompts": prompts, "count": len(prompts)}
@@ -2110,11 +1748,29 @@ def prompt(
             return _error(f"Prompt '{name}' not found", "NOT_FOUND")
         return {"ok": True, "action": "deleted", "name": name}
 
-    return _error(
-        f"Unknown action: {action}",
-        "VALIDATION_ERROR",
-        fix="Use: save, list, read, delete",
-    )
+    if action == "scoring_list":
+        try:
+            with session_scope() as session:
+                prompts_list = services.get_scoring_prompts(session)
+                if compact:
+                    return [{"key": p["key"], "label": p["label"], "updated_at": p["updated_at"]}
+                            for p in prompts_list]
+                return prompts_list
+        except Exception as exc:
+            return _error(f"Failed: {exc}", "DB_ERROR")
+
+    if action == "scoring_update":
+        if not name or not content:
+            return _error("name (key) and content required for scoring_update", "VALIDATION_ERROR")
+        with session_scope() as session:
+            result = services.update_scoring_prompt(session, name, content)
+            if result is None:
+                return _error(f"Scoring prompt '{name}' not found", "NOT_FOUND")
+            session.commit()
+            return result
+
+    return _error(f"Unknown action: {action}", "VALIDATION_ERROR",
+                  fix="Use: save, list, read, delete, scoring_list, scoring_update")
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2175,6 +1831,237 @@ def credential(
         "VALIDATION_ERROR",
         fix="Use: save, list, delete",
     )
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers for backward-compat wrappers (avoid async in sync contexts)
+# ---------------------------------------------------------------------------
+
+
+def _submit_enrichment_sync(entity_id=None, source_type="", content="", source_url="",
+                             summary="", structured_fields=None, **_kw):
+    """Sync version of enrich(action='submit') for backward compat."""
+    if entity_id is None:
+        return _error("entity_id required", "VALIDATION_ERROR")
+    if not content or not content.strip():
+        return _error("content cannot be empty", "VALIDATION_ERROR")
+    if not source_type or not source_type.strip():
+        return _error("source_type cannot be empty", "VALIDATION_ERROR")
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, entity_id)
+        if err:
+            return err
+        st = source_type.strip()
+        su = source_url.strip() if source_url else None
+        existing_e = session.execute(
+            select(Enrichment).where(
+                Enrichment.initiative_id == init.id,
+                Enrichment.source_type == st,
+                Enrichment.source_url == su,
+            )
+        ).scalar_one_or_none()
+        raw = content.strip()[:15000]
+        summ = summary.strip() if summary else raw[:500]
+        sf_json = json.dumps(structured_fields) if structured_fields else "{}"
+        now = datetime.now(UTC)
+        if existing_e:
+            existing_e.raw_text = raw
+            existing_e.summary = summ
+            existing_e.structured_fields_json = sf_json
+            existing_e.fetched_at = now
+            enrichment = existing_e
+        else:
+            enrichment = Enrichment(
+                initiative_id=init.id, source_type=st, source_url=su,
+                raw_text=raw, summary=summ, structured_fields_json=sf_json, fetched_at=now,
+            )
+            session.add(enrichment)
+        field_result = {}
+        if structured_fields:
+            field_result = services.apply_enrichment_fields(init, structured_fields)
+        session.commit()
+        result = {
+            "entity_id": init.id, "entity_name": init.name,
+            "enrichment_id": enrichment.id, "source_type": enrichment.source_type,
+            "content_length": len(enrichment.raw_text), "_db": _db_pulse(session),
+        }
+        if field_result.get("applied"):
+            result["fields_applied"] = field_result["applied"]
+        if field_result.get("skipped"):
+            result["fields_skipped"] = field_result["skipped"]
+        return _suggest(result, _next("score", "Score with new data", action="run", entity_id=init.id))
+
+
+def _submit_score_sync(entity_id=None, grade_team="", grade_tech="", grade_opportunity="",
+                        classification="", contact_who="", contact_channel="website_form",
+                        engagement_hook="", reasoning="", dimension_grades=None, **_kw):
+    """Sync version of score(action='submit') for backward compat."""
+    if entity_id is None:
+        return _error("entity_id required", "VALIDATION_ERROR")
+    et = get_entity_type()
+    ecfg = get_entity_config(et)
+    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+    is_standard = (dims == ["team", "tech", "opportunity"])
+    grades: dict[str, Grade] = {}
+    if dimension_grades and isinstance(dimension_grades, dict):
+        for dim, raw_grade in dimension_grades.items():
+            if Grade.normalize(raw_grade) not in VALID_GRADES:
+                return _error(f"Invalid grade for '{dim}': {raw_grade!r}.", "VALIDATION_ERROR")
+            grades[dim] = Grade.parse(raw_grade)
+    elif is_standard:
+        for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
+                           ("grade_opportunity", grade_opportunity)]:
+            if not raw:
+                return _error(f"{label} is required", "VALIDATION_ERROR")
+            if Grade.normalize(raw) not in VALID_GRADES:
+                return _error(f"Invalid {label}: {raw!r}.", "VALIDATION_ERROR")
+        grades = {"team": Grade.parse(grade_team), "tech": Grade.parse(grade_tech),
+                  "opportunity": Grade.parse(grade_opportunity)}
+    else:
+        positional = [grade_team, grade_tech, grade_opportunity]
+        for i, dim in enumerate(dims):
+            raw = positional[i] if i < len(positional) else ""
+            if not raw:
+                return _error(f"Missing grade for dimension '{dim}'.", "VALIDATION_ERROR")
+            if Grade.normalize(raw) not in VALID_GRADES:
+                return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
+            grades[dim] = Grade.parse(raw)
+    if classification:
+        classification = classification.strip().lower()
+        valid_cls = valid_classifications(et)
+        if is_standard and classification not in valid_cls:
+            return _error(f"Invalid classification: {classification!r}.", "VALIDATION_ERROR")
+    contact_channel = contact_channel.strip().lower()
+    if contact_channel and contact_channel not in VALID_CHANNELS:
+        return _error(f"Invalid contact_channel: {contact_channel!r}.", "VALIDATION_ERROR")
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, entity_id)
+        if err:
+            return err
+        enrichments = list(session.execute(
+            select(Enrichment).where(Enrichment.initiative_id == init.id)
+        ).scalars().all())
+        outreach = create_score_from_grades(
+            init, enrichments, grades, classification=classification, contact_who=contact_who,
+            contact_channel=contact_channel, engagement_hook=engagement_hook,
+            reasoning=reasoning, entity_type=get_entity_type(),
+        )
+        session.execute(delete(OutreachScore).where(
+            OutreachScore.initiative_id == init.id, OutreachScore.project_id.is_(None),
+        ))
+        session.add(outreach)
+        session.commit()
+        result: dict = {
+            "entity_id": init.id, "entity_name": init.name,
+            "verdict": outreach.verdict, "score": outreach.score,
+            "classification": outreach.classification,
+        }
+        dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
+        if dim_grades_stored:
+            result["dimension_grades"] = {k: v.get("letter", "") for k, v in dim_grades_stored.items()}
+        else:
+            result.update({"grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
+                           "grade_opportunity": outreach.grade_opportunity})
+        result["_db"] = _db_pulse(session)
+        return result
+
+
+def _get_scoring_dossier_sync(entity_id=None, compact=False, **_kw):
+    """Sync version of score(action='dossier') for backward compat."""
+    if entity_id is None:
+        return _error("entity_id required", "VALIDATION_ERROR")
+    with session_scope() as session:
+        init, err = _get_or_error(session, Initiative, entity_id)
+        if err:
+            return err
+        enrichments = session.execute(
+            select(Enrichment).where(Enrichment.initiative_id == init.id)
+        ).scalars().all()
+        prompts = services.load_scoring_prompts(session)
+        et = get_entity_type()
+        defaults = default_prompts_for(et)
+        ecfg = get_entity_config(et)
+        dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+        dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
+        dimensions_out = {}
+        for i, dim in enumerate(dims):
+            builder_idx = min(i, len(dossier_builders) - 1)
+            if i == len(dims) - 1:
+                builder_idx = len(dossier_builders) - 1
+            builder = dossier_builders[builder_idx]
+            prompt_text = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
+            dossier_text = builder(init, enrichments, et)
+            if compact and len(dossier_text) > 1500:
+                dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
+            dimensions_out[dim] = {"prompt": prompt_text, "dossier": dossier_text}
+        grade_args = {f"grade_{dim}": "" for dim in dims}
+        grade_args["classification"] = ""
+        result = {
+            "entity_id": init.id, "entity_name": init.name,
+            "entity_type": et, "enriched": len(enrichments) > 0,
+            "dimensions": dimensions_out,
+        }
+        if compact:
+            result["_note"] = "Dossiers truncated (compact=True). Use compact=False for full text."
+        return _suggest(result, _next("score", "Submit your evaluation", action="submit",
+                                      entity_id=init.id, **grade_args))
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases — used by tests and REST API
+# ---------------------------------------------------------------------------
+
+def list_entities(**kw): return entity(action="list", **kw)
+def get_entity(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return entity(action="get", **kw)
+def manage_entity(**kw): return entity(**kw)
+async def enrich_entity(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return await enrich(action="run", **kw)
+def submit_enrichment(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    # submit is sync logic inside an async function — call it directly via _submit_enrichment_sync
+    return _submit_enrichment_sync(**kw)
+async def score_entity(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return await score(action="run", **kw)
+def submit_score(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return _submit_score_sync(**kw)
+def get_scoring_dossier(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return _get_scoring_dossier_sync(**kw)
+def get_overview(**kw): return overview(**kw)
+def get_work_queue(limit: int = 10): return overview(queue_limit=limit)
+def find_similar(**kw): return entity(action="similar", **kw)
+def export_entities(**kw): return entity(action="export", **kw)
+def list_scoring_prompts(**kw): return prompt(action="scoring_list", **kw)
+def update_scoring_prompt(**kw): return prompt(action="scoring_update", name=kw.pop("key", None), **kw)
+def manage_project(**kw): return asyncio.get_event_loop().run_until_complete(project(**kw))
+def manage_database(**kw):
+    a = kw.pop("action", "list")
+    return asyncio.get_event_loop().run_until_complete(configure(action=f"db_{a}", **kw))
+def get_custom_columns(): return asyncio.get_event_loop().run_until_complete(configure(action="col_list"))
+def create_custom_column(**kw): return asyncio.get_event_loop().run_until_complete(configure(action="col_create", **kw))
+def update_custom_column(**kw): return asyncio.get_event_loop().run_until_complete(configure(action="col_update", **kw))
+def delete_custom_column(**kw): return asyncio.get_event_loop().run_until_complete(configure(action="col_delete", **kw))
+def show_llm_config(): return asyncio.get_event_loop().run_until_complete(configure(action="llm_show"))
+def configure_llm(**kw): return asyncio.get_event_loop().run_until_complete(configure(action="llm_set", **kw))
+def embed_all_tool(): return asyncio.get_event_loop().run_until_complete(configure(action="embed"))
+async def scrape_tum_professors(**kw): return await configure(action="scrape", **kw)
+def run_script(**kw): return script(action="run", **kw)
+async def process_queue(**kw):
+    # Translate old param name: enrich= → do_enrich=
+    if "enrich" in kw:
+        kw["do_enrich"] = kw.pop("enrich")
+    return await enrich(action="process", **kw)
 
 
 # ---------------------------------------------------------------------------
