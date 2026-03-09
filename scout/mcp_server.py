@@ -391,8 +391,34 @@ def scout_overview() -> str:
             "single_item": "enrich_entity, score_entity, manage_entity",
             "llm_enrichment": "submit_enrichment — store data you find via web search",
             "scoring": "get_scoring_dossier, submit_score",
+            "scripts": "script(action=save/list/read/delete), run_script — persist and run Python code",
             "search": "find_similar",
             "admin": "manage_project, manage_database, list_scoring_prompts, update_scoring_prompt, get_custom_columns, create_custom_column, export_entities, embed_all_tool, show_llm_config, configure_llm",
+        },
+        "scripts": {
+            "description": (
+                "Save and run Python scripts that persist across sessions. "
+                "Scripts offload reasoning to classical code: API connectors, "
+                "custom enrichers, data transforms, reports."
+            ),
+            "workflow": [
+                "1. script(action='save', name='my_script', code='...') — save a script.",
+                "2. run_script(name='my_script', entity_id=42) — run it.",
+                "3. script(action='list') — see all saved scripts.",
+            ],
+            "ctx_api": {
+                "ctx.entity(id)": "Get entity as dict",
+                "ctx.entities(verdict=..., search=..., limit=...)": "Query entities",
+                "ctx.update(id, field=val)": "Update entity fields",
+                "ctx.create(name=..., ...)": "Create new entity",
+                "ctx.enrich(id, source_type=..., raw_text=...)": "Add enrichment",
+                "ctx.http": "httpx.Client for HTTP requests",
+                "ctx.env('KEY')": "Read environment variable",
+                "ctx.log('msg')": "Add to execution log",
+                "ctx.result(data)": "Set return value",
+            },
+            "script_types": "enricher, connector, transform, report, custom",
+            "allowed_imports": "json, re, math, datetime, collections, itertools, functools, urllib.parse, hashlib, base64, csv, io, statistics, textwrap, httpx",
         },
         "performance": {
             "enrichment": f"2-10s per {cfg['label']} (web scraping).",
@@ -1876,6 +1902,218 @@ async def scrape_tum_professors(school: str | None = None, limit: int = 50) -> d
     return _suggest(
         {**result, "total_found": len(professors)},
         _next("process_queue", "Enrich and score imported professors"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tools: Scripts
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+def script(
+    action: str,
+    name: str | None = None,
+    code: str | None = None,
+    description: str | None = None,
+    script_type: str = "custom",
+    entity_type: str | None = None,
+) -> dict:
+    """Manage persistent scripts — save Python code that can be re-run.
+
+    Scripts let you offload reasoning to classical code: API connectors,
+    custom enrichers, data transforms, reports. Scripts persist across sessions.
+
+    Actions:
+      save  — Create or update a script (requires name + code).
+      list  — List all saved scripts (optional script_type filter).
+      read  — Read a script's code (requires name).
+      delete — Delete a script (requires name).
+
+    Args:
+        action: save | list | read | delete.
+        name: Script identifier (required for save/read/delete).
+        code: Python source code (required for save). Scripts receive a `ctx` object:
+              ctx.entity(id), ctx.entities(verdict=...), ctx.update(id, field=val),
+              ctx.create(name=...), ctx.enrich(id, source_type=..., raw_text=...),
+              ctx.http (httpx.Client), ctx.env("KEY"), ctx.log("msg"), ctx.result(data).
+        description: What the script does (for save).
+        script_type: enricher | connector | transform | report | custom.
+        entity_type: Restrict to an entity type (NULL = all).
+    """
+    action = action.strip().lower()
+
+    if action == "save":
+        if not name or not code:
+            return _error("name and code required for save", "VALIDATION_ERROR")
+        with session_scope() as session:
+            try:
+                result = services.save_script(
+                    session, name=name, code=code,
+                    description=description or "",
+                    script_type=script_type,
+                    entity_type=entity_type,
+                )
+                session.commit()
+            except ValueError as e:
+                return _error(str(e), "VALIDATION_ERROR")
+        return _suggest(
+            {"ok": True, "action": "saved", **result},
+            _next("run_script", "Run this script", name=name),
+        )
+
+    if action == "list":
+        with session_scope() as session:
+            scripts = services.list_scripts(
+                session,
+                script_type=script_type if script_type != "custom" else None,
+                entity_type=entity_type,
+            )
+        return {"ok": True, "scripts": scripts, "count": len(scripts)}
+
+    if action == "read":
+        if not name:
+            return _error("name required for read", "VALIDATION_ERROR")
+        with session_scope() as session:
+            result = services.get_script(session, name)
+        if result is None:
+            return _error(f"Script '{name}' not found", "NOT_FOUND")
+        return {"ok": True, **result}
+
+    if action == "delete":
+        if not name:
+            return _error("name required for delete", "VALIDATION_ERROR")
+        with session_scope() as session:
+            deleted = services.delete_script(session, name)
+            session.commit()
+        if not deleted:
+            return _error(f"Script '{name}' not found", "NOT_FOUND")
+        return {"ok": True, "action": "deleted", "name": name}
+
+    return _error(
+        f"Unknown action: {action}",
+        "VALIDATION_ERROR",
+        fix="Use: save, list, read, delete",
+    )
+
+
+@mcp.tool(annotations=_WRITE)
+def run_script(
+    name: str,
+    entity_id: int | None = None,
+    timeout: float = 60.0,
+) -> dict:
+    """Run a saved script.
+
+    Scripts run with a `ctx` object providing entity CRUD, HTTP, and logging.
+    Results include ok/error status, ctx.result() data, and ctx.log() messages.
+
+    Args:
+        name: Name of the script to run.
+        entity_id: Optional entity ID — available as ctx.entity_id in the script.
+        timeout: Max seconds (default 60, max 300).
+    """
+    from scout.executor import run_script as _run
+
+    with session_scope() as session:
+        code = services.get_script_code(session, name)
+    if code is None:
+        return _error(f"Script '{name}' not found", "NOT_FOUND",
+                      fix="Use script(action='list') to see available scripts.")
+
+    timeout = max(1.0, min(timeout, 300.0))
+
+    with session_scope() as session:
+        result = _run(code, session, entity_id=entity_id, timeout=timeout)
+        if result["ok"]:
+            session.commit()
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tools: Prompts (general-purpose)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+def prompt(
+    action: str,
+    name: str | None = None,
+    content: str | None = None,
+    description: str | None = None,
+    prompt_type: str = "custom",
+    entity_type: str | None = None,
+) -> dict:
+    """Manage persistent prompts — store reusable prompt templates.
+
+    Prompts persist across sessions. Scripts can read them via ctx.prompt("name").
+    Separate from scoring prompts (use list_scoring_prompts for those).
+
+    Actions:
+      save  — Create or update a prompt (requires name + content).
+      list  — List all saved prompts (optional prompt_type filter).
+      read  — Read a prompt's content (requires name).
+      delete — Delete a prompt (requires name).
+
+    Args:
+        action: save | list | read | delete.
+        name: Prompt identifier (required for save/read/delete).
+        content: Prompt template text (required for save).
+        description: What the prompt does (for save).
+        prompt_type: scoring | enrichment | analysis | classification | custom.
+        entity_type: Restrict to an entity type (NULL = all).
+    """
+    action = action.strip().lower()
+
+    if action == "save":
+        if not name or not content:
+            return _error("name and content required for save", "VALIDATION_ERROR")
+        with session_scope() as session:
+            try:
+                result = services.save_prompt(
+                    session, name=name, content=content,
+                    description=description or "",
+                    prompt_type=prompt_type,
+                    entity_type=entity_type,
+                )
+                session.commit()
+            except ValueError as e:
+                return _error(str(e), "VALIDATION_ERROR")
+        return {"ok": True, "action": "saved", **result}
+
+    if action == "list":
+        with session_scope() as session:
+            prompts = services.list_prompts(
+                session,
+                prompt_type=prompt_type if prompt_type != "custom" else None,
+                entity_type=entity_type,
+            )
+        return {"ok": True, "prompts": prompts, "count": len(prompts)}
+
+    if action == "read":
+        if not name:
+            return _error("name required for read", "VALIDATION_ERROR")
+        with session_scope() as session:
+            result = services.get_prompt(session, name)
+        if result is None:
+            return _error(f"Prompt '{name}' not found", "NOT_FOUND")
+        return {"ok": True, **result}
+
+    if action == "delete":
+        if not name:
+            return _error("name required for delete", "VALIDATION_ERROR")
+        with session_scope() as session:
+            deleted = services.delete_prompt(session, name)
+            session.commit()
+        if not deleted:
+            return _error(f"Prompt '{name}' not found", "NOT_FOUND")
+        return {"ok": True, "action": "deleted", "name": name}
+
+    return _error(
+        f"Unknown action: {action}",
+        "VALIDATION_ERROR",
+        fix="Use: save, list, read, delete",
     )
 
 

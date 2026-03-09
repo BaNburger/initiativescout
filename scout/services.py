@@ -746,7 +746,7 @@ def build_similarity_id_mask(
 
 async def run_enrichment(
     session: Session, init: Initiative, crawler: object | None = None,
-    *, incremental: bool = True,
+    *, incremental: bool = True, auto_discover: bool = False,
 ) -> list[Enrichment]:
     """Run entity-type-aware enrichers in parallel; only delete old enrichments if at least one succeeds.
 
@@ -756,8 +756,25 @@ async def run_enrichment(
     When incremental=True (default), skips enrichers whose target fields are
     already filled on the entity. Set incremental=False to force re-run all.
 
+    When auto_discover=True, runs URL discovery for entities with no URLs
+    before enrichment (matches single-entity enrich_with_diagnostics behavior).
+
     Returns new enrichments (caller must commit).
     """
+    # Auto-discover URLs when entity has none configured
+    if auto_discover:
+        has_urls = bool(
+            (init.field("website") or "").strip()
+            or (init.field("github_org") or "").strip()
+            or json_parse(init.extra_links_json)
+        )
+        if not has_urls:
+            try:
+                await run_discovery(session, init)
+                session.flush()
+            except Exception as exc:
+                log.debug("Auto-discovery failed for %s: %s", init.name, exc)
+
     from scout.db import get_entity_type
     entity_type = get_entity_type()
     cfg = get_entity_config(entity_type)
@@ -832,6 +849,55 @@ async def run_enrichment(
             re_embed_one(session, init)
         except Exception:
             log.warning("Re-embed failed for %s (non-fatal)", init.name, exc_info=True)
+    # Run script-type enrichers (user-defined via script store)
+    script_enrichments = _run_script_enrichers(session, init)
+    new_enrichments.extend(script_enrichments)
+
+    return new_enrichments
+
+
+def _run_script_enrichers(session: Session, init: Initiative) -> list[Enrichment]:
+    """Run any saved scripts with script_type='enricher' for this entity.
+
+    Script-enrichers are user-defined Python scripts that extend the
+    enrichment pipeline. They use the same ctx.enrich() API as any script.
+    """
+    from scout.models import Script
+
+    scripts = session.execute(
+        select(Script).where(Script.script_type == "enricher")
+    ).scalars().all()
+
+    if not scripts:
+        return []
+
+    from scout.executor import run_script
+
+    new_enrichments = []
+    for script in scripts:
+        # Check entity_type filter
+        if script.entity_type:
+            from scout.db import get_entity_type
+            if get_entity_type() != script.entity_type:
+                continue
+        try:
+            result = run_script(
+                script.code, session,
+                entity_id=init.id, timeout=30.0,
+            )
+            if not result["ok"]:
+                log.warning("Script enricher '%s' failed for %s: %s",
+                            script.name, init.name, result["error"])
+        except Exception as exc:
+            log.warning("Script enricher '%s' crashed for %s: %s",
+                        script.name, init.name, exc)
+
+    # Collect any enrichments that were added by scripts
+    # (they're already in the session via ctx.enrich())
+    for obj in session.new:
+        if isinstance(obj, Enrichment) and obj.initiative_id == init.id:
+            new_enrichments.append(obj)
+
     return new_enrichments
 
 
@@ -1117,3 +1183,226 @@ def update_scoring_prompt(session: Session, key: str, content: str) -> dict | No
     session.flush()
     return {"key": prompt.key, "label": prompt.label, "content": prompt.content,
             "updated_at": prompt.updated_at.isoformat() if prompt.updated_at else None}
+
+
+# ---------------------------------------------------------------------------
+# Scripts
+# ---------------------------------------------------------------------------
+
+_VALID_SCRIPT_TYPES = {"enricher", "connector", "transform", "report", "custom"}
+
+
+def _script_dict(s) -> dict:
+    from scout.models import Script
+    return {
+        "name": s.name,
+        "description": s.description,
+        "script_type": s.script_type,
+        "entity_type": s.entity_type,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+def _script_dict_full(s) -> dict:
+    d = _script_dict(s)
+    d["code"] = s.code
+    return d
+
+
+def save_script(
+    session: Session,
+    *,
+    name: str,
+    code: str,
+    description: str = "",
+    script_type: str = "custom",
+    entity_type: str | None = None,
+) -> dict:
+    """Create or update a script (upsert by name). Returns script dict."""
+    from scout.models import Script
+    if script_type not in _VALID_SCRIPT_TYPES:
+        raise ValueError(f"Invalid script_type: {script_type}. Must be one of: {', '.join(sorted(_VALID_SCRIPT_TYPES))}")
+
+    existing = session.execute(
+        select(Script).where(Script.name == name)
+    ).scalars().first()
+    if existing:
+        existing.code = code
+        if description:
+            existing.description = description
+        existing.script_type = script_type
+        existing.entity_type = entity_type
+        session.flush()
+        return _script_dict_full(existing)
+
+    script = Script(
+        name=name, code=code, description=description,
+        script_type=script_type, entity_type=entity_type,
+    )
+    session.add(script)
+    session.flush()
+    return _script_dict_full(script)
+
+
+def list_scripts(
+    session: Session,
+    *,
+    script_type: str | None = None,
+    entity_type: str | None = None,
+) -> list[dict]:
+    """List scripts with optional filters. Returns compact dicts (no code)."""
+    from scout.models import Script
+    stmt = select(Script).order_by(Script.name)
+    if script_type:
+        stmt = stmt.where(Script.script_type == script_type)
+    if entity_type:
+        stmt = stmt.where(
+            (Script.entity_type == entity_type) | (Script.entity_type.is_(None))
+        )
+    scripts = session.execute(stmt).scalars().all()
+    return [_script_dict(s) for s in scripts]
+
+
+def get_script(session: Session, name: str) -> dict | None:
+    """Get a script by name, including code. Returns None if not found."""
+    from scout.models import Script
+    s = session.execute(
+        select(Script).where(Script.name == name)
+    ).scalars().first()
+    if s is None:
+        return None
+    return _script_dict_full(s)
+
+
+def get_script_code(session: Session, name: str) -> str | None:
+    """Get just the code of a script. Returns None if not found."""
+    from scout.models import Script
+    s = session.execute(
+        select(Script).where(Script.name == name)
+    ).scalars().first()
+    return s.code if s else None
+
+
+def delete_script(session: Session, name: str) -> bool:
+    """Delete a script by name. Returns True if deleted, False if not found."""
+    from scout.models import Script
+    s = session.execute(
+        select(Script).where(Script.name == name)
+    ).scalars().first()
+    if s is None:
+        return False
+    session.delete(s)
+    session.flush()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Prompts (general-purpose, separate from ScoringPrompt)
+# ---------------------------------------------------------------------------
+
+_VALID_PROMPT_TYPES = {"scoring", "enrichment", "analysis", "classification", "custom"}
+
+
+def _prompt_dict(p) -> dict:
+    return {
+        "name": p.name,
+        "description": p.description,
+        "prompt_type": p.prompt_type,
+        "entity_type": p.entity_type,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+    }
+
+
+def _prompt_dict_full(p) -> dict:
+    d = _prompt_dict(p)
+    d["content"] = p.content
+    return d
+
+
+def save_prompt(
+    session: Session,
+    *,
+    name: str,
+    content: str,
+    description: str = "",
+    prompt_type: str = "custom",
+    entity_type: str | None = None,
+) -> dict:
+    """Create or update a prompt (upsert by name). Returns prompt dict."""
+    from scout.models import Prompt
+    if prompt_type not in _VALID_PROMPT_TYPES:
+        raise ValueError(f"Invalid prompt_type: {prompt_type}. Must be one of: {', '.join(sorted(_VALID_PROMPT_TYPES))}")
+
+    existing = session.execute(
+        select(Prompt).where(Prompt.name == name)
+    ).scalars().first()
+    if existing:
+        existing.content = content
+        if description:
+            existing.description = description
+        existing.prompt_type = prompt_type
+        existing.entity_type = entity_type
+        session.flush()
+        return _prompt_dict_full(existing)
+
+    prompt = Prompt(
+        name=name, content=content, description=description,
+        prompt_type=prompt_type, entity_type=entity_type,
+    )
+    session.add(prompt)
+    session.flush()
+    return _prompt_dict_full(prompt)
+
+
+def list_prompts(
+    session: Session,
+    *,
+    prompt_type: str | None = None,
+    entity_type: str | None = None,
+) -> list[dict]:
+    """List prompts with optional filters. Returns compact dicts (no content)."""
+    from scout.models import Prompt
+    stmt = select(Prompt).order_by(Prompt.name)
+    if prompt_type:
+        stmt = stmt.where(Prompt.prompt_type == prompt_type)
+    if entity_type:
+        stmt = stmt.where(
+            (Prompt.entity_type == entity_type) | (Prompt.entity_type.is_(None))
+        )
+    prompts = session.execute(stmt).scalars().all()
+    return [_prompt_dict(p) for p in prompts]
+
+
+def get_prompt(session: Session, name: str) -> dict | None:
+    """Get a prompt by name, including content. Returns None if not found."""
+    from scout.models import Prompt
+    p = session.execute(
+        select(Prompt).where(Prompt.name == name)
+    ).scalars().first()
+    if p is None:
+        return None
+    return _prompt_dict_full(p)
+
+
+def get_prompt_content(session: Session, name: str) -> str | None:
+    """Get just the content of a prompt. Returns None if not found."""
+    from scout.models import Prompt
+    p = session.execute(
+        select(Prompt).where(Prompt.name == name)
+    ).scalars().first()
+    return p.content if p else None
+
+
+def delete_prompt(session: Session, name: str) -> bool:
+    """Delete a prompt by name. Returns True if deleted, False if not found."""
+    from scout.models import Prompt
+    p = session.execute(
+        select(Prompt).where(Prompt.name == name)
+    ).scalars().first()
+    if p is None:
+        return False
+    session.delete(p)
+    session.flush()
+    return True

@@ -316,14 +316,11 @@ def _batch_stream(initiative_ids, process_fn, stat_key, *,
 
 @app.post("/api/enrich/batch", tags=["Enrichment"], summary="Enrich multiple initiatives (SSE progress stream)")
 async def enrich_batch(body: dict[str, Any] | None = None):
-    from scout.enricher import open_crawler
-
-    async def _enrich(session, init, crawler):
-        await services.run_enrichment(session, init, crawler=crawler)
+    async def _enrich(session, init):
+        await services.run_enrichment(session, init, auto_discover=True)
 
     return _batch_stream(
         (body or {}).get("initiative_ids"), _enrich, "enriched",
-        context_manager=open_crawler(),
     )
 
 
@@ -710,6 +707,125 @@ async def semantic_search(
 # ---------------------------------------------------------------------------
 # Routes: Reset
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Scripts
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/scripts", tags=["Scripts"], summary="List saved scripts")
+async def list_scripts(
+    script_type: str | None = None,
+    entity_type: str | None = None,
+    session: Session = Depends(db_session),
+):
+    return services.list_scripts(session, script_type=script_type, entity_type=entity_type)
+
+
+@app.get("/api/scripts/{name}", tags=["Scripts"], summary="Get a script by name")
+async def get_script(name: str, session: Session = Depends(db_session)):
+    result = services.get_script(session, name)
+    if result is None:
+        raise HTTPException(404, f"Script '{name}' not found")
+    return result
+
+
+@app.post("/api/scripts", tags=["Scripts"], status_code=201, summary="Save a script (upsert)")
+async def save_script(body: dict, session: Session = Depends(db_session)):
+    name = body.get("name")
+    code = body.get("code")
+    if not name or not code:
+        raise HTTPException(400, "name and code are required")
+    try:
+        result = services.save_script(
+            session, name=name, code=code,
+            description=body.get("description", ""),
+            script_type=body.get("script_type", "custom"),
+            entity_type=body.get("entity_type"),
+        )
+        session.commit()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return result
+
+
+@app.delete("/api/scripts/{name}", tags=["Scripts"], summary="Delete a script")
+async def delete_script(name: str, session: Session = Depends(db_session)):
+    deleted = services.delete_script(session, name)
+    session.commit()
+    if not deleted:
+        raise HTTPException(404, f"Script '{name}' not found")
+    return {"ok": True, "name": name}
+
+
+@app.post("/api/scripts/{name}/run", tags=["Scripts"], summary="Run a saved script")
+async def api_run_script(
+    name: str,
+    body: dict | None = None,
+    session: Session = Depends(db_session),
+):
+    code = services.get_script_code(session, name)
+    if code is None:
+        raise HTTPException(404, f"Script '{name}' not found")
+    entity_id = (body or {}).get("entity_id")
+    timeout = min(float((body or {}).get("timeout", 60)), 300.0)
+
+    from scout.executor import run_script as _run
+    result = _run(code, session, entity_id=entity_id, timeout=timeout)
+    if result["ok"]:
+        session.commit()
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/prompts", tags=["Prompts"], summary="List saved prompts")
+async def api_list_prompts(
+    prompt_type: str | None = None,
+    entity_type: str | None = None,
+    session: Session = Depends(db_session),
+):
+    return services.list_prompts(session, prompt_type=prompt_type, entity_type=entity_type)
+
+
+@app.get("/api/prompts/{name}", tags=["Prompts"], summary="Get a prompt by name")
+async def api_get_prompt(name: str, session: Session = Depends(db_session)):
+    result = services.get_prompt(session, name)
+    if result is None:
+        raise HTTPException(404, f"Prompt '{name}' not found")
+    return result
+
+
+@app.post("/api/prompts", tags=["Prompts"], status_code=201, summary="Save a prompt (upsert)")
+async def api_save_prompt(body: dict, session: Session = Depends(db_session)):
+    name = body.get("name")
+    content = body.get("content")
+    if not name or not content:
+        raise HTTPException(400, "name and content are required")
+    try:
+        result = services.save_prompt(
+            session, name=name, content=content,
+            description=body.get("description", ""),
+            prompt_type=body.get("prompt_type", "custom"),
+            entity_type=body.get("entity_type"),
+        )
+        session.commit()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return result
+
+
+@app.delete("/api/prompts/{name}", tags=["Prompts"], summary="Delete a prompt")
+async def api_delete_prompt(name: str, session: Session = Depends(db_session)):
+    deleted = services.delete_prompt(session, name)
+    session.commit()
+    if not deleted:
+        raise HTTPException(404, f"Prompt '{name}' not found")
+    return {"ok": True, "name": name}
 
 
 @app.delete("/api/reset", tags=["Admin"], summary="Delete all data (initiatives, enrichments, scores, projects)")

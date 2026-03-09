@@ -251,3 +251,29 @@ class ScoringPrompt(Base):
     label: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class Script(Base):
+    __tablename__ = "scripts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    script_type: Mapped[str] = mapped_column(String(50), default="custom")  # enricher | connector | transform | report | custom
+    entity_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # NULL = all types
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class Prompt(Base):
+    __tablename__ = "prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    prompt_type: Mapped[str] = mapped_column(String(50), default="custom")  # scoring | enrichment | analysis | classification | custom
+    entity_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # NULL = all types
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
