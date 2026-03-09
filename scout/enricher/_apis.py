@@ -274,56 +274,5 @@ async def enrich_wikidata(initiative: Initiative) -> Enrichment | None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Enrichment text inference (regex-based field extraction from existing data)
-# ---------------------------------------------------------------------------
-
-_MEMBER_COUNT_RE = re.compile(
-    r'(?:team\s+of|over|about|approximately|~|circa)\s+(\d{1,5})\s*(?:members|people|students|engineers|volunteers|participants)',
-    re.IGNORECASE,
-)
-_MEMBER_COUNT_RE2 = re.compile(
-    r'(\d{1,5})\s*(?:\+\s*)?(?:members|team members|active members|volunteers|student members)',
-    re.IGNORECASE,
-)
-_FOUNDED_RE = re.compile(
-    r'(?:founded|established|started|created|since|est\.?)\s+(?:in\s+)?(\d{4})',
-    re.IGNORECASE,
-)
-_SPONSOR_RE = re.compile(
-    r'(?:sponsors?|partners?|supported by|backed by|funded by)[:\s]+([^\n.]{10,200})',
-    re.IGNORECASE,
-)
-
-
-def infer_fields_from_text(text: str) -> dict:
-    """Extract structured fields from enrichment text using regex heuristics.
-
-    Designed to run on the aggregated enrichment text for an entity.
-    Returns a dict of field_key → value for fields that can be inferred.
-    """
-    fields: dict = {}
-
-    # Member count
-    for pattern in (_MEMBER_COUNT_RE, _MEMBER_COUNT_RE2):
-        m = pattern.search(text)
-        if m:
-            try:
-                count = int(m.group(1))
-                if 2 <= count <= 50000:
-                    fields["member_count"] = count
-                    break
-            except ValueError:
-                pass
-
-    # Sponsors
-    m = _SPONSOR_RE.search(text)
-    if m:
-        sponsors_raw = m.group(1).strip()
-        # Clean up: split by common delimiters, take meaningful names
-        parts = re.split(r'[,;&]|\band\b', sponsors_raw)
-        sponsors = [p.strip() for p in parts if len(p.strip()) > 2]
-        if sponsors:
-            fields["sponsors"] = "; ".join(sponsors[:10])
-
-    return fields
+# Re-export from _core (moved there since it has no API dependencies)
+from scout.enricher._core import infer_fields_from_text  # noqa: F401

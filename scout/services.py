@@ -17,7 +17,10 @@ from scout.enricher import (
     enrich_careers, enrich_git_deep,
     enrich_openalex, enrich_wikidata, infer_fields_from_text,
 )
-from scout.models import CustomColumn, Enrichment, Initiative, OutreachScore, Project, ScoringPrompt
+from scout.models import (
+    Credential, CustomColumn, Enrichment, Initiative, OutreachScore,
+    Project, Prompt, Script, ScoringPrompt,
+)
 from scout.schema import get_schema
 from scout.scorer import LLMClient, get_entity_config, score_initiative, score_project
 from scout.utils import json_parse
@@ -862,7 +865,7 @@ def _run_script_enrichers(session: Session, init: Initiative) -> list[Enrichment
     Script-enrichers are user-defined Python scripts that extend the
     enrichment pipeline. They use the same ctx.enrich() API as any script.
     """
-    from scout.models import Script
+
 
     scripts = session.execute(
         select(Script).where(Script.script_type == "enricher")
@@ -1033,6 +1036,150 @@ async def run_project_scoring(
     return outreach
 
 
+def submit_enrichment_data(
+    session: Session, init: Initiative,
+    source_type: str, content: str,
+    source_url: str = "", summary: str = "",
+    structured_fields: dict | None = None,
+) -> dict:
+    """Upsert enrichment data for an entity. Returns result dict.
+
+    Core business logic for enrichment submission — used by both
+    MCP tool and backward-compat aliases.
+    """
+    from datetime import UTC, datetime
+    st = source_type.strip()
+    su = source_url.strip() if source_url else None
+    existing = session.execute(
+        select(Enrichment).where(
+            Enrichment.initiative_id == init.id,
+            Enrichment.source_type == st,
+            Enrichment.source_url == su,
+        )
+    ).scalar_one_or_none()
+    raw = content.strip()[:15000]
+    summ = summary.strip() if summary else raw[:500]
+    sf_json = json.dumps(structured_fields) if structured_fields else "{}"
+    now = datetime.now(UTC)
+    if existing:
+        existing.raw_text = raw
+        existing.summary = summ
+        existing.structured_fields_json = sf_json
+        existing.fetched_at = now
+        enrichment = existing
+    else:
+        enrichment = Enrichment(
+            initiative_id=init.id, source_type=st, source_url=su,
+            raw_text=raw, summary=summ, structured_fields_json=sf_json, fetched_at=now,
+        )
+        session.add(enrichment)
+    field_result = {}
+    if structured_fields:
+        field_result = apply_enrichment_fields(init, structured_fields)
+    session.flush()
+    return {
+        "enrichment_id": enrichment.id,
+        "source_type": enrichment.source_type,
+        "content_length": len(enrichment.raw_text),
+        "fields_applied": field_result.get("applied", []),
+        "fields_skipped": field_result.get("skipped", []),
+    }
+
+
+def submit_score_data(
+    session: Session, init: Initiative,
+    grades: dict,
+    *,
+    classification: str = "",
+    contact_who: str = "",
+    contact_channel: str = "website_form",
+    engagement_hook: str = "",
+    reasoning: str = "",
+    entity_type: str = "initiative",
+) -> OutreachScore:
+    """Submit manually-evaluated grades, replacing existing scores. Returns OutreachScore.
+
+    Caller must commit.
+    """
+    from scout.scorer import create_score_from_grades
+    enrichments = list(session.execute(
+        select(Enrichment).where(Enrichment.initiative_id == init.id)
+    ).scalars().all())
+    outreach = create_score_from_grades(
+        init, enrichments, grades,
+        classification=classification, contact_who=contact_who,
+        contact_channel=contact_channel, engagement_hook=engagement_hook,
+        reasoning=reasoning, entity_type=entity_type,
+    )
+    session.execute(delete(OutreachScore).where(
+        OutreachScore.initiative_id == init.id, OutreachScore.project_id.is_(None),
+    ))
+    session.add(outreach)
+    return outreach
+
+
+def build_scoring_dossiers(
+    session: Session, init: Initiative,
+    *, compact: bool = False,
+) -> dict:
+    """Build scoring dossiers + prompts for all dimensions. No LLM calls."""
+    from scout.db import get_entity_type
+    from scout.scorer import (
+        build_team_dossier, build_tech_dossier, build_full_dossier,
+        default_prompts_for, get_entity_config,
+    )
+    enrichments = session.execute(
+        select(Enrichment).where(Enrichment.initiative_id == init.id)
+    ).scalars().all()
+    prompts = load_scoring_prompts(session)
+    et = get_entity_type()
+    defaults = default_prompts_for(et)
+    ecfg = get_entity_config(et)
+    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
+    dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
+    dimensions_out = {}
+    for i, dim in enumerate(dims):
+        builder_idx = min(i, len(dossier_builders) - 1)
+        if i == len(dims) - 1:
+            builder_idx = len(dossier_builders) - 1
+        builder = dossier_builders[builder_idx]
+        prompt_text = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
+        dossier_text = builder(init, enrichments, et)
+        if compact and len(dossier_text) > 1500:
+            dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
+        dimensions_out[dim] = {"prompt": prompt_text, "dossier": dossier_text}
+    return {
+        "entity_id": init.id, "entity_name": init.name,
+        "entity_type": et, "enriched": len(enrichments) > 0,
+        "dimensions": dimensions_out,
+        "dimension_names": dims,
+    }
+
+
+def get_faculties(session: Session) -> list[str]:
+    """Return sorted distinct faculty values (non-empty)."""
+    rows = session.execute(
+        select(func.distinct(Initiative.faculty))
+        .where(Initiative.faculty != "")
+        .where(Initiative.faculty.isnot(None))
+    ).scalars().all()
+    return sorted(rows)
+
+
+def reset_all_data(session: Session) -> None:
+    """Delete all initiatives, enrichments, scores, and projects. Rebuild FTS."""
+    session.execute(delete(OutreachScore))
+    session.execute(delete(Enrichment))
+    session.execute(delete(Project))
+    session.execute(delete(Initiative))
+    try:
+        from scout.db import _FTS_TABLE
+        session.execute(text(f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES('rebuild')"))
+    except Exception:
+        pass
+    session.commit()
+
+
 def compute_stats(session: Session) -> dict:
     """Aggregate statistics computed in SQL (no N+1 queries)."""
     total = session.execute(select(func.count(Initiative.id))).scalar() or 0
@@ -1193,7 +1340,7 @@ _VALID_SCRIPT_TYPES = {"enricher", "connector", "transform", "report", "custom"}
 
 
 def _script_dict(s) -> dict:
-    from scout.models import Script
+
     return {
         "name": s.name,
         "description": s.description,
@@ -1220,7 +1367,7 @@ def save_script(
     entity_type: str | None = None,
 ) -> dict:
     """Create or update a script (upsert by name). Returns script dict."""
-    from scout.models import Script
+
     if script_type not in _VALID_SCRIPT_TYPES:
         raise ValueError(f"Invalid script_type: {script_type}. Must be one of: {', '.join(sorted(_VALID_SCRIPT_TYPES))}")
 
@@ -1252,7 +1399,7 @@ def list_scripts(
     entity_type: str | None = None,
 ) -> list[dict]:
     """List scripts with optional filters. Returns compact dicts (no code)."""
-    from scout.models import Script
+
     stmt = select(Script).order_by(Script.name)
     if script_type:
         stmt = stmt.where(Script.script_type == script_type)
@@ -1266,7 +1413,7 @@ def list_scripts(
 
 def get_script(session: Session, name: str) -> dict | None:
     """Get a script by name, including code. Returns None if not found."""
-    from scout.models import Script
+
     s = session.execute(
         select(Script).where(Script.name == name)
     ).scalars().first()
@@ -1277,7 +1424,7 @@ def get_script(session: Session, name: str) -> dict | None:
 
 def get_script_code(session: Session, name: str) -> str | None:
     """Get just the code of a script. Returns None if not found."""
-    from scout.models import Script
+
     s = session.execute(
         select(Script).where(Script.name == name)
     ).scalars().first()
@@ -1286,7 +1433,7 @@ def get_script_code(session: Session, name: str) -> str | None:
 
 def delete_script(session: Session, name: str) -> bool:
     """Delete a script by name. Returns True if deleted, False if not found."""
-    from scout.models import Script
+
     s = session.execute(
         select(Script).where(Script.name == name)
     ).scalars().first()
@@ -1331,7 +1478,7 @@ def save_prompt(
     entity_type: str | None = None,
 ) -> dict:
     """Create or update a prompt (upsert by name). Returns prompt dict."""
-    from scout.models import Prompt
+
     if prompt_type not in _VALID_PROMPT_TYPES:
         raise ValueError(f"Invalid prompt_type: {prompt_type}. Must be one of: {', '.join(sorted(_VALID_PROMPT_TYPES))}")
 
@@ -1363,7 +1510,7 @@ def list_prompts(
     entity_type: str | None = None,
 ) -> list[dict]:
     """List prompts with optional filters. Returns compact dicts (no content)."""
-    from scout.models import Prompt
+
     stmt = select(Prompt).order_by(Prompt.name)
     if prompt_type:
         stmt = stmt.where(Prompt.prompt_type == prompt_type)
@@ -1377,7 +1524,7 @@ def list_prompts(
 
 def get_prompt(session: Session, name: str) -> dict | None:
     """Get a prompt by name, including content. Returns None if not found."""
-    from scout.models import Prompt
+
     p = session.execute(
         select(Prompt).where(Prompt.name == name)
     ).scalars().first()
@@ -1388,7 +1535,7 @@ def get_prompt(session: Session, name: str) -> dict | None:
 
 def get_prompt_content(session: Session, name: str) -> str | None:
     """Get just the content of a prompt. Returns None if not found."""
-    from scout.models import Prompt
+
     p = session.execute(
         select(Prompt).where(Prompt.name == name)
     ).scalars().first()
@@ -1397,7 +1544,7 @@ def get_prompt_content(session: Session, name: str) -> str | None:
 
 def delete_prompt(session: Session, name: str) -> bool:
     """Delete a prompt by name. Returns True if deleted, False if not found."""
-    from scout.models import Prompt
+
     p = session.execute(
         select(Prompt).where(Prompt.name == name)
     ).scalars().first()
@@ -1465,7 +1612,7 @@ def save_credential(
     service: str = "", description: str = "",
 ) -> dict:
     """Save or update a credential. Value is encrypted before storage."""
-    from scout.models import Credential
+
     encrypted = _encrypt_value(value)
     existing = session.execute(
         select(Credential).where(Credential.name == name)
@@ -1487,7 +1634,7 @@ def save_credential(
 
 def get_credential(session: Session, name: str) -> str | None:
     """Get a decrypted credential value by name. Returns None if not found."""
-    from scout.models import Credential
+
     cred = session.execute(
         select(Credential).where(Credential.name == name)
     ).scalars().first()
@@ -1498,7 +1645,7 @@ def get_credential(session: Session, name: str) -> str | None:
 
 def list_credentials(session: Session) -> list[dict]:
     """List all credentials (names and services only — no values)."""
-    from scout.models import Credential
+
     rows = session.execute(
         select(Credential).order_by(Credential.name)
     ).scalars().all()
@@ -1510,7 +1657,7 @@ def list_credentials(session: Session) -> list[dict]:
 
 def delete_credential(session: Session, name: str) -> bool:
     """Delete a credential by name."""
-    from scout.models import Credential
+
     cred = session.execute(
         select(Credential).where(Credential.name == name)
     ).scalars().first()

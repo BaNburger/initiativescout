@@ -304,3 +304,44 @@ async def _github_get(path: str, headers: dict[str, str]) -> tuple[int, dict | l
     except Exception as exc:
         log.debug("GitHub API request failed for %s: %s", path, exc)
         return 0, None
+
+
+# ---------------------------------------------------------------------------
+# Text inference — regex-based field extraction from enrichment text
+# ---------------------------------------------------------------------------
+
+_MEMBER_COUNT_RE = re.compile(
+    r'(?:team\s+of|over|about|approximately|~|circa)\s+(\d{1,5})\s*(?:members|people|students|engineers|volunteers|participants)',
+    re.IGNORECASE,
+)
+_MEMBER_COUNT_RE2 = re.compile(
+    r'(\d{1,5})\s*(?:\+\s*)?(?:members|team members|active members|volunteers|student members)',
+    re.IGNORECASE,
+)
+_SPONSOR_RE = re.compile(
+    r'(?:sponsors?|partners?|supported by|backed by|funded by)[:\s]+([^\n.]{10,200})',
+    re.IGNORECASE,
+)
+
+
+def infer_fields_from_text(text: str) -> dict:
+    """Extract structured fields from enrichment text using regex heuristics."""
+    fields: dict = {}
+    for pattern in (_MEMBER_COUNT_RE, _MEMBER_COUNT_RE2):
+        m = pattern.search(text)
+        if m:
+            try:
+                count = int(m.group(1))
+                if 2 <= count <= 50000:
+                    fields["member_count"] = count
+                    break
+            except ValueError:
+                pass
+    m = _SPONSOR_RE.search(text)
+    if m:
+        sponsors_raw = m.group(1).strip()
+        parts = re.split(r'[,;&]|\band\b', sponsors_raw)
+        sponsors = [p.strip() for p in parts if len(p.strip()) > 2]
+        if sponsors:
+            fields["sponsors"] = "; ".join(sponsors[:10])
+    return fields

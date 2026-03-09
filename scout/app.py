@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from scout import services
@@ -24,7 +24,7 @@ from scout.db import (
     session_generator, switch_db, validate_db_name,
 )
 from scout.importer import import_xlsx
-from scout.models import Enrichment, Initiative, OutreachScore, Project
+from scout.models import Initiative, OutreachScore, Project
 from scout.schemas import (
     CustomColumnCreate,
     CustomColumnUpdate,
@@ -610,12 +610,7 @@ async def update_scoring_prompt(key: str, body: ScoringPromptUpdate,
 @app.get("/api/faculties", tags=["Stats"],
          summary="List all distinct faculty values for filter dropdowns")
 async def get_faculties(session: Session = Depends(db_session)):
-    rows = session.execute(
-        select(func.distinct(Initiative.faculty))
-        .where(Initiative.faculty != "")
-        .where(Initiative.faculty.isnot(None))
-    ).scalars().all()
-    return sorted(rows)
+    return services.get_faculties(session)
 
 
 @app.get("/api/stats", response_model=StatsOut,
@@ -862,16 +857,7 @@ async def api_delete_credential(name: str, session: Session = Depends(db_session
 
 @app.delete("/api/reset", tags=["Admin"], summary="Delete all data (initiatives, enrichments, scores, projects)")
 async def reset_db(session: Session = Depends(db_session)):
-    session.execute(delete(OutreachScore))
-    session.execute(delete(Enrichment))
-    session.execute(delete(Project))
-    session.execute(delete(Initiative))
-    try:
-        from scout.db import _FTS_TABLE
-        session.execute(text(f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES('rebuild')"))
-    except Exception:
-        log.debug("FTS deleteall skipped (table may not exist)")
-    session.commit()
+    services.reset_all_data(session)
     return {"ok": True}
 
 

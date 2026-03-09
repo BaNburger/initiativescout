@@ -451,42 +451,5 @@ def _on_initiative_delete(mapper, connection, target):
 
 def _seed_scoring_prompts(engine) -> None:
     """Seed or fix scoring prompts to match the database's entity type."""
-    from scout.scorer import default_prompts_for, _ALL_DEFAULT_PROMPTS
-
-    with engine.connect() as conn:
-        et_row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_type'")).scalar()
-    entity_type = str(et_row) if et_row else "initiative"
-    prompts = default_prompts_for(entity_type)
-
-    with engine.connect() as conn:
-        count = conn.execute(text("SELECT COUNT(*) FROM scoring_prompts")).scalar()
-
-    if count == 0:
-        # Fresh DB — seed with correct defaults
-        with engine.begin() as conn:
-            for key, (label, content) in prompts.items():
-                conn.execute(text(
-                    "INSERT INTO scoring_prompts (key, label, content) VALUES (:key, :label, :content)"
-                ), {"key": key, "label": label, "content": content})
-        return
-
-    # Existing prompts — check if they're stale defaults from a different entity type.
-    # Only auto-fix if content exactly matches a different type's defaults (user edits preserved).
-    wrong_defaults: dict[str, str] = {}
-    for other_type, other_prompts in _ALL_DEFAULT_PROMPTS.items():
-        if other_type != entity_type:
-            for key, (_, content) in other_prompts.items():
-                wrong_defaults[key + ":" + content] = key
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT key, content FROM scoring_prompts")).fetchall()
-    to_fix = []
-    for key, content in rows:
-        if (key + ":" + content) in wrong_defaults and key in prompts:
-            to_fix.append(key)
-    if to_fix:
-        with engine.begin() as conn:
-            for key in to_fix:
-                label, content = prompts[key]
-                conn.execute(text(
-                    "UPDATE scoring_prompts SET label = :label, content = :content WHERE key = :key"
-                ), {"key": key, "label": label, "content": content})
+    from scout.scorer import seed_scoring_prompts
+    seed_scoring_prompts(engine)

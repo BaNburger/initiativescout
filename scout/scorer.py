@@ -125,24 +125,8 @@ def _load_prompt_file(entity_type: str, dimension: str) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def _load_all_prompts() -> dict[str, dict[str, tuple[str, str]]]:
-    """Build the full prompt registry from .txt files on disk."""
-    registry: dict[str, dict[str, tuple[str, str]]] = {}
-    for entity_type, labels in _PROMPT_LABELS.items():
-        prompts: dict[str, tuple[str, str]] = {}
-        for dim, label in labels.items():
-            content = _load_prompt_file(entity_type, dim)
-            if content:
-                prompts[dim] = (label, content)
-        registry[entity_type] = prompts
-    return registry
-
-
-def _prompts_for_type(entity_type: str) -> dict[str, tuple[str, str]]:
-    """Get prompt definitions for any entity type (including custom ones)."""
-    if entity_type in _ALL_DEFAULT_PROMPTS:
-        return _ALL_DEFAULT_PROMPTS[entity_type]
-    # Custom entity type — load from schema dimensions with initiative prompt content
+def _load_prompts(entity_type: str) -> dict[str, tuple[str, str]]:
+    """Load prompt definitions for an entity type from .txt files."""
     labels = _prompt_labels(entity_type)
     prompts: dict[str, tuple[str, str]] = {}
     for dim, label in labels.items():
@@ -152,11 +136,61 @@ def _prompts_for_type(entity_type: str) -> dict[str, tuple[str, str]]:
     return prompts
 
 
-_ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = _load_all_prompts()
+_ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = {
+    et: _load_prompts(et) for et in _PROMPT_LABELS
+}
+
+
+def _prompts_for_type(entity_type: str) -> dict[str, tuple[str, str]]:
+    """Get prompt definitions for any entity type (including custom ones)."""
+    if entity_type in _ALL_DEFAULT_PROMPTS:
+        return _ALL_DEFAULT_PROMPTS[entity_type]
+    return _load_prompts(entity_type)
 
 def default_prompts_for(entity_type: str) -> dict[str, tuple[str, str]]:
     """Return default prompt definitions for the given entity type."""
     return _prompts_for_type(entity_type)
+
+
+def seed_scoring_prompts(engine) -> None:
+    """Seed or fix scoring prompts to match the database's entity type.
+
+    Called by db.py during migration. Keeps prompt seeding logic close to
+    the prompt definitions it depends on.
+    """
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        et_row = conn.execute(text("SELECT value FROM _meta WHERE key = 'entity_type'")).scalar()
+    entity_type = str(et_row) if et_row else "initiative"
+    prompts = default_prompts_for(entity_type)
+
+    with engine.connect() as conn:
+        count = conn.execute(text("SELECT COUNT(*) FROM scoring_prompts")).scalar()
+
+    if count == 0:
+        with engine.begin() as conn:
+            for key, (label, content) in prompts.items():
+                conn.execute(text(
+                    "INSERT INTO scoring_prompts (key, label, content) VALUES (:key, :label, :content)"
+                ), {"key": key, "label": label, "content": content})
+        return
+
+    # Only auto-fix if content exactly matches a different type's defaults (user edits preserved)
+    wrong_defaults: dict[str, str] = {}
+    for other_type, other_prompts in _ALL_DEFAULT_PROMPTS.items():
+        if other_type != entity_type:
+            for key, (_, content) in other_prompts.items():
+                wrong_defaults[key + ":" + content] = key
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT key, content FROM scoring_prompts")).fetchall()
+    to_fix = [key for key, content in rows if (key + ":" + content) in wrong_defaults and key in prompts]
+    if to_fix:
+        with engine.begin() as conn:
+            for key in to_fix:
+                label, content = prompts[key]
+                conn.execute(text(
+                    "UPDATE scoring_prompts SET label = :label, content = :content WHERE key = :key"
+                ), {"key": key, "label": label, "content": content})
 
 
 VALID_VERDICTS = {"reach_out_now", "reach_out_soon", "monitor", "skip"}
@@ -653,6 +687,52 @@ def compute_data_gaps(init: Initiative, enrichments: list[Enrichment], entity_ty
     return gaps
 
 
+def _build_outreach_score(
+    initiative_id: int,
+    *,
+    project_id: int | None = None,
+    grades: dict[str, Grade],
+    classification: str,
+    reasoning: str = "",
+    contact_who: str = "",
+    contact_channel: str = "website_form",
+    engagement_hook: str = "",
+    key_evidence: list[str] | None = None,
+    data_gaps: list[str] | None = None,
+    dim_grades_json: dict | None = None,
+    llm_model: str = "external",
+) -> OutreachScore:
+    """Build an OutreachScore from parsed grades. Single constructor point."""
+    team_g = grades.get("team", Grade.parse("C"))
+    tech_g = grades.get("tech", Grade.parse("C"))
+    opp_g = grades.get("opportunity", Grade.parse("C"))
+    avg = compute_weighted_avg(team_g.numeric, tech_g.numeric, opp_g.numeric, classification)
+    if dim_grades_json is None:
+        dim_grades_json = {k: {"letter": g.letter, "numeric": g.numeric} for k, g in grades.items()}
+    return OutreachScore(
+        initiative_id=initiative_id,
+        project_id=project_id,
+        verdict=compute_verdict(avg),
+        score=compute_score(avg),
+        classification=classification,
+        reasoning=reasoning,
+        contact_who=contact_who,
+        contact_channel=contact_channel,
+        engagement_hook=engagement_hook,
+        key_evidence_json=json.dumps(key_evidence or []),
+        data_gaps_json=json.dumps(data_gaps or []),
+        grade_team=team_g.letter,
+        grade_team_num=team_g.numeric,
+        grade_tech=tech_g.letter,
+        grade_tech_num=tech_g.numeric,
+        grade_opportunity=opp_g.letter,
+        grade_opportunity_num=opp_g.numeric,
+        dimension_grades_json=json.dumps(dim_grades_json),
+        llm_model=llm_model,
+        scored_at=datetime.now(UTC),
+    )
+
+
 def create_score_from_grades(
     initiative: Initiative,
     enrichments: list[Enrichment],
@@ -665,55 +745,22 @@ def create_score_from_grades(
     reasoning: str = "",
     entity_type: str = "initiative",
 ) -> OutreachScore:
-    """Build an OutreachScore from pre-evaluated grades (no LLM call).
-
-    Use this when the calling LLM has already evaluated the dossiers
-    (e.g. via get_scoring_dossier + submit_score).
-    """
+    """Build an OutreachScore from pre-evaluated grades (no LLM call)."""
     classification = _normalize_classification(classification, entity_type)
-
     team_g = grades.get("team", Grade.parse("C"))
     tech_g = grades.get("tech", Grade.parse("C"))
     opp_g = grades.get("opportunity", Grade.parse("C"))
-
-    avg = compute_weighted_avg(
-        team_g.numeric, tech_g.numeric, opp_g.numeric, classification,
-    )
-    verdict = compute_verdict(avg)
-    score = compute_score(avg)
-    data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
-
     key_evidence = [
         f"Team ({team_g.letter}): externally evaluated",
         f"Tech ({tech_g.letter}): externally evaluated",
         f"Opportunity ({opp_g.letter}): {reasoning}" if reasoning
         else f"Opportunity ({opp_g.letter}): externally evaluated",
     ]
-
-    # Store all dimension grades in flexible JSON
-    dim_grades = {k: {"letter": g.letter, "numeric": g.numeric} for k, g in grades.items()}
-
-    return OutreachScore(
-        initiative_id=initiative.id,
-        project_id=None,
-        verdict=verdict,
-        score=score,
-        classification=classification,
-        reasoning=reasoning,
-        contact_who=contact_who,
-        contact_channel=contact_channel,
-        engagement_hook=engagement_hook,
-        key_evidence_json=json.dumps(key_evidence),
-        data_gaps_json=json.dumps(data_gaps),
-        grade_team=team_g.letter,
-        grade_team_num=team_g.numeric,
-        grade_tech=tech_g.letter,
-        grade_tech_num=tech_g.numeric,
-        grade_opportunity=opp_g.letter,
-        grade_opportunity_num=opp_g.numeric,
-        dimension_grades_json=json.dumps(dim_grades),
-        llm_model="external",
-        scored_at=datetime.now(UTC),
+    return _build_outreach_score(
+        initiative.id, grades=grades, classification=classification,
+        reasoning=reasoning, contact_who=contact_who, contact_channel=contact_channel,
+        engagement_hook=engagement_hook, key_evidence=key_evidence,
+        data_gaps=compute_data_gaps(initiative, enrichments, entity_type),
     )
 
 
@@ -782,54 +829,27 @@ async def score_initiative(
     tech = results["tech"]
     opp = results["opportunity"]
 
-    # Determine classification first so we can use weighted aggregation
-    classification = _normalize_classification(
-        opp.extras.get("classification"), entity_type,
-    )
-
-    avg_grade = compute_weighted_avg(
-        team.grade.numeric, tech.grade.numeric, opp.grade.numeric, classification,
-    )
-    verdict = compute_verdict(avg_grade)
-    score = compute_score(avg_grade)
-
+    classification = _normalize_classification(opp.extras.get("classification"), entity_type)
+    grades = {"team": team.grade, "tech": tech.grade, "opportunity": opp.grade}
     key_evidence = [
         f"{defaults['team'][0]} ({team.grade.letter}): {team.reasoning}",
         f"{defaults['tech'][0]} ({tech.grade.letter}): {tech.reasoning}",
         f"{defaults['opportunity'][0]} ({opp.grade.letter}): {opp.reasoning}",
     ]
-    data_gaps = compute_data_gaps(initiative, enrichments, entity_type)
-
     dim_grades = {
-        "team": {"letter": team.grade.letter, "numeric": team.grade.numeric,
-                 "reasoning": team.reasoning},
-        "tech": {"letter": tech.grade.letter, "numeric": tech.grade.numeric,
-                 "reasoning": tech.reasoning},
-        "opportunity": {"letter": opp.grade.letter, "numeric": opp.grade.numeric,
-                        "reasoning": opp.reasoning},
+        "team": {"letter": team.grade.letter, "numeric": team.grade.numeric, "reasoning": team.reasoning},
+        "tech": {"letter": tech.grade.letter, "numeric": tech.grade.numeric, "reasoning": tech.reasoning},
+        "opportunity": {"letter": opp.grade.letter, "numeric": opp.grade.numeric, "reasoning": opp.reasoning},
     }
-
-    return OutreachScore(
-        initiative_id=initiative.id,
-        project_id=None,
-        verdict=verdict,
-        score=score,
-        classification=classification,
+    return _build_outreach_score(
+        initiative.id, grades=grades, classification=classification,
         reasoning=opp.reasoning,
         contact_who=str(opp.extras.get("contact_who", "")),
         contact_channel=str(opp.extras.get("contact_channel", "website_form")),
         engagement_hook=str(opp.extras.get("engagement_hook", "")),
-        key_evidence_json=json.dumps(key_evidence),
-        data_gaps_json=json.dumps(data_gaps),
-        grade_team=team.grade.letter,
-        grade_team_num=team.grade.numeric,
-        grade_tech=tech.grade.letter,
-        grade_tech_num=tech.grade.numeric,
-        grade_opportunity=opp.grade.letter,
-        grade_opportunity_num=opp.grade.numeric,
-        dimension_grades_json=json.dumps(dim_grades),
-        llm_model=client.model,
-        scored_at=datetime.now(UTC),
+        key_evidence=key_evidence,
+        data_gaps=compute_data_gaps(initiative, enrichments, entity_type),
+        dim_grades_json=dim_grades, llm_model=client.model,
     )
 
 
@@ -947,30 +967,16 @@ async def score_project(
     dossier = build_project_dossier(project, initiative, entity_type)
     raw = await client.call(_project_system_prompt(entity_type), dossier)
     v = _validate_project_response(raw, entity_type)
-    dim_grades = {
-        "team": {"letter": v["team_grade"], "numeric": GRADE_MAP[v["team_grade"]]},
-        "tech": {"letter": v["tech_grade"], "numeric": GRADE_MAP[v["tech_grade"]]},
-        "opportunity": {"letter": v["opportunity_grade"], "numeric": GRADE_MAP[v["opportunity_grade"]]},
+    grades = {
+        "team": Grade.parse(v["team_grade"]),
+        "tech": Grade.parse(v["tech_grade"]),
+        "opportunity": Grade.parse(v["opportunity_grade"]),
     }
-    return OutreachScore(
-        initiative_id=initiative.id,
-        project_id=project.id,
-        verdict=v["verdict"],
-        score=v["score"],
-        classification=v["classification"],
-        reasoning=v["reasoning"],
-        contact_who=v["contact_who"],
-        contact_channel=v["contact_channel"],
+    return _build_outreach_score(
+        initiative.id, project_id=project.id, grades=grades,
+        classification=v["classification"], reasoning=v["reasoning"],
+        contact_who=v["contact_who"], contact_channel=v["contact_channel"],
         engagement_hook=v["engagement_hook"],
-        key_evidence_json=json.dumps(v["key_evidence"]),
-        data_gaps_json=json.dumps(v["data_gaps"]),
-        grade_team=v["team_grade"],
-        grade_team_num=GRADE_MAP[v["team_grade"]],
-        grade_tech=v["tech_grade"],
-        grade_tech_num=GRADE_MAP[v["tech_grade"]],
-        grade_opportunity=v["opportunity_grade"],
-        grade_opportunity_num=GRADE_MAP[v["opportunity_grade"]],
-        dimension_grades_json=json.dumps(dim_grades),
+        key_evidence=v["key_evidence"], data_gaps=v["data_gaps"],
         llm_model=client.model,
-        scored_at=datetime.now(UTC),
     )

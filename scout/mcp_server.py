@@ -24,9 +24,7 @@ from scout.enricher import open_crawler
 from scout.models import Enrichment, Initiative, OutreachScore, Project
 from scout.scorer import (
     GRADE_MAP, VALID_GRADES, Grade, _BUILTIN_ENTITY_TYPES,
-    LLMClient, build_full_dossier, build_team_dossier, build_tech_dossier,
-    create_score_from_grades, default_prompts_for, get_entity_config,
-    valid_classifications,
+    LLMClient, get_entity_config, valid_classifications,
 )
 from scout.utils import json_parse, parse_comma_set
 
@@ -809,44 +807,20 @@ async def enrich(
             init, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
-            st = source_type.strip()
-            su = source_url.strip() if source_url else None
-            existing_e = session.execute(
-                select(Enrichment).where(
-                    Enrichment.initiative_id == init.id,
-                    Enrichment.source_type == st,
-                    Enrichment.source_url == su,
-                )
-            ).scalar_one_or_none()
-            raw = content.strip()[:15000]
-            summ = summary.strip() if summary else raw[:500]
-            sf_json = json.dumps(structured_fields) if structured_fields else "{}"
-            now = datetime.now(UTC)
-            if existing_e:
-                existing_e.raw_text = raw
-                existing_e.summary = summ
-                existing_e.structured_fields_json = sf_json
-                existing_e.fetched_at = now
-                enrichment = existing_e
-            else:
-                enrichment = Enrichment(
-                    initiative_id=init.id, source_type=st, source_url=su,
-                    raw_text=raw, summary=summ, structured_fields_json=sf_json, fetched_at=now,
-                )
-                session.add(enrichment)
-            field_result = {}
-            if structured_fields:
-                field_result = services.apply_enrichment_fields(init, structured_fields)
+            r = services.submit_enrichment_data(
+                session, init, source_type=source_type, content=content,
+                source_url=source_url, summary=summary, structured_fields=structured_fields,
+            )
             session.commit()
             result = {
                 "entity_id": init.id, "entity_name": init.name,
-                "enrichment_id": enrichment.id, "source_type": enrichment.source_type,
-                "content_length": len(enrichment.raw_text), "_db": _db_pulse(session),
+                "enrichment_id": r["enrichment_id"], "source_type": r["source_type"],
+                "content_length": r["content_length"], "_db": _db_pulse(session),
             }
-            if field_result.get("applied"):
-                result["fields_applied"] = field_result["applied"]
-            if field_result.get("skipped"):
-                result["fields_skipped"] = field_result["skipped"]
+            if r["fields_applied"]:
+                result["fields_applied"] = r["fields_applied"]
+            if r["fields_skipped"]:
+                result["fields_skipped"] = r["fields_skipped"]
             return _suggest(result, _next("score", "Score with new data", action="run", entity_id=init.id))
 
     # --- PROCESS (autonomous pipeline) ---
@@ -1017,33 +991,10 @@ async def score(
             init, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
-            enrichments = session.execute(
-                select(Enrichment).where(Enrichment.initiative_id == init.id)
-            ).scalars().all()
-            prompts = services.load_scoring_prompts(session)
-            et = get_entity_type()
-            defaults = default_prompts_for(et)
-            ecfg = get_entity_config(et)
-            dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
-            dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
-            dimensions_out = {}
-            for i, dim in enumerate(dims):
-                builder_idx = min(i, len(dossier_builders) - 1)
-                if i == len(dims) - 1:
-                    builder_idx = len(dossier_builders) - 1
-                builder = dossier_builders[builder_idx]
-                prompt_text = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
-                dossier_text = builder(init, enrichments, et)
-                if compact and len(dossier_text) > 1500:
-                    dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
-                dimensions_out[dim] = {"prompt": prompt_text, "dossier": dossier_text}
+            result = services.build_scoring_dossiers(session, init, compact=compact)
+            dims = result.pop("dimension_names")
             grade_args = {f"grade_{dim}": "" for dim in dims}
             grade_args["classification"] = ""
-            result = {
-                "entity_id": init.id, "entity_name": init.name,
-                "entity_type": et, "enriched": len(enrichments) > 0,
-                "dimensions": dimensions_out,
-            }
             if compact:
                 result["_note"] = "Dossiers truncated (compact=True). Use compact=False for full text."
             return _suggest(result, _next("score", "Submit your evaluation", action="submit",
@@ -1091,19 +1042,12 @@ async def score(
             init, err = _get_or_error(session, Initiative, entity_id)
             if err:
                 return err
-            enrichments = list(session.execute(
-                select(Enrichment).where(Enrichment.initiative_id == init.id)
-            ).scalars().all())
-            outreach = create_score_from_grades(
-                init, enrichments, grades,
+            outreach = services.submit_score_data(
+                session, init, grades,
                 classification=classification, contact_who=contact_who,
                 contact_channel=contact_channel, engagement_hook=engagement_hook,
                 reasoning=reasoning, entity_type=get_entity_type(),
             )
-            session.execute(delete(OutreachScore).where(
-                OutreachScore.initiative_id == init.id, OutreachScore.project_id.is_(None),
-            ))
-            session.add(outreach)
             session.commit()
             result: dict = {
                 "entity_id": init.id, "entity_name": init.name,
@@ -1838,11 +1782,25 @@ def credential(
 # ---------------------------------------------------------------------------
 
 
-def _submit_enrichment_sync(entity_id=None, source_type="", content="", source_url="",
-                             summary="", structured_fields=None, **_kw):
-    """Sync version of enrich(action='submit') for backward compat."""
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases — used by tests and REST API
+# ---------------------------------------------------------------------------
+
+def list_entities(**kw): return entity(action="list", **kw)
+def get_entity(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return entity(action="get", **kw)
+def manage_entity(**kw): return entity(**kw)
+async def enrich_entity(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return await enrich(action="run", **kw)
+def submit_enrichment(entity_id=None, **kw):
     if entity_id is None:
         return _error("entity_id required", "VALIDATION_ERROR")
+    content = kw.get("content", "")
+    source_type = kw.get("source_type", "")
     if not content or not content.strip():
         return _error("content cannot be empty", "VALIDATION_ERROR")
     if not source_type or not source_type.strip():
@@ -1851,57 +1809,30 @@ def _submit_enrichment_sync(entity_id=None, source_type="", content="", source_u
         init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
-        st = source_type.strip()
-        su = source_url.strip() if source_url else None
-        existing_e = session.execute(
-            select(Enrichment).where(
-                Enrichment.initiative_id == init.id,
-                Enrichment.source_type == st,
-                Enrichment.source_url == su,
-            )
-        ).scalar_one_or_none()
-        raw = content.strip()[:15000]
-        summ = summary.strip() if summary else raw[:500]
-        sf_json = json.dumps(structured_fields) if structured_fields else "{}"
-        now = datetime.now(UTC)
-        if existing_e:
-            existing_e.raw_text = raw
-            existing_e.summary = summ
-            existing_e.structured_fields_json = sf_json
-            existing_e.fetched_at = now
-            enrichment = existing_e
-        else:
-            enrichment = Enrichment(
-                initiative_id=init.id, source_type=st, source_url=su,
-                raw_text=raw, summary=summ, structured_fields_json=sf_json, fetched_at=now,
-            )
-            session.add(enrichment)
-        field_result = {}
-        if structured_fields:
-            field_result = services.apply_enrichment_fields(init, structured_fields)
+        r = services.submit_enrichment_data(
+            session, init, source_type=source_type, content=content,
+            source_url=kw.get("source_url", ""), summary=kw.get("summary", ""),
+            structured_fields=kw.get("structured_fields"),
+        )
         session.commit()
-        result = {
-            "entity_id": init.id, "entity_name": init.name,
-            "enrichment_id": enrichment.id, "source_type": enrichment.source_type,
-            "content_length": len(enrichment.raw_text), "_db": _db_pulse(session),
-        }
-        if field_result.get("applied"):
-            result["fields_applied"] = field_result["applied"]
-        if field_result.get("skipped"):
-            result["fields_skipped"] = field_result["skipped"]
+        result = {"entity_id": init.id, "entity_name": init.name, **r, "_db": _db_pulse(session)}
         return _suggest(result, _next("score", "Score with new data", action="run", entity_id=init.id))
-
-
-def _submit_score_sync(entity_id=None, grade_team="", grade_tech="", grade_opportunity="",
-                        classification="", contact_who="", contact_channel="website_form",
-                        engagement_hook="", reasoning="", dimension_grades=None, **_kw):
-    """Sync version of score(action='submit') for backward compat."""
+async def score_entity(entity_id=None, **kw):
+    if entity_id is not None:
+        kw["entity_id"] = entity_id
+    return await score(action="run", **kw)
+def submit_score(entity_id=None, **kw):
     if entity_id is None:
         return _error("entity_id required", "VALIDATION_ERROR")
+    # Parse grades — reuse the same validation logic as score(action="submit")
     et = get_entity_type()
     ecfg = get_entity_config(et)
     dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
     is_standard = (dims == ["team", "tech", "opportunity"])
+    dimension_grades = kw.get("dimension_grades")
+    grade_team = kw.get("grade_team", "")
+    grade_tech = kw.get("grade_tech", "")
+    grade_opportunity = kw.get("grade_opportunity", "")
     grades: dict[str, Grade] = {}
     if dimension_grades and isinstance(dimension_grades, dict):
         for dim, raw_grade in dimension_grades.items():
@@ -1926,35 +1857,30 @@ def _submit_score_sync(entity_id=None, grade_team="", grade_tech="", grade_oppor
             if Grade.normalize(raw) not in VALID_GRADES:
                 return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
             grades[dim] = Grade.parse(raw)
+    classification = kw.get("classification", "")
     if classification:
         classification = classification.strip().lower()
         valid_cls = valid_classifications(et)
         if is_standard and classification not in valid_cls:
             return _error(f"Invalid classification: {classification!r}.", "VALIDATION_ERROR")
-    contact_channel = contact_channel.strip().lower()
+    contact_channel = kw.get("contact_channel", "website_form").strip().lower()
     if contact_channel and contact_channel not in VALID_CHANNELS:
         return _error(f"Invalid contact_channel: {contact_channel!r}.", "VALIDATION_ERROR")
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
-        enrichments = list(session.execute(
-            select(Enrichment).where(Enrichment.initiative_id == init.id)
-        ).scalars().all())
-        outreach = create_score_from_grades(
-            init, enrichments, grades, classification=classification, contact_who=contact_who,
-            contact_channel=contact_channel, engagement_hook=engagement_hook,
-            reasoning=reasoning, entity_type=get_entity_type(),
+        outreach = services.submit_score_data(
+            session, init, grades,
+            classification=classification, contact_who=kw.get("contact_who", ""),
+            contact_channel=contact_channel, engagement_hook=kw.get("engagement_hook", ""),
+            reasoning=kw.get("reasoning", ""), entity_type=et,
         )
-        session.execute(delete(OutreachScore).where(
-            OutreachScore.initiative_id == init.id, OutreachScore.project_id.is_(None),
-        ))
-        session.add(outreach)
         session.commit()
         result: dict = {
             "entity_id": init.id, "entity_name": init.name,
             "verdict": outreach.verdict, "score": outreach.score,
-            "classification": outreach.classification,
+            "classification": outreach.classification, "_db": _db_pulse(session),
         }
         dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
         if dim_grades_stored:
@@ -1962,82 +1888,23 @@ def _submit_score_sync(entity_id=None, grade_team="", grade_tech="", grade_oppor
         else:
             result.update({"grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
                            "grade_opportunity": outreach.grade_opportunity})
-        result["_db"] = _db_pulse(session)
         return result
-
-
-def _get_scoring_dossier_sync(entity_id=None, compact=False, **_kw):
-    """Sync version of score(action='dossier') for backward compat."""
+def get_scoring_dossier(entity_id=None, **kw):
     if entity_id is None:
         return _error("entity_id required", "VALIDATION_ERROR")
+    compact = kw.get("compact", False)
     with session_scope() as session:
         init, err = _get_or_error(session, Initiative, entity_id)
         if err:
             return err
-        enrichments = session.execute(
-            select(Enrichment).where(Enrichment.initiative_id == init.id)
-        ).scalars().all()
-        prompts = services.load_scoring_prompts(session)
-        et = get_entity_type()
-        defaults = default_prompts_for(et)
-        ecfg = get_entity_config(et)
-        dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
-        dossier_builders = [build_team_dossier, build_tech_dossier, build_full_dossier]
-        dimensions_out = {}
-        for i, dim in enumerate(dims):
-            builder_idx = min(i, len(dossier_builders) - 1)
-            if i == len(dims) - 1:
-                builder_idx = len(dossier_builders) - 1
-            builder = dossier_builders[builder_idx]
-            prompt_text = prompts.get(dim, defaults.get(dim, (dim, f"Evaluate the {dim} dimension."))[1])
-            dossier_text = builder(init, enrichments, et)
-            if compact and len(dossier_text) > 1500:
-                dossier_text = dossier_text[:1500].rsplit("\n", 1)[0]
-            dimensions_out[dim] = {"prompt": prompt_text, "dossier": dossier_text}
+        result = services.build_scoring_dossiers(session, init, compact=compact)
+        dims = result.pop("dimension_names")
         grade_args = {f"grade_{dim}": "" for dim in dims}
         grade_args["classification"] = ""
-        result = {
-            "entity_id": init.id, "entity_name": init.name,
-            "entity_type": et, "enriched": len(enrichments) > 0,
-            "dimensions": dimensions_out,
-        }
         if compact:
             result["_note"] = "Dossiers truncated (compact=True). Use compact=False for full text."
         return _suggest(result, _next("score", "Submit your evaluation", action="submit",
-                                      entity_id=init.id, **grade_args))
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible aliases — used by tests and REST API
-# ---------------------------------------------------------------------------
-
-def list_entities(**kw): return entity(action="list", **kw)
-def get_entity(entity_id=None, **kw):
-    if entity_id is not None:
-        kw["entity_id"] = entity_id
-    return entity(action="get", **kw)
-def manage_entity(**kw): return entity(**kw)
-async def enrich_entity(entity_id=None, **kw):
-    if entity_id is not None:
-        kw["entity_id"] = entity_id
-    return await enrich(action="run", **kw)
-def submit_enrichment(entity_id=None, **kw):
-    if entity_id is not None:
-        kw["entity_id"] = entity_id
-    # submit is sync logic inside an async function — call it directly via _submit_enrichment_sync
-    return _submit_enrichment_sync(**kw)
-async def score_entity(entity_id=None, **kw):
-    if entity_id is not None:
-        kw["entity_id"] = entity_id
-    return await score(action="run", **kw)
-def submit_score(entity_id=None, **kw):
-    if entity_id is not None:
-        kw["entity_id"] = entity_id
-    return _submit_score_sync(**kw)
-def get_scoring_dossier(entity_id=None, **kw):
-    if entity_id is not None:
-        kw["entity_id"] = entity_id
-    return _get_scoring_dossier_sync(**kw)
+                                      entity_id=entity_id, **grade_args))
 def get_overview(**kw): return overview(**kw)
 def get_work_queue(limit: int = 10): return overview(queue_limit=limit)
 def find_similar(**kw): return entity(action="similar", **kw)
