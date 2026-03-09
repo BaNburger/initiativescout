@@ -120,6 +120,37 @@ _INITIATIVE_SCHEMA: dict[str, Any] = {
         "custom_fields",
     ],
 
+    # Detail view sections — drives the entity-agnostic detail panel in the UI.
+    # Each section has a type (signal_grid, score_bars, tags, key_value) and fields.
+    "detail_sections": [
+        {"label": "Pipeline Scores", "type": "score_bars", "fields": [
+            {"key": "outreach_now_score", "label": "Outreach", "color": "green"},
+            {"key": "venture_upside_score", "label": "Venture Upside", "color": "blue"},
+        ]},
+        {"label": "Signals", "type": "signal_grid", "fields": [
+            {"key": "member_count", "label": "Members"},
+            {"key": "github_repo_count", "label": "Repos"},
+            {"key": "github_contributors", "label": "Contributors"},
+            {"key": "github_commits_90d", "label": "Commits (90d)"},
+            {"key": "huggingface_model_hits", "label": "HF Models"},
+            {"key": "openalex_hits", "label": "OpenAlex"},
+            {"key": "semantic_scholar_hits", "label": "Semantic Scholar"},
+            {"key": "linkedin_hits", "label": "LinkedIn"},
+            {"key": "researchgate_hits", "label": "ResearchGate"},
+        ]},
+        {"label": "Domains", "type": "tags", "fields": [
+            {"key": "technology_domains", "css": "tech"},
+            {"key": "market_domains", "css": "market"},
+            {"key": "categories", "css": "cat"},
+        ]},
+        {"label": "Due Diligence", "type": "key_value", "fields": [
+            {"key": "dd_is_investable", "label": "Investable", "display": "boolean"},
+            {"key": "dd_references_count", "label": "References"},
+            {"key": "dd_key_roles", "label": "Key roles"},
+            {"key": "member_roles", "label": "Member roles"},
+        ]},
+    ],
+
     # Scoring config (used by scorer.py get_entity_config)
     "dimensions": {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"},
     "enrichers": [
@@ -217,6 +248,18 @@ _PROFESSOR_SCHEMA: dict[str, Any] = {
         "custom_fields",
     ],
 
+    "detail_sections": [
+        {"label": "Signals", "type": "signal_grid", "fields": [
+            {"key": "member_count", "label": "Group Size"},
+            {"key": "openalex_hits", "label": "OpenAlex"},
+            {"key": "semantic_scholar_hits", "label": "Semantic Scholar"},
+            {"key": "huggingface_model_hits", "label": "HF Models"},
+        ]},
+        {"label": "Research Areas", "type": "tags", "fields": [
+            {"key": "technology_domains", "css": "tech"},
+        ]},
+    ],
+
     "dimensions": {"team": "Research Group", "tech": "Research Output", "opportunity": "Collaboration Potential"},
     "enrichers": ["website", "extra_links", "structured_data", "dns", "sitemap", "openalex", "wikidata"],
     "context": "TUM professors",
@@ -301,6 +344,7 @@ def _build_custom_schema(entity_type: str) -> dict[str, Any]:
             {"key": "verdict", "label": "All Verdicts", "type": "verdict", "options": _VERDICT_OPTIONS},
             {"key": "classification", "label": "All Types", "type": "dynamic", "source": "classification"},
         ],
+        "detail_sections": cfg.get("detail_sections", []),
         "meta_fields": cfg.get("meta_fields", []),
         "link_fields": cfg.get("link_fields", [
             {"key": "website", "label": "Website"},

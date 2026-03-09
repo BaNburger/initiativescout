@@ -255,11 +255,44 @@ function listSection(title, items) {
   return `<div class="detail-section"><h3>${esc(title)}</h3><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`;
 }
 
-const SIGNALS = [
-  ['member_count','Members'],['github_repo_count','Repos'],['github_contributors','Contributors'],
-  ['github_commits_90d','Commits (90d)'],['huggingface_model_hits','HF Models'],['openalex_hits','OpenAlex'],
-  ['semantic_scholar_hits','Semantic Scholar'],['linkedin_hits','LinkedIn'],['researchgate_hits','ResearchGate'],
-];
+// Schema-driven detail sections renderer
+function renderDetailSections(d) {
+  var sections = _schema && _schema.detail_sections ? _schema.detail_sections : [];
+  var html = '';
+  sections.forEach(function(sec) {
+    if (sec.type === 'signal_grid') {
+      var cards = sec.fields.map(function(f) { return signalCard(d[f.key], f.label); }).join('');
+      if (cards) html += '<div class="detail-section"><h3>' + esc(sec.label) + '</h3><div class="signal-grid">' + cards + '</div></div>';
+    } else if (sec.type === 'score_bars') {
+      var bars = '';
+      sec.fields.forEach(function(f) {
+        if (d[f.key] != null) {
+          var pct = Math.min(d[f.key] / 5 * 100, 100);
+          bars += '<div class="score-bar-row"><span class="score-bar-label">' + esc(f.label) + '</span><div class="score-bar"><div class="bar-fill ' + esc(f.color || 'green') + '" style="width:' + pct + '%"></div></div><span class="score-bar-val">' + d[f.key].toFixed(1) + '</span></div>';
+        }
+      });
+      if (bars) html += '<div class="detail-section"><h3>' + esc(sec.label) + '</h3>' + bars + '</div>';
+    } else if (sec.type === 'tags') {
+      var tags = '';
+      sec.fields.forEach(function(f) {
+        if (d[f.key]) tags += renderPills(d[f.key], f.css || 'cat');
+      });
+      if (tags) html += '<div class="detail-section"><h3>' + esc(sec.label) + '</h3><div>' + tags + '</div></div>';
+    } else if (sec.type === 'key_value') {
+      var items = '';
+      sec.fields.forEach(function(f) {
+        if (!d[f.key]) return;
+        if (f.display === 'boolean') {
+          items += '<li class="text-green">' + esc(f.label) + '</li>';
+        } else {
+          items += '<li>' + esc(f.label) + ': ' + esc(humanize(String(d[f.key]))) + '</li>';
+        }
+      });
+      if (items) html += '<div class="detail-section"><h3>' + esc(sec.label) + '</h3><ul>' + items + '</ul></div>';
+    }
+  });
+  return html;
+}
 
 function _colOrderStorageKey() {
   return `scout-col-order-${state.currentDb}`;
@@ -876,43 +909,8 @@ function renderDetail(d) {
     html += `</div>`;
   }
 
-  // Domain tags
-  const hasDomains = d.technology_domains || d.market_domains || d.categories;
-  if (hasDomains) {
-    html += `<div class="detail-section"><h3>Domains</h3><div>`;
-    html += renderPills(d.technology_domains, 'tech');
-    html += renderPills(d.market_domains, 'market');
-    if (d.categories) html += `<span class="domain-pill cat">${esc(d.categories)}</span>`;
-    html += `</div></div>`;
-  }
-
-  // Pre-computed scores
-  if (d.outreach_now_score != null || d.venture_upside_score != null) {
-    html += `<div class="detail-section"><h3>Pipeline Scores</h3>`;
-    if (d.outreach_now_score != null) {
-      const pct = Math.min(d.outreach_now_score / 5 * 100, 100);
-      html += `<div class="score-bar-row"><span class="score-bar-label">Outreach</span><div class="score-bar"><div class="bar-fill green" style="width:${pct}%"></div></div><span class="score-bar-val">${d.outreach_now_score.toFixed(1)}</span></div>`;
-    }
-    if (d.venture_upside_score != null) {
-      const pct = Math.min(d.venture_upside_score / 5 * 100, 100);
-      html += `<div class="score-bar-row"><span class="score-bar-label">Venture Upside</span><div class="score-bar"><div class="bar-fill blue" style="width:${pct}%"></div></div><span class="score-bar-val">${d.venture_upside_score.toFixed(1)}</span></div>`;
-    }
-    html += `</div>`;
-  }
-
-  // Signal cards
-  const signalsHtml = SIGNALS.map(([k,l]) => signalCard(d[k], l)).join('');
-  if (signalsHtml) html += `<div class="detail-section"><h3>Signals</h3><div class="signal-grid">${signalsHtml}</div></div>`;
-
-  // Due diligence
-  if (d.dd_is_investable || d.dd_key_roles || d.dd_references_count) {
-    html += `<div class="detail-section"><h3>Due Diligence</h3><ul>`;
-    if (d.dd_is_investable) html += `<li class="text-green">Investable</li>`;
-    if (d.dd_references_count) html += `<li>References: ${esc(String(d.dd_references_count))}</li>`;
-    if (d.dd_key_roles) html += `<li>Key roles: ${esc(humanize(d.dd_key_roles))}</li>`;
-    if (d.member_roles) html += `<li>Member roles: ${esc(humanize(d.member_roles))}</li>`;
-    html += `</ul></div>`;
-  }
+  // Schema-driven detail sections (signals, scores, tags, key-value)
+  html += renderDetailSections(d);
 
   // Links (with edit pencils) — driven by schema link_fields
   var schemaLinks = _schema && _schema.link_fields ? _schema.link_fields : [{key:'website',label:'Website'},{key:'email',label:'Email'},{key:'linkedin',label:'LinkedIn'},{key:'github_org',label:'GitHub'},{key:'team_page',label:'Team'}];
@@ -1046,7 +1044,8 @@ async function uploadFile(file) {
   try {
     const result = await api('POST', '/api/import', fd);
     hideImport();
-    showToast(`Imported ${result.total_imported} initiatives (${result.spin_off_count} spin-off, ${result.duplicates_updated} updated)`, 'success');
+    var entityLabel = (_schema && _schema.label_plural) ? _schema.label_plural.toLowerCase() : 'items';
+    showToast(`Imported ${result.total_imported} ${entityLabel} (${result.spin_off_count} spin-off, ${result.duplicates_updated} updated)`, 'success');
     refreshUI();
   } catch (err) {
     showToast('Import failed: ' + err.message, 'error');
@@ -1131,7 +1130,7 @@ async function findSimilar(id) {
   try {
     const data = await api('GET', `/api/similar/${id}?limit=10`);
     if (!data.results || data.results.length === 0) {
-      showToast(data.hint || 'No similar initiatives found. Run embeddings first.', 'info');
+      showToast(data.hint || 'No similar entities found. Run embeddings first.', 'info');
       return;
     }
     // Show results in a section below the detail actions
@@ -1141,7 +1140,8 @@ async function findSimilar(id) {
     const section = document.createElement('div');
     section.id = 'similar-results';
     section.className = 'detail-section';
-    let html = '<h3>Similar Initiatives</h3><ul class="similar-list">';
+    var entityLabel = (_schema && _schema.label_plural) ? _schema.label_plural : 'Entities';
+    let html = '<h3>Similar ' + esc(entityLabel) + '</h3><ul class="similar-list">';
     data.results.forEach(r => {
       html += `<li class="similar-item" onclick="loadDetail(${parseInt(r.id)})">`;
       html += `<span class="similar-name">${esc(r.name)}</span>`;
@@ -1278,7 +1278,8 @@ function scoreUnscored() { streamBatch('/api/score/batch', { only_unscored: true
 
 async function rescoreAll() {
   const total = parseInt(document.getElementById('stat-total').textContent) || 0;
-  const ok = await showConfirmModal(`This will re-score all ${total} initiatives using LLM API calls. Continue?`);
+  var entityLabel = (_schema && _schema.label_plural) ? _schema.label_plural.toLowerCase() : 'items';
+  const ok = await showConfirmModal(`This will re-score all ${total} ${entityLabel} using LLM API calls. Continue?`);
   if (!ok) return;
   streamBatch('/api/score/batch', null);
 }
@@ -1311,12 +1312,12 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (inInput) { document.activeElement.blur(); return; }
     const importOpen = !document.getElementById('import-overlay').classList.contains('hidden');
-    const promptOpen = !document.getElementById('prompt-overlay').classList.contains('hidden');
+    const settingsOpen = !document.getElementById('settings-overlay').classList.contains('hidden');
     const mcpOpen = !!_mcpOverlay;
     const hotkeyOpen = !!_hotkeyOverlay;
     const backupOpen = !!_backupOverlay;
-    if (importOpen || promptOpen || mcpOpen || hotkeyOpen || backupOpen) {
-      hideImport(); hidePrompts(); hideMcpSetup(); hideBackups();
+    if (importOpen || settingsOpen || mcpOpen || hotkeyOpen || backupOpen) {
+      hideImport(); hideSettings(); hideMcpSetup(); hideBackups();
       if (_hotkeyOverlay) { _hotkeyOverlay.remove(); _hotkeyOverlay = null; }
     } else {
       state.mode = 'grid';
@@ -1415,14 +1416,14 @@ function showHotkeyHelp() {
     ['Grid mode', ''],
     ['\u2190 \u2191 \u2192 \u2193', 'Move cursor through cells'],
     ['Enter', 'Open detail for selected row'],
-    ['e', 'Enrich selected initiative'],
-    ['s', 'Score selected initiative'],
+    ['e', 'Enrich selected entity'],
+    ['s', 'Score selected entity'],
     ['i', 'Open import'],
     ['Detail mode', ''],
-    ['\u2191 \u2193', 'Browse prev/next initiative'],
+    ['\u2191 \u2193', 'Browse prev/next entity'],
     ['\\', 'Return to grid'],
-    ['e', 'Enrich current initiative'],
-    ['s', 'Score current initiative'],
+    ['e', 'Enrich current entity'],
+    ['s', 'Score current entity'],
     ['f', 'Find similar'],
     ['Global', ''],
     ['/', 'Focus search'],
@@ -1589,8 +1590,8 @@ async function showCreateDb() {
     showToast('Invalid name. Use only letters, numbers, hyphens, and underscores.', 'error');
     return;
   }
-  const entityType = await showPromptModal('Entity Type', 'Type: initiative or professor', 'initiative');
-  const et = (entityType || 'initiative').trim().toLowerCase();
+  const entityType = await showPromptModal('Entity Type', 'Built-in: initiative, professor — or any custom name', 'initiative');
+  const et = (entityType || 'initiative').trim().toLowerCase().replace(/\s+/g, '_');
   try {
     const result = await api('POST', '/api/databases/create', { name, entity_type: et });
     await loadDatabases();
@@ -1729,7 +1730,8 @@ async function restoreBackup(backupName) {
     showToast(`Cannot restore over the active database "${origin}". Switch to another database first.`, 'error');
     return;
   }
-  if (!confirm(`Restore backup to database "${origin}"?\n\nThis will overwrite "${origin}" with the backup data.`)) return;
+  const ok = await showConfirmModal(`Restore backup to database "${origin}"? This will overwrite "${origin}" with the backup data.`);
+  if (!ok) return;
   try {
     await api('POST', '/api/databases/restore', { backup_name: backupName });
     showToast(`Restored "${origin}" from backup`, 'success');
@@ -1740,7 +1742,8 @@ async function restoreBackup(backupName) {
 }
 
 async function deleteBackup(backupName) {
-  if (!confirm(`Delete backup "${backupName}"? This cannot be undone.`)) return;
+  const ok = await showConfirmModal(`Delete backup "${backupName}"? This cannot be undone.`);
+  if (!ok) return;
   try {
     await api('DELETE', '/api/databases/backups/' + encodeURIComponent(backupName));
     showToast('Backup deleted', 'success');
@@ -1800,48 +1803,197 @@ async function removeCustomColumn(e, columnId) {
 }
 
 // ---------------------------------------------------------------------------
-// Scoring Prompts
+// Settings overlay (Prompts + Enrichment + Fields)
+// NOTE: All user-supplied values passed through esc()/escAttr() before DOM insertion.
+// The innerHTML assignments below only contain content that has passed through
+// esc()/escAttr(), preventing script injection.
 // ---------------------------------------------------------------------------
-async function showPrompts() {
-  const overlay = document.getElementById('prompt-overlay');
-  const container = document.getElementById('prompt-editors');
-  overlay.classList.remove('hidden');
-  container.innerHTML = '<p class="text-faint">Loading prompts...</p>';
+var _settingsTab = 'prompts';
+var _settingsConfig = null;
 
+function showSettings() {
+  var overlay = document.getElementById('settings-overlay');
+  overlay.classList.remove('hidden');
+  _buildSettingsTabs();
+  _switchSettingsTab('prompts');
+}
+
+function hideSettings() {
+  document.getElementById('settings-overlay').classList.add('hidden');
+}
+
+// backward compat
+function showPrompts() { showSettings(); }
+function hidePrompts() { hideSettings(); }
+
+document.getElementById('settings-overlay').addEventListener('click', function(e) {
+  if (e.target === document.getElementById('settings-overlay')) hideSettings();
+});
+
+function _buildSettingsTabs() {
+  var tabs = document.getElementById('settings-tabs');
+  var items = [
+    { key: 'prompts', label: 'Scoring Prompts' },
+    { key: 'enrichment', label: 'Enrichment' },
+    { key: 'fields', label: 'Enrichable Fields' },
+  ];
+  tabs.innerHTML = items.map(function(t) {
+    return '<button class="mcp-tab' + (t.key === _settingsTab ? ' active' : '') + '" onclick="_switchSettingsTab(\'' + t.key + '\', this)">' + esc(t.label) + '</button>';
+  }).join('');
+}
+
+async function _switchSettingsTab(tab, btn) {
+  _settingsTab = tab;
+  document.querySelectorAll('#settings-tabs .mcp-tab').forEach(function(t) { t.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  else document.querySelectorAll('#settings-tabs .mcp-tab').forEach(function(t, i) {
+    if (['prompts','enrichment','fields'][i] === tab) t.classList.add('active');
+  });
+  var container = document.getElementById('settings-content');
+  container.innerHTML = '<p class="text-faint">Loading...</p>';
+
+  if (tab === 'prompts') await _renderPromptsTab(container);
+  else if (tab === 'enrichment') await _renderEnrichmentTab(container);
+  else if (tab === 'fields') await _renderFieldsTab(container);
+}
+
+// --- Prompts tab ---
+async function _renderPromptsTab(container) {
   try {
-    const prompts = await api('GET', '/api/scoring-prompts');
-    container.innerHTML = prompts.map(p => `
-      <div class="prompt-section" data-prompt-key="${escAttr(p.key)}">
-        <div class="prompt-section-header">
-          <label class="card-label">${esc(p.label)}</label>
-          <button class="btn btn-sm" onclick="savePrompt('${escAttr(p.key)}')">${_icon('save')}Save</button>
-        </div>
-        <textarea class="prompt-textarea" id="prompt-${escAttr(p.key)}">${esc(p.content)}</textarea>
-      </div>
-    `).join('');
+    var prompts = await api('GET', '/api/scoring-prompts');
+    var dims = _schema && _schema.dimensions ? _schema.dimensions : {};
+    container.innerHTML =
+      '<p class="prompt-description">Each scoring dimension is evaluated by an LLM using these system prompts. Edit to customize scoring criteria.</p>' +
+      prompts.map(function(p) {
+        var dimLabel = dims[p.key] || p.label;
+        return '<div class="prompt-section">' +
+          '<div class="prompt-section-header">' +
+          '<label class="card-label">' + esc(dimLabel) + ' <span class="text-faint">(' + esc(p.key) + ')</span></label>' +
+          '<button class="btn btn-sm" onclick="savePrompt(\'' + escAttr(p.key) + '\')">' + _icon('save') + 'Save</button>' +
+          '</div>' +
+          '<textarea class="prompt-textarea" id="prompt-' + escAttr(p.key) + '">' + esc(p.content) + '</textarea>' +
+          '</div>';
+      }).join('');
   } catch (err) {
-    container.innerHTML = `<p class="text-red">Failed to load prompts: ${esc(err.message)}</p>`;
+    container.innerHTML = '<p class="text-red">Failed to load prompts: ' + esc(err.message) + '</p>';
   }
 }
 
-function hidePrompts() {
-  document.getElementById('prompt-overlay').classList.add('hidden');
-}
-
 async function savePrompt(key) {
-  const textarea = document.getElementById(`prompt-${key}`);
+  var textarea = document.getElementById('prompt-' + key);
   if (!textarea) return;
   try {
-    await api('PUT', `/api/scoring-prompts/${key}`, { content: textarea.value });
-    showToast(`Prompt "${key}" saved`, 'success');
+    await api('PUT', '/api/scoring-prompts/' + key, { content: textarea.value });
+    showToast('Prompt "' + key + '" saved', 'success');
   } catch (err) {
     showToast('Save failed: ' + err.message, 'error');
   }
 }
 
-document.getElementById('prompt-overlay').addEventListener('click', e => {
-  if (e.target === document.getElementById('prompt-overlay')) hidePrompts();
-});
+// --- Enrichment tab ---
+async function _renderEnrichmentTab(container) {
+  try {
+    _settingsConfig = await api('GET', '/api/config');
+    var cfg = _settingsConfig;
+    var active = new Set(cfg.enrichers || []);
+    var targets = cfg.enricher_targets || {};
+    var html = '<p class="prompt-description">Select which enrichers run for this database. Each enricher fills specific fields automatically.</p>';
+    html += '<div class="settings-enricher-list">';
+    (cfg.available_enrichers || []).forEach(function(name) {
+      var isActive = active.has(name);
+      var tgtFields = targets[name] || [];
+      html += '<div class="settings-enricher-row">';
+      html += '<label class="settings-toggle">';
+      html += '<input type="checkbox" data-enricher="' + escAttr(name) + '"' + (isActive ? ' checked' : '') + '>';
+      html += '<span class="settings-enricher-name">' + esc(name.replace(/_/g, ' ')) + '</span>';
+      html += '</label>';
+      if (tgtFields.length > 0) {
+        html += '<span class="settings-enricher-targets">' + tgtFields.map(function(f) {
+          return '<span class="domain-pill cat">' + esc(f) + '</span>';
+        }).join('') + '</span>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<div class="detail-actions" style="margin-top:14px;">';
+    html += '<button class="btn btn-sm btn-primary" onclick="_saveEnricherConfig()">' + _icon('save') + 'Save Enricher Config</button>';
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<p class="text-red">Failed to load config: ' + esc(err.message) + '</p>';
+  }
+}
+
+async function _saveEnricherConfig() {
+  var checkboxes = document.querySelectorAll('#settings-content input[data-enricher]');
+  var enrichers = [];
+  checkboxes.forEach(function(cb) {
+    if (cb.checked) enrichers.push(cb.dataset.enricher);
+  });
+  try {
+    await api('PUT', '/api/config', { enrichers: enrichers });
+    showToast('Enricher config saved', 'success');
+  } catch (err) {
+    showToast('Save failed: ' + err.message, 'error');
+  }
+}
+
+// --- Fields tab ---
+async function _renderFieldsTab(container) {
+  try {
+    if (!_settingsConfig) _settingsConfig = await api('GET', '/api/config');
+    var cfg = _settingsConfig;
+    var fields = cfg.enrichable_fields || {};
+    var overrides = (cfg.overrides || {}).extra_enrichable_fields || {};
+    var html = '<p class="prompt-description">Fields available for enrichment. Built-in fields come from the schema. Add extra fields to extend what enrichers and LLMs can fill.</p>';
+    html += '<table class="settings-fields-table"><thead><tr><th>Field</th><th>Label</th><th>Type</th><th>Source</th></tr></thead><tbody>';
+    Object.keys(fields).forEach(function(key) {
+      var f = fields[key];
+      var isExtra = key in overrides;
+      html += '<tr>';
+      html += '<td><code>' + esc(key) + '</code></td>';
+      html += '<td>' + esc(f.label) + '</td>';
+      html += '<td><span class="domain-pill cat">' + esc(f.type) + '</span></td>';
+      html += '<td>' + (isExtra ? '<span class="text-amber">custom</span>' : '<span class="text-faint">schema</span>') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div class="detail-actions" style="margin-top:14px;">';
+    html += '<button class="btn btn-sm" onclick="_addEnrichableField()">' + _icon('plus') + 'Add Field</button>';
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<p class="text-red">Failed to load fields: ' + esc(err.message) + '</p>';
+  }
+}
+
+async function _addEnrichableField() {
+  var key = await showPromptModal('Add Enrichable Field', 'Field key (snake_case)', 'e.g. patent_count');
+  if (!key) return;
+  if (!_COL_KEY_RE.test(key)) {
+    showToast('Invalid key. Use only letters, numbers, hyphens, and underscores.', 'error');
+    return;
+  }
+  var label = await showPromptModal('Field Label', 'Display name', 'e.g. Patent Count');
+  if (!label) return;
+  var typeChoices = ['text', 'int', 'url', 'email', 'bool'];
+  var fieldType = await showPromptModal('Field Type', 'One of: ' + typeChoices.join(', '), 'text');
+  fieldType = (fieldType || 'text').trim().toLowerCase();
+  if (typeChoices.indexOf(fieldType) === -1) fieldType = 'text';
+
+  // Merge with existing extra fields
+  try {
+    var cfg = await api('GET', '/api/config');
+    var extra = (cfg.overrides || {}).extra_enrichable_fields || {};
+    extra[key] = { label: label, type: fieldType };
+    await api('PUT', '/api/config', { extra_enrichable_fields: extra });
+    _settingsConfig = null;
+    showToast('Field "' + key + '" added', 'success');
+    await _renderFieldsTab(document.getElementById('settings-content'));
+  } catch (err) {
+    showToast('Failed: ' + err.message, 'error');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // MCP Setup popover

@@ -417,13 +417,18 @@ def get_entity_config(entity_type: str) -> dict:
             "enrichable_fields": schema.get("enrichable_fields", {}),
             "dimensions": list(schema.get("dimensions", {}).keys()),
         }
-        # Merge runtime-extended enrichable_fields from DB config
+        # Merge DB-level overrides only when querying the current DB's entity type
         try:
-            from scout.db import get_entity_config_json
-            db_cfg = get_entity_config_json()
-            extra = db_cfg.get("extra_enrichable_fields", {})
-            if extra and isinstance(extra, dict):
-                cfg["enrichable_fields"].update(extra)
+            from scout.db import get_entity_config_json, get_entity_type
+            if get_entity_type() == entity_type:
+                db_cfg = get_entity_config_json()
+                extra = db_cfg.get("extra_enrichable_fields", {})
+                if extra and isinstance(extra, dict):
+                    cfg["enrichable_fields"].update(extra)
+                if "enrichers" in db_cfg and isinstance(db_cfg["enrichers"], list):
+                    cfg["enrichers"] = db_cfg["enrichers"]
+                if "enricher_targets" in db_cfg and isinstance(db_cfg["enricher_targets"], dict):
+                    cfg["enricher_targets"].update(db_cfg["enricher_targets"])
         except Exception:
             pass
         return cfg

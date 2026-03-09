@@ -1260,7 +1260,7 @@ async def configure(
     action: str,
     name: str | None = None,
     # Database params
-    entity_type: str = "initiative", context: str = "", dimensions: str = "",
+    entity_type: str | None = None, context: str = "", dimensions: str = "",
     # Column params
     column_id: int | None = None, key: str | None = None, label: str | None = None,
     col_type: str | None = None, show_in_list: bool | None = None, sort_order: int | None = None,
@@ -1299,7 +1299,7 @@ async def configure(
     Args:
         action: See actions above.
         name: Database name or backup name.
-        entity_type: For db_create (default "initiative").
+        entity_type: For db_create. Built-in: initiative, professor. Or any custom name.
         context: For db_create with custom entity types.
         dimensions: For db_create: comma-separated scoring dimensions.
         column_id: For col_update/col_delete.
@@ -1336,27 +1336,28 @@ async def configure(
     if action == "db_create":
         if not name:
             return _error("name required", "VALIDATION_ERROR")
+        et = entity_type or "initiative"
         try:
             name = validate_db_name(name)
         except ValueError as exc:
             return _error(str(exc), "VALIDATION_ERROR")
         try:
-            create_database(name, entity_type=entity_type)
+            create_database(name, entity_type=et)
         except ValueError as exc:
             return _error(str(exc), "ALREADY_EXISTS")
-        if entity_type not in _BUILTIN_ENTITY_TYPES:
+        if et not in _BUILTIN_ENTITY_TYPES:
             from scout.db import set_entity_config_json
             custom_cfg = {
-                "label": entity_type.replace("_", " "),
-                "label_plural": entity_type.replace("_", " ") + "s",
-                "context": context or entity_type.replace("_", " "),
+                "label": et.replace("_", " "),
+                "label_plural": et.replace("_", " ") + "s",
+                "context": context or et.replace("_", " "),
             }
             if dimensions:
                 custom_cfg["dimensions"] = [d.strip() for d in dimensions.split(",") if d.strip()]
             set_entity_config_json(custom_cfg)
-            _seed_custom_prompts(entity_type, custom_cfg)
-        mcp._mcp_server.instructions = _build_instructions(entity_type)
-        return {"current": current_db_name(), "entity_type": entity_type,
+            _seed_custom_prompts(et, custom_cfg)
+        mcp._mcp_server.instructions = _build_instructions(et)
+        return {"current": current_db_name(), "entity_type": et,
                 "message": f"Created and switched to '{name}'"}
 
     if action == "db_delete":

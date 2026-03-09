@@ -777,6 +777,72 @@ textarea.inline-input { resize: vertical; min-height: 60px; }
 .mcp-footer code { font-family: var(--mono); font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: var(--radius-xs); color: var(--accent); }
 
 /* ==========================================================================
+   Settings overlay (enricher toggles, fields table)
+   ========================================================================== */
+.settings-enricher-list { display: flex; flex-direction: column; gap: 2px; }
+
+.settings-enricher-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.settings-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.settings-enricher-name { font-weight: 500; text-transform: capitalize; }
+
+.settings-enricher-targets { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.settings-fields-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.settings-fields-table th {
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-fields-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  vertical-align: middle;
+}
+
+.settings-fields-table code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  color: var(--ink);
+}
+
+/* ==========================================================================
    Keyboard cursor
    ========================================================================== */
 .row-active { background: var(--surface-2); }

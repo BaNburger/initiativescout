@@ -84,7 +84,15 @@ PROJECT_SCORE_KEYS = (
 
 # Schema-driven field accessors (replace old hardcoded tuples)
 def get_detail_fields() -> tuple[str, ...]:
-    return tuple(get_schema()["detail_fields"])
+    schema = get_schema()
+    fields = list(schema["detail_fields"])
+    # Also include fields referenced by detail_sections so they appear in API responses
+    for section in schema.get("detail_sections", []):
+        for f in section.get("fields", []):
+            key = f.get("key", "")
+            if key and key not in fields:
+                fields.append(key)
+    return tuple(fields)
 
 def get_updatable_fields() -> tuple[str, ...]:
     return tuple(get_schema()["updatable_fields"])

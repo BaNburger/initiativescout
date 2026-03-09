@@ -182,6 +182,43 @@ async def get_schema_route():
     return schema
 
 
+@app.get("/api/config", tags=["Databases"],
+         summary="Get editable config for current database (enrichers, fields, dimensions)")
+async def get_config():
+    from scout.db import get_entity_config_json
+    from scout.schema import get_schema
+    from scout.scorer import get_entity_config
+    et = get_entity_type()
+    schema = get_schema(et)
+    cfg = get_entity_config(et)
+    db_cfg = get_entity_config_json()
+    return {
+        "entity_type": et,
+        "context": cfg.get("context", et),
+        "dimensions": schema.get("dimensions", {}),
+        "enrichers": cfg.get("enrichers", []),
+        "available_enrichers": list(services.ENRICHER_REGISTRY.keys()),
+        "enricher_targets": cfg.get("enricher_targets", {}),
+        "enrichable_fields": cfg.get("enrichable_fields", {}),
+        "overrides": db_cfg,
+    }
+
+
+@app.put("/api/config", tags=["Databases"],
+         summary="Update database config (enrichers, fields, dimensions, context)")
+async def update_config(body: dict[str, Any]):
+    from scout.db import get_entity_config_json, set_entity_config_json
+    db_cfg = get_entity_config_json()
+    allowed = {"enrichers", "enricher_targets", "extra_enrichable_fields",
+               "context", "dimensions", "label", "label_plural",
+               "detail_sections", "meta_fields", "link_fields", "info_fields"}
+    for key, val in body.items():
+        if key in allowed:
+            db_cfg[key] = val
+    set_entity_config_json(db_cfg)
+    return {"ok": True, "config": db_cfg}
+
+
 # ---------------------------------------------------------------------------
 # Routes: Entities (aliased as /api/initiatives for backward compat)
 # ---------------------------------------------------------------------------

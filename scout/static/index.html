@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Scout — Outreach Intelligence</title>
+<title>Scout</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -20,7 +20,7 @@
   <div class="header-actions">
     <button class="btn btn-sm" onclick="showImport()" data-icon="upload">Import</button>
     <a class="btn btn-sm" id="export-link" href="/api/export?include_scores=true&include_enrichments=true" data-icon="download">Export</a>
-    <button class="btn btn-sm" onclick="showPrompts()" data-icon="sliders">Prompts</button>
+    <button class="btn btn-sm" onclick="showSettings()" data-icon="sliders">Settings</button>
     <button class="btn btn-sm" onclick="showMcpSetup()" data-icon="terminal">MCP</button>
     <button class="btn btn-sm" id="btn-enrich-all" onclick="enrichBatch()" disabled data-icon="sparkles">Enrich All</button>
     <button class="btn btn-sm" id="btn-score-unscored" onclick="scoreUnscored()" disabled data-icon="target">Score Unscored</button>
@@ -84,17 +84,15 @@
   </div>
 </div>
 
-<!-- Prompt editor overlay -->
-<div class="import-overlay hidden" id="prompt-overlay">
-  <div class="prompt-editor-box">
+<!-- Settings overlay -->
+<div class="import-overlay hidden" id="settings-overlay">
+  <div class="prompt-editor-box" style="max-width:900px;">
     <div class="prompt-header">
-      <h2>Scoring Prompts</h2>
-      <button class="btn btn-sm" onclick="hidePrompts()" data-icon="x">Close</button>
+      <h2>Database Settings</h2>
+      <button class="btn btn-sm" onclick="hideSettings()" data-icon="x">Close</button>
     </div>
-    <p class="prompt-description">
-      Each dimension is evaluated by an LLM using these system prompts. Edit to customize scoring criteria.
-    </p>
-    <div id="prompt-editors"></div>
+    <div class="mcp-tabs" id="settings-tabs"></div>
+    <div id="settings-content"></div>
   </div>
 </div>
 
