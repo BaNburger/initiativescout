@@ -6,7 +6,7 @@ Submodules:
     _github     GitHub org/repo enrichers
     _discovery  DuckDuckGo URL discovery
     _metadata   Structured data, tech stack, DNS, sitemap enrichers
-    _apis       Free API enrichers: OpenAlex, Wikidata, text inference
+    _apis       Free API enrichers: OpenAlex, Wikidata
 
 All public symbols are re-exported here so existing ``from scout.enricher import …``
 imports continue to work unchanged.
@@ -20,6 +20,7 @@ from scout.enricher._core import (  # noqa: F401
     _TRAFILATURA_AVAILABLE,
     _extract_text,
     _html_cache,
+    infer_fields_from_text,
 )
 from scout.enricher._discovery import (  # noqa: F401
     _DDGRateLimiter,
@@ -27,7 +28,6 @@ from scout.enricher._discovery import (  # noqa: F401
     discover_urls,
 )
 from scout.enricher._apis import enrich_openalex, enrich_wikidata  # noqa: F401
-from scout.enricher._core import infer_fields_from_text  # noqa: F401
 from scout.enricher._github import enrich_git_deep, enrich_github  # noqa: F401
 from scout.enricher._metadata import (  # noqa: F401
     _detect_tech_stack,

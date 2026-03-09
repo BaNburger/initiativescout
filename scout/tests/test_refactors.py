@@ -809,6 +809,5 @@ class TestModuleImports:
         assert callable(import_xlsx)
 
     def test_import_schemas(self):
-        from scout.schemas import ProjectOut, ImportResult, StatsOut
-        assert ProjectOut is not None
+        from scout.schemas import ImportResult, StatsOut
         assert ImportResult is not None

@@ -11,7 +11,7 @@ from scout.models import Enrichment, Initiative
 
 log = logging.getLogger(__name__)
 
-_UA = "Scout/1.0 (https://github.com/scout-project)"
+_UA = _core._USER_AGENT
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +273,3 @@ async def enrich_wikidata(initiative: Initiative) -> Enrichment | None:
         text, structured_fields=fields or None,
     )
 
-
-# Re-export from _core (moved there since it has no API dependencies)
-from scout.enricher._core import infer_fields_from_text  # noqa: F401

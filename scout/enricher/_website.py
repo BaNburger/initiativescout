@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -23,6 +24,8 @@ from scout.enricher._core import (
 )
 from scout.models import Enrichment, Initiative
 from scout.utils import json_parse
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +116,6 @@ def _extract_fields_from_html(raw_html: str, base_url: str) -> dict:
 
     return fields
 
-log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Crawl4AI page fetcher
@@ -279,8 +281,7 @@ async def enrich_website(
 
     # Store merged fields on the main enrichment
     if fields:
-        import json as _json
-        main.structured_fields_json = _json.dumps(fields)
+        main.structured_fields_json = json.dumps(fields)
 
     return results
 

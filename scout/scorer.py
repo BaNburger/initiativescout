@@ -100,6 +100,7 @@ class Grade:
 # ---------------------------------------------------------------------------
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+_BUILTIN_ENTITY_TYPES = frozenset(("initiative", "professor"))
 
 def _prompt_labels(entity_type: str) -> dict[str, str]:
     """Return dimension labels for the given entity type from the schema."""
@@ -109,13 +110,6 @@ def _prompt_labels(entity_type: str) -> dict[str, str]:
             {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"})
     except Exception:
         return {"team": "Team", "tech": "Tech", "opportunity": "Opportunity"}
-
-# Labels for the default dimensions per entity type (kept for backward compat)
-_PROMPT_LABELS: dict[str, dict[str, str]] = {
-    "initiative": _prompt_labels("initiative"),
-    "professor": _prompt_labels("professor"),
-}
-
 
 def _load_prompt_file(entity_type: str, dimension: str) -> str:
     """Read a prompt .txt file, falling back to the initiative version."""
@@ -136,8 +130,9 @@ def _load_prompts(entity_type: str) -> dict[str, tuple[str, str]]:
     return prompts
 
 
+# Cache built-in prompts at import time; custom types load on demand
 _ALL_DEFAULT_PROMPTS: dict[str, dict[str, tuple[str, str]]] = {
-    et: _load_prompts(et) for et in _PROMPT_LABELS
+    et: _load_prompts(et) for et in _BUILTIN_ENTITY_TYPES
 }
 
 
@@ -442,9 +437,6 @@ def get_entity_config(entity_type: str) -> dict:
             "enrichable_fields": {},
             "dimensions": ["team", "tech", "opportunity"],
         }
-
-
-_BUILTIN_ENTITY_TYPES = frozenset(("initiative", "professor"))
 
 
 def _initiative_header(init: Initiative, entity_type: str = "initiative") -> list[str]:

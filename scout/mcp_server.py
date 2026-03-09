@@ -6,9 +6,9 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -1263,7 +1263,7 @@ async def configure(
     entity_type: str = "initiative", context: str = "", dimensions: str = "",
     # Column params
     column_id: int | None = None, key: str | None = None, label: str | None = None,
-    col_type: str = "text", show_in_list: bool = True, sort_order: int = 0,
+    col_type: str | None = None, show_in_list: bool | None = None, sort_order: int | None = None,
     # LLM params
     provider: str | None = None, model: str | None = None,
     api_key: str | None = None, base_url: str | None = None,
@@ -1413,8 +1413,10 @@ async def configure(
             return _error("key and label required", "VALIDATION_ERROR")
         with session_scope() as session:
             result = services.create_custom_column(
-                session, key=key, label=label, col_type=col_type,
-                show_in_list=show_in_list, sort_order=sort_order, database=current_db_name())
+                session, key=key, label=label,
+                col_type=col_type or "text",
+                show_in_list=show_in_list if show_in_list is not None else True,
+                sort_order=sort_order or 0, database=current_db_name())
             if result is None:
                 return _error(f"Column key '{key}' already exists", "ALREADY_EXISTS")
             session.commit()
@@ -1426,11 +1428,11 @@ async def configure(
         kwargs = {}
         if label is not None:
             kwargs["label"] = label
-        if col_type != "text":
+        if col_type is not None:
             kwargs["col_type"] = col_type
-        if not show_in_list:
+        if show_in_list is not None:
             kwargs["show_in_list"] = show_in_list
-        if sort_order != 0:
+        if sort_order is not None:
             kwargs["sort_order"] = sort_order
         with session_scope() as session:
             result = services.update_custom_column(session, column_id, **kwargs)
@@ -1824,71 +1826,9 @@ async def score_entity(entity_id=None, **kw):
 def submit_score(entity_id=None, **kw):
     if entity_id is None:
         return _error("entity_id required", "VALIDATION_ERROR")
-    # Parse grades — reuse the same validation logic as score(action="submit")
-    et = get_entity_type()
-    ecfg = get_entity_config(et)
-    dims = ecfg.get("dimensions", ["team", "tech", "opportunity"])
-    is_standard = (dims == ["team", "tech", "opportunity"])
-    dimension_grades = kw.get("dimension_grades")
-    grade_team = kw.get("grade_team", "")
-    grade_tech = kw.get("grade_tech", "")
-    grade_opportunity = kw.get("grade_opportunity", "")
-    grades: dict[str, Grade] = {}
-    if dimension_grades and isinstance(dimension_grades, dict):
-        for dim, raw_grade in dimension_grades.items():
-            if Grade.normalize(raw_grade) not in VALID_GRADES:
-                return _error(f"Invalid grade for '{dim}': {raw_grade!r}.", "VALIDATION_ERROR")
-            grades[dim] = Grade.parse(raw_grade)
-    elif is_standard:
-        for label, raw in [("grade_team", grade_team), ("grade_tech", grade_tech),
-                           ("grade_opportunity", grade_opportunity)]:
-            if not raw:
-                return _error(f"{label} is required", "VALIDATION_ERROR")
-            if Grade.normalize(raw) not in VALID_GRADES:
-                return _error(f"Invalid {label}: {raw!r}.", "VALIDATION_ERROR")
-        grades = {"team": Grade.parse(grade_team), "tech": Grade.parse(grade_tech),
-                  "opportunity": Grade.parse(grade_opportunity)}
-    else:
-        positional = [grade_team, grade_tech, grade_opportunity]
-        for i, dim in enumerate(dims):
-            raw = positional[i] if i < len(positional) else ""
-            if not raw:
-                return _error(f"Missing grade for dimension '{dim}'.", "VALIDATION_ERROR")
-            if Grade.normalize(raw) not in VALID_GRADES:
-                return _error(f"Invalid grade for '{dim}': {raw!r}.", "VALIDATION_ERROR")
-            grades[dim] = Grade.parse(raw)
-    classification = kw.get("classification", "")
-    if classification:
-        classification = classification.strip().lower()
-        valid_cls = valid_classifications(et)
-        if is_standard and classification not in valid_cls:
-            return _error(f"Invalid classification: {classification!r}.", "VALIDATION_ERROR")
-    contact_channel = kw.get("contact_channel", "website_form").strip().lower()
-    if contact_channel and contact_channel not in VALID_CHANNELS:
-        return _error(f"Invalid contact_channel: {contact_channel!r}.", "VALIDATION_ERROR")
-    with session_scope() as session:
-        init, err = _get_or_error(session, Initiative, entity_id)
-        if err:
-            return err
-        outreach = services.submit_score_data(
-            session, init, grades,
-            classification=classification, contact_who=kw.get("contact_who", ""),
-            contact_channel=contact_channel, engagement_hook=kw.get("engagement_hook", ""),
-            reasoning=kw.get("reasoning", ""), entity_type=et,
-        )
-        session.commit()
-        result: dict = {
-            "entity_id": init.id, "entity_name": init.name,
-            "verdict": outreach.verdict, "score": outreach.score,
-            "classification": outreach.classification, "_db": _db_pulse(session),
-        }
-        dim_grades_stored = json_parse(outreach.dimension_grades_json, {})
-        if dim_grades_stored:
-            result["dimension_grades"] = {k: v.get("letter", "") for k, v in dim_grades_stored.items()}
-        else:
-            result.update({"grade_team": outreach.grade_team, "grade_tech": outreach.grade_tech,
-                           "grade_opportunity": outreach.grade_opportunity})
-        return result
+    return asyncio.get_event_loop().run_until_complete(
+        score(action="submit", entity_id=entity_id, **kw)
+    )
 def get_scoring_dossier(entity_id=None, **kw):
     if entity_id is None:
         return _error("entity_id required", "VALIDATION_ERROR")

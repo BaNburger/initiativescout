@@ -10,26 +10,6 @@ import re
 from pydantic import BaseModel, field_validator
 
 
-class ProjectOut(BaseModel):
-    id: int
-    initiative_id: int
-    name: str
-    description: str
-    website: str
-    github_url: str
-    team: str
-    extra_links: dict[str, str] = {}
-    verdict: str | None = None
-    score: float | None = None
-    classification: str | None = None
-    grade_team: str | None = None
-    grade_team_num: float | None = None
-    grade_tech: str | None = None
-    grade_tech_num: float | None = None
-    grade_opportunity: str | None = None
-    grade_opportunity_num: float | None = None
-
-
 class ProjectCreate(BaseModel):
     name: str
     description: str = ""
